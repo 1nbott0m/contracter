@@ -5,7 +5,9 @@
 target/
 .idea/
 .vscode/
+.zed/
+.obsidian/
+.worktrees/
 *.log
 *.tmp
 coverage/
-
