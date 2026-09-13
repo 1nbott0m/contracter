@@ -117,3 +117,35 @@ fn commitment_hides_the_server_seed_and_selection_replays() {
     let replay = select_outcome(&outcomes, &seed, b"browser-client-seed", 42).unwrap();
     assert_eq!(first, replay);
 }
+
+#[test]
+fn rejects_rarity_that_cannot_have_a_next_tier_without_panicking() {
+    let inputs = vec![input("in", "a", u8::MAX, dec!(0.20)); 10];
+    assert_eq!(
+        build_outcomes(&inputs, &[]).unwrap_err(),
+        TradeupError::InvalidRarity { rarity: u8::MAX }
+    );
+}
+
+#[test]
+fn rejects_weight_sum_overflow_without_panicking() {
+    use economy_core::tradeup::WeightedOutcome;
+    let outcomes = [
+        WeightedOutcome {
+            sku_id: "a".into(),
+            collection_id: "a".into(),
+            weight_numerator: u64::MAX,
+            weight_denominator: u64::MAX,
+        },
+        WeightedOutcome {
+            sku_id: "b".into(),
+            collection_id: "b".into(),
+            weight_numerator: 1,
+            weight_denominator: u64::MAX,
+        },
+    ];
+    assert_eq!(
+        select_outcome(&outcomes, &[0; 32], b"client", 1).unwrap_err(),
+        TradeupError::InvalidWeights
+    );
+}

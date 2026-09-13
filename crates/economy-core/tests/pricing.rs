@@ -43,6 +43,30 @@ fn quote_returns_fee_and_actual_effective_spread() {
 }
 
 #[test]
+fn quote_rounds_only_after_exact_weighted_market_value() {
+    let outcomes = [PricedOutcome::new(101, 1, 1)];
+    let quote = quote_adjustment_microcredits(101, &outcomes).unwrap();
+    assert_eq!(quote.expected_buyback_microcredits, 86);
+    assert_eq!(quote.quote_total_microcredits, 101);
+    assert_eq!(quote.effective_spread, dec!(0.15));
+}
+
+#[test]
+fn quote_accepts_equivalent_mixed_probability_denominators() {
+    let outcomes = [
+        PricedOutcome::new(600, 1, 2),
+        PricedOutcome::new(600, 1, 3),
+        PricedOutcome::new(600, 1, 6),
+    ];
+    assert_eq!(
+        quote_adjustment_microcredits(600, &outcomes)
+            .unwrap()
+            .quote_total_microcredits,
+        600
+    );
+}
+
+#[test]
 fn quote_returns_rebate_without_a_simultaneous_fee() {
     let outcomes = [PricedOutcome::new(1_000_000, 1, 1)];
     let quote = quote_adjustment_microcredits(1_100_000, &outcomes).unwrap();

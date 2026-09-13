@@ -49,6 +49,8 @@ pub enum TradeupError {
     MixedInputRarities,
     #[error("Covert inputs are not eligible")]
     CovertInput,
+    #[error("rarity {rarity} cannot have a next tier")]
+    InvalidRarity { rarity: u8 },
     #[error("invalid float range for {sku_id}")]
     InvalidFloatRange { sku_id: String },
     #[error("float is outside its catalog range for {sku_id}")]
@@ -69,6 +71,11 @@ pub fn build_outcomes(
 ) -> Result<Vec<WeightedOutcome>, TradeupError> {
     validate_inputs(inputs)?;
     let input_rarity = inputs[0].rarity;
+    let output_rarity = input_rarity
+        .checked_add(1)
+        .ok_or(TradeupError::InvalidRarity {
+            rarity: input_rarity,
+        })?;
     let mut counts = BTreeMap::<&str, u64>::new();
     for item in inputs {
         *counts.entry(item.collection_id.as_str()).or_default() += 1;
@@ -80,7 +87,7 @@ pub fn build_outcomes(
         if !represented.contains(output.collection_id.as_str()) {
             continue;
         }
-        if output.rarity != input_rarity + 1 {
+        if output.rarity != output_rarity {
             return Err(TradeupError::WrongOutputRarity {
                 sku_id: output.sku_id.clone(),
             });
@@ -104,7 +111,8 @@ pub fn build_outcomes(
                 collection_id: (*collection).to_owned(),
             })?
             .len() as u64;
-        common = lcm(common, INPUT_COUNT as u64 * count);
+        common =
+            checked_lcm(common, INPUT_COUNT as u64 * count).ok_or(TradeupError::InvalidWeights)?;
     }
     if common < MIN_WEIGHT_DENOMINATOR {
         common *= MIN_WEIGHT_DENOMINATOR.div_ceil(common);
@@ -127,7 +135,7 @@ pub fn build_outcomes(
         }
     }
     result.sort_by(|a, b| a.sku_id.cmp(&b.sku_id));
-    if result.iter().map(|item| item.weight_numerator).sum::<u64>() != common {
+    if checked_weight_sum(&result)? != common {
         return Err(TradeupError::InvalidWeights);
     }
     Ok(result)
@@ -175,11 +183,7 @@ pub fn select_outcome(
     if outcomes
         .iter()
         .any(|outcome| outcome.weight_denominator != denominator || outcome.weight_numerator == 0)
-        || outcomes
-            .iter()
-            .map(|outcome| outcome.weight_numerator)
-            .sum::<u64>()
-            != denominator
+        || checked_weight_sum(outcomes)? != denominator
     {
         return Err(TradeupError::InvalidWeights);
     }
@@ -270,6 +274,13 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
     a
 }
 
-fn lcm(a: u64, b: u64) -> u64 {
-    a / gcd(a, b) * b
+fn checked_lcm(a: u64, b: u64) -> Option<u64> {
+    (a / gcd(a, b)).checked_mul(b)
+}
+
+fn checked_weight_sum(outcomes: &[WeightedOutcome]) -> Result<u64, TradeupError> {
+    outcomes.iter().try_fold(0_u64, |sum, outcome| {
+        sum.checked_add(outcome.weight_numerator)
+            .ok_or(TradeupError::InvalidWeights)
+    })
 }

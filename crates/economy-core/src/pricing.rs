@@ -90,37 +90,46 @@ pub fn quote_adjustment_microcredits(
     if verified_input_value_microcredits < 0 {
         return Err(PricingError::NegativeAmount);
     }
-    let denominator = outcomes
-        .first()
-        .map(|outcome| outcome.weight_denominator)
-        .filter(|value| *value > 0)
-        .ok_or(PricingError::InvalidProbabilities)?;
-    let weight_sum = outcomes.iter().try_fold(0_u64, |sum, outcome| {
-        if outcome.weight_denominator != denominator || outcome.weight_numerator == 0 {
+    if outcomes.is_empty() {
+        return Err(PricingError::InvalidProbabilities);
+    }
+    let common_denominator = outcomes.iter().try_fold(1_i128, |common, outcome| {
+        if outcome.weight_denominator == 0 || outcome.weight_numerator == 0 {
             return Err(PricingError::InvalidProbabilities);
         }
-        sum.checked_add(outcome.weight_numerator)
-            .ok_or(PricingError::InvalidProbabilities)
+        checked_lcm_i128(common, i128::from(outcome.weight_denominator))
+            .ok_or(PricingError::Overflow)
     })?;
-    if weight_sum != denominator {
+    let weight_sum = outcomes.iter().try_fold(0_i128, |sum, outcome| {
+        let scaled = i128::from(outcome.weight_numerator)
+            .checked_mul(common_denominator / i128::from(outcome.weight_denominator))
+            .ok_or(PricingError::Overflow)?;
+        sum.checked_add(scaled).ok_or(PricingError::Overflow)
+    })?;
+    if weight_sum != common_denominator {
         return Err(PricingError::InvalidProbabilities);
     }
 
-    let expected_numerator = outcomes.iter().try_fold(0_i128, |sum, outcome| {
-        let buyback = buyback_microcredits(outcome.verified_price_microcredits)?;
-        let weighted = i128::from(buyback)
-            .checked_mul(i128::from(outcome.weight_numerator))
+    let market_numerator = outcomes.iter().try_fold(0_i128, |sum, outcome| {
+        if outcome.verified_price_microcredits < 0 {
+            return Err(PricingError::NegativeAmount);
+        }
+        let scaled_weight = i128::from(outcome.weight_numerator)
+            .checked_mul(common_denominator / i128::from(outcome.weight_denominator))
+            .ok_or(PricingError::Overflow)?;
+        let weighted = i128::from(outcome.verified_price_microcredits)
+            .checked_mul(scaled_weight)
             .ok_or(PricingError::Overflow)?;
         sum.checked_add(weighted).ok_or(PricingError::Overflow)
     })?;
-    let expected = round_ratio_half_even(expected_numerator, i128::from(denominator))?;
-    let quote_numerator = expected_numerator
-        .checked_mul(i128::from(PERCENT_DENOMINATOR))
-        .ok_or(PricingError::Overflow)?;
-    let quote_denominator = i128::from(denominator)
+    let expected_buyback_numerator = market_numerator
         .checked_mul(i128::from(BUYBACK_PERCENT))
         .ok_or(PricingError::Overflow)?;
-    let quote_total = ceil_ratio(quote_numerator, quote_denominator)?;
+    let expected_buyback_denominator = common_denominator
+        .checked_mul(i128::from(PERCENT_DENOMINATOR))
+        .ok_or(PricingError::Overflow)?;
+    let expected = round_ratio_half_even(expected_buyback_numerator, expected_buyback_denominator)?;
+    let quote_total = ceil_ratio(market_numerator, common_denominator)?;
     let adjustment = quote_total
         .checked_sub(verified_input_value_microcredits)
         .ok_or(PricingError::Overflow)?;
@@ -129,7 +138,9 @@ pub fn quote_adjustment_microcredits(
     let effective_spread = if quote_total == 0 {
         Decimal::ZERO
     } else {
-        Decimal::ONE - Decimal::from(expected) / Decimal::from(quote_total)
+        let expected_decimal =
+            Decimal::from(expected_buyback_numerator) / Decimal::from(expected_buyback_denominator);
+        Decimal::ONE - expected_decimal / Decimal::from(quote_total)
     };
 
     Ok(QuotePrice {
@@ -140,6 +151,17 @@ pub fn quote_adjustment_microcredits(
         rebate_microcredits: rebate,
         effective_spread,
     })
+}
+
+fn gcd_i128(mut a: i128, mut b: i128) -> i128 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+fn checked_lcm_i128(a: i128, b: i128) -> Option<i128> {
+    (a / gcd_i128(a, b)).checked_mul(b)
 }
 
 fn ceil_ratio(numerator: i128, denominator: i128) -> Result<i64, PricingError> {
