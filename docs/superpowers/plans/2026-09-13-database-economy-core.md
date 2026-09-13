@@ -16,6 +16,7 @@
 - Do not personalize outcomes, falsify near-misses, reroll unavailable outputs, or hide published probabilities.
 - A contract accepts exactly ten eligible normal inputs of one rarity and rejects Covert inputs.
 - Quote expiry is 60 seconds; administrative approval expiry is 24 hours.
+- Unused commitment allocation expires after 15 seconds; each user has at most one active allocation or quote.
 - Buyback is `floor(0.85 * verified_price)`; quote total is `ceil(expected_buyback / 0.85)`.
 - Ledger settlement uses integer microcredits; the UI rounds only for display to USD cents; float values use decimal-safe types.
 - Price movement above 20% in 24 hours halts a SKU; automatic recovery requires movement within 5%.
@@ -113,9 +114,9 @@ Expected: failure because migrations and required objects are absent. If no Post
 
 Use bigint identity primary keys internally and UUID public IDs. Use lookup tables rather than PostgreSQL enums. Store password, invitation, recovery, and session tokens only as hashes. Store money as bigint microcredits and floats as `numeric(9,8)` with range checks.
 
-Create append-only event tables and current projections for inventory, balances, seed commitments/revelations, and singleton risk state. A deferred constraint trigger verifies each ledger transaction sums to zero. Security-definer functions own posting and finalization while runtime roles cannot mutate journals directly. Finalization validates exactly ten locked inputs. Critical-action approval enforces distinct active administrators, immutable payload hash, 24-hour expiry, rolling 24-hour credit thresholds, and idempotent execution key.
+Create append-only event tables and current projections for inventory, balances, seed commitments/revelations, and singleton risk state. Enforce one active allocation or quote per user, 15-second allocation expiry, input locks, candidate reservations, and idempotent result lookup. A deferred constraint trigger verifies each ledger transaction sums to zero. Security-definer functions own posting and finalization while runtime roles cannot mutate journals directly. Finalization validates exactly ten locked inputs. Critical-action approval enforces distinct active administrators, immutable payload hash, 24-hour expiry, rolling 24-hour credit thresholds, and idempotent execution key.
 
-Create immutable normalized sale evidence, current valuation, changed-only snapshots, daily aggregates, sticky price halts, versioned stock policies, quote inputs/outcomes and reservations, contracts, stored valuation references, and risk exposure aggregates. Add indexes for login, usable inventory, stock, recent sale evidence, quote expiry, and pending approvals.
+Create immutable normalized sale evidence, current valuation, changed-only snapshots, daily aggregates, sticky price halts and anomaly checks, versioned stock policies, quote inputs/outcomes and reservations, contracts, stored valuation references, and risk exposure aggregates. Snapshot publication invalidates older active quotes and releases their locks and reservations while holding the singleton risk lock. Add indexes for login, usable inventory, stock, recent sale evidence, quote expiry, and pending approvals.
 
 - [ ] **Step 4: Add append-only role guards**
 

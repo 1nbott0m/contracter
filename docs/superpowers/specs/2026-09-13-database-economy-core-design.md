@@ -43,11 +43,11 @@ All ranges are validated and calculations use decimal/rational-safe representati
 
 A quote contains a server-seed commitment, client seed, nonce, formula version, exact ordered outcome table, valuation snapshot IDs, stock-policy version, and expiry. Acceptance reveals the server seed and derives a digest from a domain-separated encoding of these fields. Replaying the same signed inputs must reproduce the selected outcome.
 
-Fairness uses a two-step protocol. Before the server receives item IDs or the client seed, it allocates the next unused seed commitment from an append-only, monotonically numbered commitment pool and returns its public commitment ID. The client then submits that ID with the ten items and client seed. Commitments are SHA-256 over a versioned, domain-separated, length-prefixed canonical byte encoding. Quotes are authenticated with an HMAC key ID; key rotation never removes the verification metadata required by stored quotes.
+Fairness uses a two-step protocol. Before the server receives item IDs or the client seed, it allocates the next unused seed commitment from an append-only, monotonically numbered commitment pool and returns its public commitment ID. The client then submits that ID with the ten items and client seed. Commitments are SHA-256 over a versioned, domain-separated, length-prefixed canonical byte encoding. Quotes carry an Ed25519 signing-key ID and publicly verifiable signature; key rotation retains the public verification metadata required by stored quotes.
 
 The selector uses rejection sampling from SHA-256 digest blocks so mapping to the integer total weight has no modulo bias. A commitment ID and nonce are unique and single-use. Seeds are revealed for accepted quotes immediately after selection and for expired or rejected allocations after expiry, so selective suppression remains auditable. Commitment allocation, quote creation, acceptance, and revelation are append-only events.
 
-Quote expiry is 60 seconds. A changed, expired, or incompletely stocked quote is rejected atomically. Acceptance is idempotent: a retry with the same idempotency key returns the already committed contract result rather than creating or rejecting a second result.
+An unused commitment allocation expires after 15 seconds. The MVP permits at most one active allocation or quote per user. Quote creation locks the ten unique input instances and reserves every candidate output for its 60-second lifetime; expiry releases all locks and reservations. A changed, expired, or incompletely stocked quote is rejected atomically. Acceptance is idempotent: a retry with the same idempotency key returns the already committed contract result rather than creating or rejecting a second result. Commitment events form a hash chain whose daily root is exported outside the primary database.
 
 ## Pricing and margin
 
@@ -73,7 +73,7 @@ For probabilities `p_j`:
 
 A positive adjustment is a fee; a negative adjustment is a visible rebate. This targets a 15% gross spread only if the user immediately sells the result back. It is not a promise of net profit.
 
-Price movement above 20% over 24 hours halts buy/sell/contracts for the SKU. Automatic recovery requires the next 24-hour comparison to be within 5%; earlier recovery requires two-admin approval.
+Price movement above 20% over 24 hours halts buy/sell/contracts for the SKU. Automatic recovery requires the next 24-hour comparison to be within 5%; earlier recovery requires two-admin approval. Versioned minimum-notional and dispersion checks also halt anomalous samples. Production activation requires a calibrated secondary reference; the test environment may instead hold anomalies for manual review.
 
 ## Stock and risk controls
 
@@ -97,9 +97,9 @@ Default limits:
 - one item at most 10% of liability;
 - one collection at most 25% of liability.
 
-One quote exposure is its maximum candidate buyback plus maximum rebate. Item and collection concentration use their stressed liabilities divided by total stressed liability. Quote creation reserves every candidate outcome and adds worst-case exposure. Acceptance or expiry releases unused reservations.
+One quote exposure is its maximum candidate buyback plus maximum rebate. SKU and collection concentration use their stressed liabilities divided by total stressed liability. Quote creation reserves every candidate outcome and adds worst-case exposure. Acceptance or expiry releases unused reservations.
 
-A singleton `risk_state` row stores the snapshot version and aggregate exposures. Quote creation and acceptance lock it before SKU, item, and ledger rows; all buy, sell, and contract paths use the same sorted lock order. The transaction rechecks price-halt state, risk version, coverage, quote exposure, and concentration. Violating a limit rejects the operation with a stable reason code.
+A singleton `risk_state` row stores the snapshot version and aggregate exposures. Publishing a valuation snapshot locks this row, invalidates older active quotes, releases their locks and reservations, then installs the new version. Quote creation and acceptance lock it before SKU, item, and ledger rows; all buy, sell, and contract paths use the same sorted lock order. The transaction rechecks price-halt state, risk version, coverage, quote exposure, and concentration. Violating a limit rejects the operation with a stable reason code.
 
 ## Identity and administration
 
@@ -107,7 +107,7 @@ Test access is invitation-only. Users authenticate with a unique login and Argon
 
 There are exactly two initial equal administrators. Critical actions use a two-person rule: proposer and approver must differ, payload is immutable, approval expires after 24 hours, and execution is idempotent. This covers economic settings, administrator membership/rights, early market unfreeze, a single credit adjustment over 100 USD, or cumulative adjustments by the same initiator to the same account exceeding 100 USD in a rolling 24-hour window.
 
-Administrative sessions require TOTP. Recovery revokes active sessions, cancels pending approvals, and freezes critical administration for 24 hours. Reconstituting a missing administrator requires the surviving administrator plus the missing administrator's sealed offline recovery share, creates an externally retained audit record, and cannot itself execute an economic action.
+Administrative sessions require TOTP. Recovery revokes active sessions, cancels pending approvals, and freezes critical administration for 24 hours. Recovery shares use a 2-of-3 scheme held separately by each administrator and one named non-admin custodian. Reconstitution requires the surviving administrator and custodian, creates an externally retained audit record, waits through the freeze, and cannot itself execute an economic action.
 
 Test users may receive 1000 USD in virtual credits through a one-time grant protected by a unique user-and-grant-kind constraint and a fail-closed test-environment database setting. Production has no automatic grant.
 
