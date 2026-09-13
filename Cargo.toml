@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/economy-core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+rust_decimal = "1"
+sha2 = "0.10"
+thiserror = "2"
+
