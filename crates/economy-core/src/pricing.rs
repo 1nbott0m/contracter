@@ -138,8 +138,13 @@ pub fn quote_adjustment_microcredits(
     let effective_spread = if quote_total == 0 {
         Decimal::ZERO
     } else {
-        let expected_decimal =
-            Decimal::from(expected_buyback_numerator) / Decimal::from(expected_buyback_denominator);
+        let divisor = gcd_i128(expected_buyback_numerator, expected_buyback_denominator);
+        let reduced_numerator = expected_buyback_numerator / divisor;
+        let reduced_denominator = expected_buyback_denominator / divisor;
+        let expected_decimal = Decimal::try_from_i128_with_scale(reduced_numerator, 0)
+            .map_err(|_| PricingError::Overflow)?
+            / Decimal::try_from_i128_with_scale(reduced_denominator, 0)
+                .map_err(|_| PricingError::Overflow)?;
         Decimal::ONE - expected_decimal / Decimal::from(quote_total)
     };
 

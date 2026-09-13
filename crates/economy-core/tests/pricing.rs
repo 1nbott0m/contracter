@@ -92,3 +92,11 @@ fn quote_rejects_checked_arithmetic_overflow() {
         PricingError::Overflow
     );
 }
+
+#[test]
+fn large_equivalent_probability_does_not_panic_during_spread_calculation() {
+    let outcomes = [PricedOutcome::new(1_000_000_000, u64::MAX, u64::MAX)];
+    let quote = quote_adjustment_microcredits(1_000_000_000, &outcomes).unwrap();
+    assert_eq!(quote.quote_total_microcredits, 1_000_000_000);
+    assert_eq!(quote.effective_spread, dec!(0.15));
+}
