@@ -4,6 +4,7 @@ mod database;
 mod ids;
 mod inventory;
 mod ledger;
+mod stock;
 
 pub use catalog::{
     CatalogItem, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
@@ -21,3 +22,7 @@ pub use ledger::{
     find_ledger_account, find_ledger_balance, post_credit_adjustment,
 };
 pub use sqlx::{PgPool, Postgres, Transaction};
+pub use stock::{
+    RiskState, StockPolicyBand, StockPolicyVersion, WarehouseStock, find_active_stock_policy_bands,
+    find_active_stock_policy_version, find_risk_state, find_warehouse_stock,
+};
