@@ -20,6 +20,7 @@ if [ -n "${TEST_DATABASE_URL:-}" ]; then
         fi
     fi
     ./db/verify.sh
+    cargo test -p db --test postgres -- --ignored
 else
     echo "PostgreSQL integration skipped: TEST_DATABASE_URL is not set"
 fi

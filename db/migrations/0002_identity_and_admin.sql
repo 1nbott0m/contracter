@@ -1,7 +1,3 @@
-\set ON_ERROR_STOP on
-
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS users (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     public_id uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
@@ -220,5 +216,3 @@ CREATE TRIGGER critical_action_approval_validate
 BEFORE INSERT ON critical_action_approval_events
 FOR EACH ROW
 EXECUTE FUNCTION validate_critical_action_approval();
-
-COMMIT;

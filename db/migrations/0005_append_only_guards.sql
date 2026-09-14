@@ -1,7 +1,3 @@
-\set ON_ERROR_STOP on
-
-BEGIN;
-
 CREATE OR REPLACE FUNCTION reject_append_only_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -213,5 +209,3 @@ BEGIN
     END IF;
 END;
 $block$;
-
-COMMIT;

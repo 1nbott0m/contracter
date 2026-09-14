@@ -1,7 +1,3 @@
-\set ON_ERROR_STOP on
-
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS price_sources (
     code text PRIMARY KEY,
     display_name text NOT NULL,
@@ -1006,5 +1002,3 @@ $function$;
 
 REVOKE ALL ON FUNCTION publish_valuation_snapshot(bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION finalize_contract(bigint, bigint[], uuid) FROM PUBLIC;
-
-COMMIT;

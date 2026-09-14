@@ -1,7 +1,3 @@
-\set ON_ERROR_STOP on
-
-BEGIN;
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Mutable business vocabularies are rows, never PostgreSQL enums. Task 3
@@ -78,5 +74,3 @@ CREATE TABLE IF NOT EXISTS grant_kinds (
     description text,
     CHECK (code = lower(code) AND code ~ '^[a-z][a-z0-9_]*$')
 );
-
-COMMIT;

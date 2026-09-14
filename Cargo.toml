@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/economy-core"]
+members = ["crates/db", "crates/economy-core"]
 resolver = "2"
 
 [workspace.package]
@@ -10,4 +10,4 @@ license = "MIT"
 rust_decimal = "1"
 sha2 = "0.10"
 thiserror = "2"
-
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

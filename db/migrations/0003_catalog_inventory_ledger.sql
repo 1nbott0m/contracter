@@ -1,7 +1,3 @@
-\set ON_ERROR_STOP on
-
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS collections (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     public_id uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
@@ -544,5 +540,3 @@ $function$;
 REVOKE ALL ON FUNCTION post_ledger_transaction(text, uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION post_credit_adjustment(bigint, bigint, bigint, uuid, bigint)
     FROM PUBLIC;
-
-COMMIT;

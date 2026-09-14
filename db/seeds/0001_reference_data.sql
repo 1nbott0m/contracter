@@ -1,7 +1,3 @@
-\set ON_ERROR_STOP on
-
-BEGIN;
-
 INSERT INTO critical_action_types (code, requires_dual_approval, description) VALUES
     ('economic_settings', true, 'Change economy or risk settings'),
     ('admin_membership', true, 'Change administrator membership or rights'),
@@ -173,5 +169,3 @@ ON CONFLICT (version) DO NOTHING;
 INSERT INTO price_sources (code, display_name, enabled)
 VALUES ('market_csgo', 'Market.CSGO completed sales', false)
 ON CONFLICT (code) DO UPDATE SET display_name = EXCLUDED.display_name;
-
-COMMIT;

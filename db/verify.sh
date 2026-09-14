@@ -20,7 +20,8 @@ for migration in "$migration_dir"/*.sql; do
     fi
 
     migration_found=1
-    psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 --file="$migration"
+    psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+        --single-transaction --file="$migration"
 done
 
 if [ "$migration_found" -ne 1 ]; then
@@ -30,7 +31,8 @@ fi
 
 for seed in "$seed_dir"/*.sql; do
     if [ -f "$seed" ]; then
-        psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 --file="$seed"
+        psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+            --single-transaction --file="$seed"
     fi
 done
 
