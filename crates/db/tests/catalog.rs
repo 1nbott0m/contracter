@@ -30,7 +30,7 @@ async fn isolated_transaction(database: &Database) -> Transaction<'_, Postgres> 
 async fn ensure_lookup_rows(transaction: &mut Transaction<'_, Postgres>) {
     transaction
         .execute(
-            "INSERT INTO rarities (code, rank, is_covert) VALUES ('mil_spec', 2, false) \
+            "INSERT INTO rarities (code, rank, is_covert) VALUES ('mil-spec', 2, false) \
              ON CONFLICT (code) DO NOTHING",
         )
         .await
@@ -158,7 +158,7 @@ async fn existing_collection_item_and_sku_are_found_by_public_id() {
     let item = insert_catalog_item(
         &mut transaction,
         collection.id,
-        "mil_spec",
+        "mil-spec",
         "Found Item",
         true,
         "0",
@@ -181,7 +181,7 @@ async fn existing_collection_item_and_sku_are_found_by_public_id() {
         .expect("catalog item exists");
     assert_eq!(found_item.id, item.id);
     assert_eq!(found_item.collection_id, collection.id);
-    assert_eq!(found_item.rarity_code, "mil_spec");
+    assert_eq!(found_item.rarity_code, "mil-spec");
 
     let found_sku = find_sku_by_public_id(transaction.as_mut(), sku.public_id)
         .await
@@ -237,7 +237,7 @@ async fn disabled_collection_item_and_sku_are_excluded_from_active_selection() {
     let active_item = insert_catalog_item(
         &mut transaction,
         enabled_collection.id,
-        "mil_spec",
+        "mil-spec",
         "Active Item",
         true,
         "0",
@@ -247,7 +247,7 @@ async fn disabled_collection_item_and_sku_are_excluded_from_active_selection() {
     let disabled_item = insert_catalog_item(
         &mut transaction,
         enabled_collection.id,
-        "mil_spec",
+        "mil-spec",
         "Disabled Item",
         false,
         "0",
@@ -257,7 +257,7 @@ async fn disabled_collection_item_and_sku_are_excluded_from_active_selection() {
     let item_in_disabled_collection = insert_catalog_item(
         &mut transaction,
         disabled_collection.id,
-        "mil_spec",
+        "mil-spec",
         "Item In Disabled Collection",
         true,
         "0",
@@ -277,14 +277,14 @@ async fn disabled_collection_item_and_sku_are_excluded_from_active_selection() {
     )
     .await;
 
-    let active_results = find_active_skus(transaction.as_mut(), enabled_collection.id, "mil_spec")
+    let active_results = find_active_skus(transaction.as_mut(), enabled_collection.id, "mil-spec")
         .await
         .expect("query active skus");
     assert_eq!(active_results.len(), 1);
     assert_eq!(active_results[0].id, active_sku.id);
 
     let disabled_collection_results =
-        find_active_skus(transaction.as_mut(), disabled_collection.id, "mil_spec")
+        find_active_skus(transaction.as_mut(), disabled_collection.id, "mil-spec")
             .await
             .expect("query active skus for disabled collection");
     assert!(disabled_collection_results.is_empty());
@@ -304,7 +304,7 @@ async fn active_skus_are_stably_ordered_by_sku_id() {
     let item_a = insert_catalog_item(
         &mut transaction,
         collection.id,
-        "mil_spec",
+        "mil-spec",
         "Order Item A",
         true,
         "0",
@@ -314,7 +314,7 @@ async fn active_skus_are_stably_ordered_by_sku_id() {
     let item_b = insert_catalog_item(
         &mut transaction,
         collection.id,
-        "mil_spec",
+        "mil-spec",
         "Order Item B",
         true,
         "0",
@@ -326,7 +326,7 @@ async fn active_skus_are_stably_ordered_by_sku_id() {
     let sku_second = insert_sku(&mut transaction, item_a.id, factory_new, true).await;
     let sku_third = insert_sku(&mut transaction, item_a.id, minimal_wear, true).await;
 
-    let results = find_active_skus(transaction.as_mut(), collection.id, "mil_spec")
+    let results = find_active_skus(transaction.as_mut(), collection.id, "mil-spec")
         .await
         .expect("query active skus");
 
@@ -349,7 +349,7 @@ async fn catalog_item_float_bounds_read_as_decimal_without_precision_loss() {
     let item = insert_catalog_item(
         &mut transaction,
         collection.id,
-        "mil_spec",
+        "mil-spec",
         "Precision Item",
         true,
         "0.00000001",
