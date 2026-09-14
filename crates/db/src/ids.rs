@@ -23,6 +23,7 @@ internal_id!(AdministratorId);
 internal_id!(CriticalActionId);
 internal_id!(CollectionId);
 internal_id!(CatalogItemId);
+internal_id!(WearBandId);
 internal_id!(SkuId);
 internal_id!(InventoryItemId);
 internal_id!(LedgerAccountId);
