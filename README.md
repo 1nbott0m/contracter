@@ -2,6 +2,8 @@
 
 Репозиторий содержит только фундамент базы данных и детерминированную экономическую логику Contracter. HTTP backend и frontend намеренно не реализованы.
 
+Пошаговая инструкция для второго разработчика: [`docs/FRIEND_ONBOARDING_RU.md`](docs/FRIEND_ONBOARDING_RU.md). Правила для Claude Code находятся в [`CLAUDE.md`](CLAUDE.md).
+
 ## Состав проекта
 
 - `crates/economy-core` — точные расчёты контрактов, цен и risk policy без сети и базы данных.
