@@ -2,7 +2,7 @@
 
 Репозиторий содержит только фундамент базы данных и детерминированную экономическую логику Contracter. HTTP backend и frontend намеренно не реализованы.
 
-Пошаговая инструкция для второго разработчика: [`docs/FRIEND_ONBOARDING_RU.md`](docs/FRIEND_ONBOARDING_RU.md). Правила для Claude Code находятся в [`CLAUDE.md`](CLAUDE.md).
+Пошаговая инструкция для второго разработчика: [`docs/FRIEND_ONBOARDING_RU.md`](docs/FRIEND_ONBOARDING_RU.md). Готовая версия для отправки другу: [`docs/Инструкция_для_разработчика_Contracter.docx`](docs/Инструкция_для_разработчика_Contracter.docx). Правила для Claude Code находятся в [`CLAUDE.md`](CLAUDE.md).
 
 ## Состав проекта
 
