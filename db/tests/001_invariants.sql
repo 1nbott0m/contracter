@@ -350,6 +350,24 @@ SELECT pg_temp.assert_ok(
 );
 
 SELECT pg_temp.assert_sqlstate(
+    'a credit adjustment execution key cannot be reused with another request',
+    '23505',
+    $sql$
+        SELECT post_credit_adjustment(
+            (SELECT administrator.id
+             FROM administrators AS administrator
+             JOIN users AS app_user ON app_user.id = administrator.user_id
+             WHERE app_user.public_id = '10000000-0000-0000-0000-000000000001'),
+            (SELECT id FROM users
+             WHERE public_id = '10000000-0000-0000-0000-000000000003'),
+            99999999,
+            '50000000-0000-0000-0000-000000000001',
+            NULL
+        )
+    $sql$
+);
+
+SELECT pg_temp.assert_sqlstate(
     'a 10001-cent adjustment requires dual approval',
     '42501',
     $sql$

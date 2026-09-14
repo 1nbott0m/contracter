@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use sqlx::{
     PgPool, Postgres, Transaction,
     migrate::{MigrateError, Migrator},
@@ -50,4 +52,13 @@ pub enum DatabaseError {
     Sqlx(#[from] sqlx::Error),
     #[error("PostgreSQL migration failed: {0}")]
     Migration(#[from] MigrateError),
+}
+
+impl DatabaseError {
+    pub fn database_code(&self) -> Option<Cow<'_, str>> {
+        match self {
+            Self::Sqlx(sqlx::Error::Database(error)) => error.code(),
+            Self::Sqlx(_) | Self::Migration(_) => None,
+        }
+    }
 }

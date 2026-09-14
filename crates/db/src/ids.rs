@@ -19,11 +19,15 @@ macro_rules! internal_id {
 }
 
 internal_id!(UserId);
+internal_id!(AdministratorId);
+internal_id!(CriticalActionId);
 internal_id!(CollectionId);
 internal_id!(CatalogItemId);
 internal_id!(SkuId);
 internal_id!(InventoryItemId);
 internal_id!(LedgerAccountId);
+internal_id!(LedgerTransactionId);
+internal_id!(CreditAdjustmentEventId);
 internal_id!(ValuationSnapshotId);
 internal_id!(QuoteId);
 internal_id!(ContractId);
