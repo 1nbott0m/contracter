@@ -5,7 +5,8 @@ set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 migration_dir="$repo_dir/db/migrations"
-test_file="$repo_dir/db/tests/001_invariants.sql"
+test_dir="$repo_dir/db/tests"
+seed_dir="$repo_dir/db/seeds"
 migration_found=0
 
 # POSIX glob expansion is sorted according to the active locale.  Pinning the
@@ -27,4 +28,14 @@ if [ "$migration_found" -ne 1 ]; then
     exit 1
 fi
 
-psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 --file="$test_file"
+for seed in "$seed_dir"/*.sql; do
+    if [ -f "$seed" ]; then
+        psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 --file="$seed"
+    fi
+done
+
+for test_file in "$test_dir"/*.sql; do
+    if [ -f "$test_file" ]; then
+        psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 --file="$test_file"
+    fi
+done
