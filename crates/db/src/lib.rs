@@ -5,6 +5,7 @@ mod ids;
 mod inventory;
 mod ledger;
 mod pricing;
+mod quotes;
 
 pub use catalog::{
     CatalogItem, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
@@ -25,5 +26,9 @@ pub use pricing::{
     CurrentValuation, PriceHalt, SnapshotValuation, ValuationSnapshot, find_current_valuation,
     find_valuation_snapshot, list_active_price_halts, list_snapshot_valuations,
     list_tradeable_current_valuations,
+};
+pub use quotes::{
+    QuoteInput, QuoteOutcome, TradeupQuote, find_active_quote_for_user, find_tradeup_quote,
+    list_quote_inputs, list_quote_outcomes,
 };
 pub use sqlx::{PgPool, Postgres, Transaction};

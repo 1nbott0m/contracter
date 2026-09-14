@@ -32,7 +32,14 @@ internal_id!(CreditAdjustmentEventId);
 internal_id!(ValuationSnapshotId);
 internal_id!(ValuationSnapshotItemId);
 internal_id!(PriceHaltId);
+internal_id!(SeedCommitmentId);
+internal_id!(SeedAllocationId);
+internal_id!(StockPolicyVersionId);
+internal_id!(RiskPolicyVersionId);
+internal_id!(QuoteSigningKeyId);
 internal_id!(QuoteId);
+internal_id!(QuoteInputId);
+internal_id!(QuoteOutcomeId);
 internal_id!(ContractId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]
