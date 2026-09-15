@@ -18,7 +18,7 @@ async fn sqlx_applies_migrations_idempotently_and_rolls_back_transactions() {
         .fetch_one(database.pool())
         .await
         .expect("read SQLx migration history");
-    assert_eq!(applied, 8);
+    assert_eq!(applied, 9);
 
     let mut transaction = database.begin().await.expect("begin transaction");
     transaction

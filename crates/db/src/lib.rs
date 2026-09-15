@@ -5,6 +5,7 @@ mod ids;
 mod inventory;
 mod ledger;
 mod pricing;
+mod scarcity;
 
 pub use catalog::{
     CatalogItem, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
@@ -25,5 +26,9 @@ pub use pricing::{
     CurrentValuation, PriceHalt, SnapshotValuation, ValuationSnapshot, find_current_valuation,
     find_valuation_snapshot, list_active_price_halts, list_snapshot_valuations,
     list_tradeable_current_valuations,
+};
+pub use scarcity::{
+    CollectionScarcity, CollectionScarcitySnapshotItem, find_current_collection_scarcity,
+    list_collection_scarcity_history, publish_collection_scarcity_snapshot,
 };
 pub use sqlx::{PgPool, Postgres, Transaction};
