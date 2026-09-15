@@ -4,6 +4,7 @@ mod database;
 mod ids;
 mod inventory;
 mod ledger;
+mod pricing;
 mod stock;
 
 pub use catalog::{
@@ -20,6 +21,11 @@ pub use inventory::{
 pub use ledger::{
     CreditAdjustmentEvent, LedgerAccount, LedgerBalance, find_credit_adjustment,
     find_ledger_account, find_ledger_balance, post_credit_adjustment,
+};
+pub use pricing::{
+    CurrentValuation, PriceHalt, SnapshotValuation, ValuationSnapshot, find_current_valuation,
+    find_valuation_snapshot, list_active_price_halts, list_snapshot_valuations,
+    list_tradeable_current_valuations,
 };
 pub use sqlx::{PgPool, Postgres, Transaction};
 pub use stock::{

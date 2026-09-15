@@ -30,6 +30,8 @@ internal_id!(LedgerAccountId);
 internal_id!(LedgerTransactionId);
 internal_id!(CreditAdjustmentEventId);
 internal_id!(ValuationSnapshotId);
+internal_id!(ValuationSnapshotItemId);
+internal_id!(PriceHaltId);
 internal_id!(StockPolicyVersionId);
 internal_id!(StockPolicyBandId);
 internal_id!(RiskPolicyVersionId);
