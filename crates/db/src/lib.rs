@@ -1,5 +1,6 @@
 mod catalog;
 mod config;
+mod contracts;
 mod database;
 mod ids;
 mod inventory;
@@ -12,6 +13,10 @@ pub use catalog::{
     find_collection_by_public_id, find_sku_by_public_id,
 };
 pub use config::{DatabaseConfig, DatabaseConfigError};
+pub use contracts::{
+    Contract, ContractInput, ContractOutcome, find_contract_by_public_id,
+    find_contract_by_quote_id, find_contract_outcome, list_contract_inputs,
+};
 pub use database::{Database, DatabaseError, MIGRATOR};
 pub use ids::*;
 pub use inventory::{

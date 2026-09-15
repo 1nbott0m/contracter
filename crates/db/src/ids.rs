@@ -41,6 +41,8 @@ internal_id!(QuoteId);
 internal_id!(QuoteInputId);
 internal_id!(QuoteOutcomeId);
 internal_id!(ContractId);
+internal_id!(ContractInputId);
+internal_id!(ContractOutcomeId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]
 #[sqlx(transparent)]
