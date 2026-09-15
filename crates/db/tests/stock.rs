@@ -79,16 +79,23 @@ async fn insert_stock_policy_version(
     activated: bool,
     retired: bool,
 ) -> StockPolicyVersionId {
+    // A seeded active policy (version 1) may already exist with `activated_at`
+    // at or before now. A retired fixture's `activated_at` only needs to
+    // precede its own `retired_at`, but a still-active fixture must sort
+    // ahead of any pre-existing active seed row, so it gets a future
+    // timestamp instead of a past one.
     sqlx::query_scalar(
         "INSERT INTO stock_policy_versions (version, activated_at, retired_at) \
          VALUES ( \
              $1, \
-             CASE WHEN $2 THEN clock_timestamp() - interval '1 hour' ELSE NULL END, \
+             CASE WHEN $3 THEN clock_timestamp() - interval '2 hours' \
+                  WHEN $2 THEN clock_timestamp() + interval '1 hour' \
+                  ELSE NULL END, \
              CASE WHEN $3 THEN clock_timestamp() ELSE NULL END \
          ) RETURNING id",
     )
     .bind(version)
-    .bind(activated || retired)
+    .bind(activated)
     .bind(retired)
     .fetch_one(transaction.as_mut())
     .await
@@ -254,4 +261,70 @@ async fn risk_state_singleton_reflects_current_values() {
     assert_eq!(updated.version, initial_version + 1);
 
     transaction.rollback().await.expect("rollback fixture");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn runtime_role_can_execute_stock_and_risk_read_api() {
+    let database = test_database().await;
+    let runtime_role_required = std::env::var_os("TEST_RUNTIME_ROLE_REQUIRED").is_some();
+    let role_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')",
+    )
+    .fetch_one(database.pool())
+    .await
+    .expect("inspect runtime role");
+    if !role_exists {
+        assert!(
+            !runtime_role_required,
+            "contracter_runtime is required but does not exist"
+        );
+        eprintln!("contracter_runtime does not exist; runtime-role execution check skipped");
+        return;
+    }
+
+    for relation in [
+        "stock_policy_versions",
+        "stock_policy_bands",
+        "warehouse_stock",
+        "risk_state",
+    ] {
+        let can_select: bool =
+            sqlx::query_scalar("SELECT has_table_privilege('contracter_runtime', $1, 'SELECT')")
+                .bind(relation)
+                .fetch_one(database.pool())
+                .await
+                .expect("inspect stock/risk privilege");
+        assert!(can_select, "runtime role cannot select {relation}");
+    }
+
+    let can_set_role: bool =
+        sqlx::query_scalar("SELECT pg_has_role(current_user, 'contracter_runtime', 'SET')")
+            .fetch_one(database.pool())
+            .await
+            .expect("inspect SET ROLE membership");
+    if !can_set_role {
+        assert!(
+            !runtime_role_required,
+            "migration user cannot SET ROLE contracter_runtime"
+        );
+        eprintln!("migration user cannot SET ROLE contracter_runtime; execution check skipped");
+        return;
+    }
+
+    let mut transaction = isolated_transaction(&database).await;
+    transaction
+        .execute("SET LOCAL ROLE contracter_runtime")
+        .await
+        .expect("assume runtime role");
+    find_active_stock_policy_version(transaction.as_mut())
+        .await
+        .expect("runtime role reads active stock policy version");
+    find_active_stock_policy_bands(transaction.as_mut())
+        .await
+        .expect("runtime role reads active stock policy bands");
+    find_risk_state(transaction.as_mut())
+        .await
+        .expect("runtime role reads risk state");
+    transaction.rollback().await.expect("rollback role check");
 }
