@@ -159,6 +159,17 @@ pub struct ScarcityMultiplier {
 /// the surviving damped numerators, which already satisfies
 /// [`select_outcome`]'s "numerators sum to the shared denominator"
 /// invariant without rescaling back to the original total.
+///
+/// Each outcome's damped weight floors to an integer independently
+/// (`weight_numerator * multiplier.numerator / multiplier.denominator`).
+/// For small `weight_numerator` values -- which `build_outcomes` routinely
+/// produces -- two different multipliers can floor to the same integer for
+/// every outcome and so produce a bit-identical result: e.g. two outcomes
+/// each with `weight_numerator = 3` damped by 50/100 and by 40/60 both
+/// floor to `(1, 1)`. A caller publishing a materially different scarcity
+/// multiplier is not guaranteed any observable effect on low-weight
+/// outcomes; see
+/// `draining_stock_cannot_increase_a_collections_own_weight_but_may_have_no_effect_at_low_weight`.
 pub fn apply_collection_scarcity(
     outcomes: &[WeightedOutcome],
     multipliers: &BTreeMap<String, ScarcityMultiplier>,

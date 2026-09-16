@@ -313,6 +313,79 @@ fn draining_stock_cannot_increase_a_collections_own_weight() {
 }
 
 #[test]
+fn draining_stock_cannot_increase_a_collections_own_weight_but_may_have_no_effect_at_low_weight() {
+    use economy_core::tradeup::WeightedOutcome;
+
+    // Documents a real precision limit of apply_collection_scarcity (see its
+    // doc comment): at low weight scale, two meaningfully different
+    // multiplier sets can floor to the identical damped distribution. Here
+    // both outcomes start at weight_numerator = 3; a "symmetric, no real
+    // damping" multiplier set and a "skewed, one collection more scarce"
+    // multiplier set both floor to (1, 1) for every outcome.
+    let outcomes = vec![
+        WeightedOutcome {
+            sku_id: "a".into(),
+            collection_id: "a".into(),
+            weight_numerator: 3,
+            weight_denominator: 6,
+        },
+        WeightedOutcome {
+            sku_id: "b".into(),
+            collection_id: "b".into(),
+            weight_numerator: 3,
+            weight_denominator: 6,
+        },
+    ];
+
+    let symmetric = apply_collection_scarcity(
+        &outcomes,
+        &BTreeMap::from([
+            (
+                "a".to_string(),
+                ScarcityMultiplier {
+                    numerator: 50,
+                    denominator: 100,
+                },
+            ),
+            (
+                "b".to_string(),
+                ScarcityMultiplier {
+                    numerator: 50,
+                    denominator: 100,
+                },
+            ),
+        ]),
+    )
+    .unwrap();
+    let skewed = apply_collection_scarcity(
+        &outcomes,
+        &BTreeMap::from([
+            (
+                "a".to_string(),
+                ScarcityMultiplier {
+                    numerator: 40,
+                    denominator: 100,
+                },
+            ),
+            (
+                "b".to_string(),
+                ScarcityMultiplier {
+                    numerator: 60,
+                    denominator: 100,
+                },
+            ),
+        ]),
+    )
+    .unwrap();
+
+    assert_eq!(
+        symmetric, skewed,
+        "known precision limit: distinct multiplier sets can collapse to the same \
+         damped distribution at low weight scale"
+    );
+}
+
+#[test]
 fn rejects_weight_sum_overflow_without_panicking() {
     use economy_core::tradeup::WeightedOutcome;
     let outcomes = [
