@@ -14,9 +14,16 @@
 //! row. There is no cleanup step here by design — this test is expected to
 //! run only against a disposable local test database, and the permanent
 //! rows it leaves behind are the correct behavior of the append-only ledger
-//! this test is verifying, not a test-hygiene bug.
+//! this test is verifying, not a test-hygiene bug. The scarcity-publish race
+//! test below leaves a similarly permanent `collections`/`catalog_items`/
+//! `skus` row behind for the same reason (two real connections need to see
+//! it); those rows are not append-only-guarded, just harmless test debris
+//! uniquely named per run.
 
-use db::{Database, DatabaseConfig, post_credit_adjustment};
+use db::{
+    CollectionId, Database, DatabaseConfig, find_current_collection_scarcity,
+    post_credit_adjustment, publish_collection_scarcity_snapshot,
+};
 use uuid::Uuid;
 
 async fn test_database() -> Database {
@@ -207,9 +214,14 @@ async fn concurrent_credit_adjustments_with_different_keys_both_settle_independe
     let target_user_id = db::UserId::new(target_user_id);
 
     // Same two-connection race, but two genuinely different operations
-    // (different idempotency keys) on the same account: both must apply,
-    // proving the advisory lock serializes without over-serializing
-    // (i.e. it locks on the key, not on the whole account).
+    // (different idempotency keys) on the same account: both must apply
+    // exactly once each with a correct final balance. Note this does not by
+    // itself prove the advisory lock is scoped to the key rather than the
+    // whole account -- `post_credit_adjustment` also takes a `FOR UPDATE`
+    // row lock on the ledger account before touching balances, which alone
+    // would serialize these two calls correctly regardless of the advisory
+    // lock's granularity. This test guards the end-to-end arithmetic under
+    // real concurrency, not the lock's key-scoping specifically.
     let mut connection_a = database
         .pool()
         .acquire()
@@ -257,5 +269,98 @@ async fn concurrent_credit_adjustments_with_different_keys_both_settle_independe
     assert_eq!(
         balance_microcredits, 5_000_000,
         "both distinct concurrent adjustments must be applied exactly once each"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn concurrent_scarcity_publishes_leave_current_pointing_at_the_latest_snapshot() {
+    let database = test_database().await;
+
+    // Relies on the seed data's `stock_policy_versions` version 1 (see
+    // `db/seeds/0001_reference_data.sql`), which is always active by the
+    // time this integration suite runs -- db/verify.sh applies seeds before
+    // `cargo test -- --ignored` runs. Using the seeded 'consumer' rarity
+    // avoids needing to insert and race a second stock policy version.
+    let suffix = Uuid::new_v4().simple().to_string();
+    sqlx::query(
+        "INSERT INTO wear_bands (code, lower_bound, upper_bound, includes_upper_bound) \
+         VALUES ('concurrency-scarcity', 0, 1, true) ON CONFLICT (code) DO NOTHING",
+    )
+    .execute(database.pool())
+    .await
+    .expect("seed wear band");
+    let collection_id: i64 = sqlx::query_scalar(
+        "INSERT INTO collections (slug, display_name) VALUES ($1, 'Concurrency Scarcity Test') \
+         RETURNING id",
+    )
+    .bind(format!("concurrency-scarcity-{suffix}"))
+    .fetch_one(database.pool())
+    .await
+    .expect("insert collection");
+    let catalog_item_id: i64 = sqlx::query_scalar(
+        "INSERT INTO catalog_items \
+            (collection_id, rarity_code, stable_name, min_float, max_float) \
+         VALUES ($1, 'consumer', $2, 0, 1) RETURNING id",
+    )
+    .bind(collection_id)
+    .bind(format!("concurrency-scarcity-item-{suffix}"))
+    .fetch_one(database.pool())
+    .await
+    .expect("insert catalog item");
+    let sku_id: i64 = sqlx::query_scalar(
+        "INSERT INTO skus (catalog_item_id, wear_band_id) \
+         SELECT $1, id FROM wear_bands WHERE code = 'concurrency-scarcity' RETURNING id",
+    )
+    .bind(catalog_item_id)
+    .fetch_one(database.pool())
+    .await
+    .expect("insert SKU");
+    sqlx::query("INSERT INTO warehouse_stock (sku_id, available_units) VALUES ($1, 40)")
+        .bind(sku_id)
+        .execute(database.pool())
+        .await
+        .expect("seed warehouse stock");
+    let collection_id = CollectionId::new(collection_id);
+
+    // Two independently pooled connections publishing concurrently: without
+    // the pg_advisory_xact_lock in publish_collection_scarcity_snapshot
+    // (db/migrations/0011_scarcity_publish_hardening.sql), the two
+    // `ON CONFLICT (collection_id) DO UPDATE` upserts into
+    // current_collection_scarcity race, and whichever commits last wins --
+    // not necessarily the snapshot that was actually created last.
+    let mut connection_a = database
+        .pool()
+        .acquire()
+        .await
+        .expect("acquire connection a");
+    let mut connection_b = database
+        .pool()
+        .acquire()
+        .await
+        .expect("acquire connection b");
+
+    let (result_a, result_b) = tokio::join!(
+        publish_collection_scarcity_snapshot(&mut *connection_a, "concurrency-scarcity-a"),
+        publish_collection_scarcity_snapshot(&mut *connection_b, "concurrency-scarcity-b"),
+    );
+
+    let snapshot_id_a = result_a.expect("first concurrent publish settles").get();
+    let snapshot_id_b = result_b.expect("second concurrent publish settles").get();
+    assert_ne!(
+        snapshot_id_a, snapshot_id_b,
+        "two concurrent publishes must create two distinct snapshots"
+    );
+    let latest_snapshot_id = snapshot_id_a.max(snapshot_id_b);
+
+    let current = find_current_collection_scarcity(database.pool(), collection_id)
+        .await
+        .expect("query current collection scarcity")
+        .expect("collection has a current scarcity row");
+    assert_eq!(
+        current.snapshot_id.get(),
+        latest_snapshot_id,
+        "current_collection_scarcity must point at the most recently created snapshot, \
+         not whichever concurrent publish happened to commit last"
     );
 }

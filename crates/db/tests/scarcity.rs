@@ -104,19 +104,22 @@ async fn set_warehouse_stock(
 
 /// A clearly active stock policy version, with no bands yet. A seeded
 /// `version = 1` policy may already be active in a fully-seeded database, so
-/// `activated_at` is set an hour into the future to guarantee it sorts as
-/// the most recent active version (same fix applied in
-/// `crates/db/tests/stock.rs`). The aggregation query picks exactly one
-/// "the" active version, so a test that needs bands for more than one
-/// rarity must call this once and add every band to that same id --
-/// calling it once per rarity creates competing "active" versions where
-/// only the most-recently-inserted one is actually picked up, silently
-/// orphaning every earlier band.
+/// `activated_at` is set to `clock_timestamp()` at insert time -- strictly
+/// later than the seed's insert-time timestamp, so this version still sorts
+/// first under `ORDER BY activated_at DESC` without being future-dated
+/// (`publish_collection_scarcity_snapshot` rejects any version whose
+/// `activated_at` has not yet arrived; see
+/// `future_dated_stock_policy_version_is_not_treated_as_active`). The
+/// aggregation query picks exactly one "the" active version, so a test that
+/// needs bands for more than one rarity must call this once and add every
+/// band to that same id -- calling it once per rarity creates competing
+/// "active" versions where only the most-recently-inserted one is actually
+/// picked up, silently orphaning every earlier band.
 async fn insert_active_stock_policy_version(transaction: &mut Transaction<'_, Postgres>) -> i64 {
     let version = (Uuid::new_v4().as_u128() % 1_000_000) as i32 + 1;
     sqlx::query_scalar(
         "INSERT INTO stock_policy_versions (version, activated_at) \
-         VALUES ($1, clock_timestamp() + interval '1 hour') RETURNING id",
+         VALUES ($1, clock_timestamp()) RETURNING id",
     )
     .bind(version)
     .fetch_one(transaction.as_mut())
@@ -268,6 +271,48 @@ async fn scarcity_history_accumulates_across_multiple_publishes() {
         .expect("collection has a scarcity row");
     assert_eq!(current.weight_multiplier_numerator, 60);
     assert_eq!(current.weight_multiplier_denominator, 100);
+
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn future_dated_stock_policy_version_is_not_treated_as_active() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+
+    // A version whose activation has not arrived yet must not outrank a
+    // genuinely-active one just because it sorts later by `activated_at`.
+    // This rarity code is used by no other stock policy version (the seeded
+    // v1 only covers consumer/industrial/mil-spec/restricted/classified/
+    // covert), so if the future-dated version were (incorrectly) picked up,
+    // this collection would get a scarcity row; if correctly ignored, it
+    // must have no coverage at all and therefore no row.
+    let collection = insert_collection(&mut transaction, "scarcity-future-dated").await;
+    let sku = insert_sku(&mut transaction, collection, "scarcity-future", 99).await;
+    set_warehouse_stock(&mut transaction, sku, 10).await;
+
+    let future_version_id: i64 = sqlx::query_scalar(
+        "INSERT INTO stock_policy_versions (version, activated_at) \
+         VALUES ($1, clock_timestamp() + interval '1 hour') RETURNING id",
+    )
+    .bind((Uuid::new_v4().as_u128() % 1_000_000) as i32 + 1)
+    .fetch_one(transaction.as_mut())
+    .await
+    .expect("insert future-dated stock policy version");
+    insert_stock_policy_band(&mut transaction, future_version_id, "scarcity-future", 50).await;
+
+    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
+        .await
+        .expect("publish scarcity snapshot");
+
+    assert!(
+        find_current_collection_scarcity(transaction.as_mut(), collection)
+            .await
+            .expect("query future-dated collection scarcity")
+            .is_none(),
+        "a stock policy version that has not activated yet must not be treated as active"
+    );
 
     transaction.rollback().await.expect("rollback fixture");
 }
