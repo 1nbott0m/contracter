@@ -62,7 +62,9 @@ async fn seed_contract(transaction: &mut Transaction<'_, Postgres>) -> ContractF
              INSERT INTO quote_statuses (code, is_terminal, description) \
              VALUES ('accepted', true, 'Accepted') ON CONFLICT (code) DO NOTHING; \
              INSERT INTO contract_statuses (code, is_terminal, description) \
-             VALUES ('completed', true, 'Completed') ON CONFLICT (code) DO NOTHING",
+             VALUES ('completed', true, 'Completed') ON CONFLICT (code) DO NOTHING; \
+             INSERT INTO price_sources (code, display_name, enabled) \
+             VALUES ('contract_test', 'Contract test', true) ON CONFLICT (code) DO NOTHING",
         )
         .await
         .expect("seed contract lookups");
@@ -111,9 +113,21 @@ async fn seed_contract(transaction: &mut Transaction<'_, Postgres>) -> ContractF
     .fetch_one(transaction.as_mut())
     .await
     .expect("insert seed commitment");
+    // clock_timestamp() is volatile and can return a different instant on
+    // each call within the same statement, so allocated_at's column DEFAULT
+    // and an independent `expires_at` expression can drift by a few
+    // microseconds and intermittently violate the "expires_at <=
+    // allocated_at + 15s" CHECK. Capture one reading and derive
+    // allocated_at/expires_at from it; released_at only needs to be
+    // >= allocated_at, so reusing the same reading there is exact rather
+    // than merely safe.
     let allocation_id: i64 = sqlx::query_scalar(
-        "INSERT INTO seed_allocations (commitment_id, user_id, expires_at, released_at) \
-         VALUES ($1, $2, clock_timestamp() + interval '15 seconds', clock_timestamp()) \
+        "WITH allocation_clock AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO seed_allocations \
+             (commitment_id, user_id, allocated_at, expires_at, released_at) \
+         SELECT $1, $2, allocation_clock.now, \
+                allocation_clock.now + interval '15 seconds', allocation_clock.now \
+         FROM allocation_clock \
          RETURNING id",
     )
     .bind(commitment_id)
@@ -140,13 +154,6 @@ async fn seed_contract(transaction: &mut Transaction<'_, Postgres>) -> ContractF
     .fetch_one(transaction.as_mut())
     .await
     .expect("insert snapshot item");
-    transaction
-        .execute(
-            "INSERT INTO price_sources (code, display_name, enabled) \
-             VALUES ('contract_test', 'Contract test', true) ON CONFLICT (code) DO NOTHING",
-        )
-        .await
-        .expect("seed price source");
     let stock_policy_id: i64 = sqlx::query_scalar(
         "INSERT INTO stock_policy_versions (version, activated_at) \
          VALUES ($1, clock_timestamp()) RETURNING id",
@@ -175,21 +182,26 @@ async fn seed_contract(transaction: &mut Transaction<'_, Postgres>) -> ContractF
     .await
     .expect("insert signing key");
 
+    // As above: created_at and expires_at each called clock_timestamp()
+    // independently, so they could drift enough to violate the 60-second
+    // window CHECK. Capture one reading in a CTE for both.
     let quote_public_id = PublicId::new(Uuid::new_v4());
     let quote_id: QuoteId = sqlx::query_scalar(
-        "INSERT INTO tradeup_quotes ( \
+        "WITH quote_clock AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO tradeup_quotes ( \
             public_id, user_id, allocation_id, commitment_id, valuation_snapshot_id, \
             stock_policy_version_id, risk_policy_version_id, signing_key_id, status_code, \
             formula_version, client_seed, nonce, verified_input_value_microcredits, \
             expected_buyback_microcredits, quote_total_microcredits, adjustment_microcredits, \
             maximum_exposure_microcredits, ordered_outcome_digest, signature, \
             selected_outcome_position, created_at, expires_at \
-         ) VALUES ( \
-            $1, $2, $3, $4, $5, $6, $7, $8, 'accepted', 'contract-test-v1', \
-            decode(repeat('99', 32), 'hex'), 3, 10000000, 8500000, 10000000, 0, 8500000, \
-            decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 64), 'hex'), 1, \
-            clock_timestamp() - interval '2 minutes', clock_timestamp() - interval '1 minute' \
-         ) RETURNING id",
+         ) \
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'accepted', 'contract-test-v1', \
+                decode(repeat('99', 32), 'hex'), 3, 10000000, 8500000, 10000000, 0, 8500000, \
+                decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 64), 'hex'), 1, \
+                quote_clock.now - interval '2 minutes', quote_clock.now - interval '1 minute' \
+         FROM quote_clock \
+         RETURNING id",
     )
     .bind(quote_public_id)
     .bind(user_id)
