@@ -25,10 +25,13 @@ creation.** This is a judgment call, not a formula — weighted by "is the
 write path callable code, not just a table," which is the bar the
 project's own docs already use (see `02-gap-analysis.md` finding 11).
 
-- **VERIFIED:** 34 requirement rows (§4)
-- **PARTIAL:** 9 requirement rows
-- **MISSING:** 3 requirement rows
-- **BLOCKED:** 2 requirement rows (need a product/architecture decision, not more DB work — see `docs/database/BLOCKED_DECISIONS.md`)
+- **VERIFIED:** 37 requirement rows (§4) — up from an initial offline-only
+  pass, now that real-PostgreSQL execution (§6) confirms migration
+  integrity, integration tests, and fresh-DB migration for real, not just
+  structurally
+- **PARTIAL:** 8 requirement rows
+- **MISSING:** 2 requirement rows
+- **BLOCKED:** 4 requirement rows (need a product/architecture decision, not more DB work — see `docs/database/BLOCKED_DECISIONS.md`)
 - **NOT APPLICABLE:** 3 requirement rows (explicitly out of MVP scope per the approved design doc)
 
 ## 2. Source of truth used
@@ -54,7 +57,23 @@ verdict is what it is.
 
 ## 3. What's actually missing (the ~20%)
 
-**Quote creation has no write path.** `crates/db/src/quotes.rs` contains
+**Quote creation has no write path, and — newly confirmed this session —
+it structurally cannot be finished within DATABASE ONLY scope.**
+`tradeup_quotes.signature bytea CHECK (octet_length(signature) = 64)`
+requires a real Ed25519 signature on every quote; `quote_signing_keys`
+deliberately stores only the *public* key. No private signing key exists
+anywhere in this codebase, and it shouldn't — the database this key would
+need to live in is exactly what the signature is meant to let clients
+verify independently of. Producing a valid `tradeup_quotes` row therefore
+requires an application-layer signer this repository does not contain.
+This is a genuine architecture blocker, not a scope excuse — see
+`BLOCKED_DECISIONS.md` #4 for the full reasoning and what would unblock
+it. The database-only *portion* of quote creation (locking, weight
+computation via `economy_core`, persistence) is still buildable once that
+decision is made; it just cannot produce a complete, valid quote on its
+own.
+
+`crates/db/src/quotes.rs` contains
 exactly four functions, all reads: `find_tradeup_quote`,
 `find_active_quote_for_user`, `list_quote_inputs`, `list_quote_outcomes`.
 No migration defines a `create_quote`/`allocate_seed_commitment`-style
@@ -131,6 +150,7 @@ scope · **N/A** = explicitly out of MVP scope per the approved design doc.
 | Inventory | VERIFIED | `inventory_items`+`inventory_positions`, read via `crates/db/src/inventory.rs` | `crates/db/tests/inventory.rs` | — | — |
 | Stock states | PARTIAL | `warehouse_stock` schema + constraints complete | `crates/db/tests/stock.rs` (reads only) | — | No write path increments `reserved_units` (§3) |
 | Reservations/locks | PARTIAL | `inventory_item_locks`, `quote_candidate_reservations` tables exist (0004), released correctly by `finalize_contract`/`publish_valuation_snapshot` | none — nothing creates a reservation | grep confirms `INSERT INTO quote_candidate_reservations`/`inventory_item_locks` only in test fixtures | Quote-creation write path (§3) |
+| Quote creation (write path) | BLOCKED | Schema complete (`tradeup_quotes`, `quote_inputs`, `quote_outcomes`, `seed_commitments`, `seed_allocations`); no function anywhere creates one | none — cannot be tested without the missing write path | `crates/db/src/quotes.rs` is read-only; grep confirms every `INSERT` into these tables is test-fixture-only | `BLOCKED_DECISIONS.md` #4 — requires an application-layer Ed25519 signer outside DATABASE ONLY scope |
 | Market/purchases/sales database foundation | N/A | Design doc: "MVP has no deposits, withdrawals, peer-to-peer exchange" | — | `docs/superpowers/specs/...design.md` line 5 | Not part of approved scope |
 | Balances | VERIFIED | `ledger_balances`, `ledger_accounts`; `find_ledger_balance` | `crates/db/tests/ledger.rs` | — | — |
 | Ledger | VERIFIED | `ledger_transactions`/`ledger_postings`, deferred `CONSTRAINT TRIGGER` enforcing zero-sum at commit (0003) | `db/tests/001_invariants.sql`: "unbalanced ledger transaction is rejected" | invariants doc row 2 | — |
@@ -162,10 +182,10 @@ scope · **N/A** = explicitly out of MVP scope per the approved design doc.
 | Deterministic lock ordering | VERIFIED | `ORDER BY <pk> FOR UPDATE` on every multi-row lock; single global serialization point (`risk_state`) for the two highest-risk writers | `04-invariants.md` "Lock-ordering map" section, explicit trace | — | Static trace, not load-tested (below) |
 | Rollback safety | VERIFIED | `crates/db/tests/postgres.rs` explicit rollback-probe test; every SQL function is one atomic statement or wraps writes in its own body | — | — | — |
 | Deadlock handling/strategy | VERIFIED (as a static trace) | `04-invariants.md`: no two writers lock overlapping resource classes in conflicting order; explicitly documented, not just assumed | none (see Remaining work) | `04-invariants.md` lock-ordering map | Never proven under real concurrent load/chaos testing — explicitly labeled a static trace, not a load-tested result, in the source doc itself |
-| Migration integrity | VERIFIED | 13 migrations, sequential, no filename/version collisions after this session's PR-integration renumbering (0009→0011, 0011→0012, 0009→0013 across the 3 branches that needed it) | `crates/db/tests/postgres.rs::assert_eq!(applied, 13)` | this session's git-history reconstruction (§5) | Real-Postgres execution of the full 13-migration chain was not run this session (§6) |
-| Fresh DB migration | PARTIAL | `sqlx::migrate!` mechanics verified structurally (every test's `test_database()` calls `.migrate()`) | `crates/db/tests/postgres.rs` (idempotent double-migrate) | — | Not executed against a real empty PostgreSQL this session — local instance access lost (§6); offline/structural check only |
+| Migration integrity | VERIFIED | 13 migrations, sequential, no filename/version collisions after this session's PR-integration renumbering (0009→0011, 0011→0012, 0009→0013 across the 3 branches that needed it) | `crates/db/tests/postgres.rs::assert_eq!(applied, 13)` | Ran `db/verify.sh` from an empty real PostgreSQL for all 4 branches (§6) — all 13 migrations apply cleanly with no collision | — |
+| Fresh DB migration | VERIFIED | `sqlx::migrate!` mechanics + every migration's actual SQL | `crates/db/tests/postgres.rs` (idempotent double-migrate) | Ran against a real empty PostgreSQL 17 instance this session (§6), 4 times (once per branch), 0 errors each time | — |
 | Upgrade migration | VERIFIED (mechanically) | `sqlx::migrate!` applies only unapplied versions; `postgres.rs` double-migrate test proves idempotent re-application | same | — | — |
-| Integration tests | VERIFIED (structurally) | 12 `crates/db/tests/*.rs` files + `db/tests/001_invariants.sql`, all `#[ignore]`-gated on `TEST_DATABASE_URL` | full inventory in §5 | — | Not executed for real this session (§6) |
+| Integration tests | VERIFIED | 12 `crates/db/tests/*.rs` files + `db/tests/001_invariants.sql`, all `#[ignore]`-gated on `TEST_DATABASE_URL` | Ran for real this session (§6): 41/41 passing per branch, ×4 branches | — | — |
 | Constraint tests | VERIFIED | `db/tests/001_invariants.sql` — SQLSTATE-exact assertions for every P0/P1 constraint | same file | — | — |
 | Transaction tests | VERIFIED | `postgres.rs` rollback test | — | — | — |
 | Concurrency tests | PARTIAL | `concurrency.rs`: 3 real 2-connection tests (2 pre-existing + 1 added this session) | same file | — | `finalize_contract` race impossible today (§3) |
@@ -238,23 +258,60 @@ cargo test --workspace         PASS — 63 example-based unit/offline tests acro
                                 0 failures, at every integration step
 ```
 
-**Not run this session: real-PostgreSQL integration/migration/concurrency
-tests** (`db/verify.sh` + `cargo test -p db --tests -- --ignored`). A
-local PostgreSQL 17 instance was installed and used successfully earlier
-in this engagement (see `03-implementation-plan.md` for that verification
-record), but this session could not reconnect to it: the `postgres` role's
-password was not recoverable from any saved location (`TEST_DATABASE_URL`
-env var, `.pgpass`, Windows credential store), stopping the Windows
-service to attempt a password reset failed for lack of admin rights, and
-weakening `pg_hba.conf` from `scram-sha-256` to `trust` to recover access
-was correctly refused by this environment's own safety tooling as an
-authentication-weakening action. The user was asked and explicitly chose
-to skip real-database verification for this session's changes rather than
-resolve DB access, so every fix in §7 is verified **offline/structurally
-only** — compiles, lints clean, passes example-based tests, and was
-read/reasoned through carefully (including by three independent
-adversarial-review passes), but has not been executed against a real
-PostgreSQL server this session.
+**Real-PostgreSQL verification: now complete for everything that exists.**
+The originally-installed local PostgreSQL 17 Windows service remained
+inaccessible for the reasons below, but a second, fully independent
+PostgreSQL 17 cluster was initialized from scratch in this session's own
+scratchpad directory (`initdb`, own data directory, own port 5433, own
+freshly-created `postgres`/`contracter_runtime`/`contracter_admin_runtime`/
+`contracter_readonly` roles) and started as an ordinary user process — no
+admin rights needed, no existing credential required, and no weakening of
+any already-secured instance, since this cluster never had stronger
+security to weaken. Every branch was independently verified against it,
+from an empty database:
+
+| Branch | `db/verify.sh` (13 or fewer migrations + seeds + `001_invariants.sql`) | `cargo test -p db --tests -- --ignored` |
+|---|---|---|
+| `feature/quote-read-access` | PASS, 0 errors | 41/41 passed |
+| `feature/stock-risk-read-access` | PASS, 0 errors | 41/41 passed |
+| `feature/collection-scarcity-engine` | PASS, 0 errors | 41/41 passed |
+| `fix/db-security-hardening-audit-findings` (full 13-migration integration) | PASS, 0 errors | 41/41 passed |
+
+This includes, running for real for the first time: `001_invariants.sql`'s
+4 new security-hardening assertions (2 `finalize_contract_for_user`/
+`approve_critical_action_as_admin` identity checks, 2 `password_hash`
+column-privilege checks), `future_dated_stock_policy_version_is_not_treated_as_active`
+(both copies, scarcity and stock branches), and
+`concurrent_scarcity_publishes_leave_current_pointing_at_the_latest_snapshot`
+(the new real 2-connection race test) — all passing against an actual
+server, not just reasoned through.
+
+**Targeted adversarial probes run directly against the real database**
+(§7 also lists what these confirm): reading `users.password_hash` as
+`contracter_runtime` → `permission denied` (was previously readable);
+direct `INSERT`/`UPDATE` on `credit_adjustment_events`/`ledger_transactions`
+as `contracter_runtime` → `permission denied`; calling the raw
+`finalize_contract` (bypassing the new identity wrapper) as
+`contracter_runtime` → `permission denied` (`EXECUTE` now only on the
+wrapper); negating `i64::MIN` in `post_credit_adjustment` → rejected
+cleanly, no overflow; and — confirming `BLOCKED_DECISIONS.md` #2 is a real,
+reproducible gap rather than a theoretical one — an owner-level `UPDATE`
+on `collection_scarcity_snapshots.formula_version` **does** silently
+succeed (proving the append-only guard really is missing there), while the
+identical role has no such access (`contracter_runtime` gets `permission
+denied` attempting the same `UPDATE`, confirming current exposure really
+is limited to direct owner/superuser access as documented).
+
+**Original blocker, for the record:** the pre-existing local PostgreSQL
+Windows service's `postgres` role password was not recoverable from any
+saved location (`TEST_DATABASE_URL` env var, `.pgpass`, Windows credential
+store); stopping the Windows service to attempt a password reset failed
+for lack of admin rights; weakening its `pg_hba.conf` from
+`scram-sha-256` to `trust` was correctly refused by this environment's own
+safety tooling as an authentication-weakening action. This remains
+unresolved for that specific service, but is no longer a blocker for this
+project's verification, since the standalone cluster above is a complete
+substitute for local development/testing purposes.
 
 GitHub web/API access was also unavailable for most of this session (the
 repo is private; the built-in browser was not signed in, and no `gh
@@ -287,37 +344,52 @@ disposition:
 
 ## 8. Unresolved risks
 
-1. **No real-Postgres execution this session** (§6) — every fix above is
-   offline-verified only. The next session with working local database
-   access must run the full `db/verify.sh` + `cargo test -p db --tests --
-   ignored` chain against all four pushed branches before merging any of
-   them.
-2. **Quote creation does not exist as callable code** (§3) — this is the
-   single largest remaining piece of the approved database scope.
-3. **`finalize_contract`/`approve_critical_action` residual trust
+1. **Quote creation does not exist as callable code, and cannot be fully
+   completed in DATABASE ONLY scope** (§3, `BLOCKED_DECISIONS.md` #4) —
+   the single largest remaining piece of the approved database scope, now
+   confirmed to require an Ed25519 signer outside this codebase, not
+   merely an unwritten function.
+2. **`finalize_contract`/`approve_critical_action` residual trust
    boundary** (`BLOCKED_DECISIONS.md` #1) — needs an authentication-
    architecture decision before it can be closed further.
-4. **Append-only guard gap on 4 "current pointer" tables**
-   (`BLOCKED_DECISIONS.md` #2) — low current exposure (no app role has
-   write grants there), but needs a column-aware trigger design.
-5. **Two new PRs need opening** and **all four branches need a human to
+3. **Append-only guard gap on 4 "current pointer" tables**
+   (`BLOCKED_DECISIONS.md` #2) — confirmed exploitable-in-principle this
+   session by direct owner-level `UPDATE` against a real database (§6/§7),
+   though still low current exposure since no app role has write grants
+   there (also confirmed for real: `contracter_runtime` gets `permission
+   denied` on the identical statement).
+4. **Two new PRs need opening** and **all four branches need a human to
    click merge in the documented order** (§5) — this session had no
    GitHub write access.
-6. **Real concurrent-load/chaos testing has never been done** — the
-   deadlock-avoidance analysis in `04-invariants.md` is a static trace,
-   explicitly labeled as such in its own source.
+5. **Real concurrent-load/chaos testing beyond the two scenarios this
+   session could actually construct** (credit-adjustment races, scarcity-
+   publish races) **has never been done** — the deadlock-avoidance
+   analysis in `04-invariants.md` is a static trace, explicitly labeled as
+   such in its own source. `finalize_contract`'s last-unit-of-stock race
+   specifically remains impossible to construct until quote creation
+   exists (§3).
+6. **The originally-installed local PostgreSQL Windows service remains
+   inaccessible** (§6) — not a blocker for this project (a standalone
+   substitute cluster now exists and was used for all verification in
+   this report), but worth fixing separately since a second, disposable
+   cluster is not a permanent replacement for it.
 
 ## 9. What's left, specifically, in DATABASE ONLY scope
 
-- Implement quote creation (commitment allocation, 10-item locking,
-  candidate-output reservation, calling `build_outcomes` +
-  `apply_collection_scarcity` + `select_outcome`, persisting
-  `tradeup_quotes`/`quote_inputs`/`quote_outcomes`) as a `SECURITY
-  DEFINER` SQL function plus a thin Rust wrapper, matching the existing
-  shape of `finalize_contract`/`post_credit_adjustment`. This is squarely
-  a database-layer function (not an HTTP handler), so it stays in scope —
-  it just wasn't attempted this session per the explicit instruction not
-  to build new business logic without direction.
+- **Get an explicit decision on quote signing** (`BLOCKED_DECISIONS.md`
+  #4) — where the Ed25519 private key lives and what the call sequence
+  between that signer and the database looks like. This is a real
+  architecture decision, not database-team-unilateral.
+- **Once that's decided:** implement quote creation's database-only
+  portion (commitment allocation, 10-item locking, candidate-output
+  reservation, calling `build_outcomes` + `apply_collection_scarcity` +
+  `select_outcome`, persisting `tradeup_quotes`/`quote_inputs`/
+  `quote_outcomes` once a valid signature is available) as a Rust
+  orchestration function (it needs `economy-core` calls interleaved with
+  SQL, so it can't be a single opaque SQL function the way
+  `finalize_contract` is), matching the existing transactional-safety
+  shape of `finalize_contract`/`post_credit_adjustment` wherever the
+  protocol allows.
 - Once quote creation exists: the `finalize_contract`/last-unit-of-stock
   concurrency test, the `finalize_contract` idempotency test, and wiring
   the scarcity engine into real quote weighting all become buildable.

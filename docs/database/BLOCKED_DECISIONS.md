@@ -114,3 +114,51 @@ add a second, owner-checked accessor
 exists to define what "owner-checked" should mean for system accounts vs.
 user accounts. Deferred until an API layer exists to make that call
 concrete.
+
+## 4. Quote creation cannot be fully implemented in DATABASE ONLY scope —
+   it requires an Ed25519 private-key holder the schema deliberately
+   excludes
+
+**Finding.** `crates/db/src/quotes.rs` is read-only (`find_tradeup_quote`,
+`find_active_quote_for_user`, `list_quote_inputs`, `list_quote_outcomes`).
+No migration defines a write path for `tradeup_quotes`/`quote_inputs`/
+`quote_outcomes`/`seed_commitments`/`seed_allocations` — every `INSERT`
+into these tables anywhere in the repository is test-fixture scaffolding
+(`crates/db/tests/{quotes,contracts,inventory}.rs`), never production
+code. This was already flagged, with the same evidence, in
+`docs/database/FINAL_DATABASE_REPORT.md` §3.
+
+**Why this can't just be implemented.** `tradeup_quotes.signature bytea`
+has `CHECK (octet_length(signature) = 64)` — a real Ed25519 signature is
+required on every quote, not a placeholder. `quote_signing_keys`
+deliberately stores only the *public* key (`CHECK (octet_length
+(public_key) = 32)`); no table anywhere holds a private signing key, and
+it shouldn't — putting a private key in the database it's meant to
+authenticate against would defeat the point of signing quotes at all. Only
+something outside the database (an application/service process that holds
+the private key, e.g. an HSM or a securely-provisioned key file) can
+actually compute the signature `tradeup_quotes.signature` requires.
+
+**What this means concretely.** Quote creation is not one missing SQL
+function away from complete. Even the *database-only* portion of it
+(commitment allocation, locking the 10 inputs, reserving candidate
+outputs, computing weights by calling `economy_core::build_outcomes` +
+`apply_collection_scarcity` + `select_outcome` from Rust, persisting the
+result) could be built as a `crates/db` orchestration function -- but it
+cannot itself produce a valid `tradeup_quotes` row, because the row isn't
+valid without a real signature that only a key-holder outside this
+codebase can produce. Any handshake between "the DB computes the outcome
+digest" and "something else signs it and the DB persists the signed
+result" is a real protocol decision (how many round trips, who initiates,
+what's re-validated) that the approved design doc describes at a
+conceptual level but does not specify as a callable interface.
+
+**What would unblock it.** A decision, from whoever owns the
+authentication/signing architecture, on where the Ed25519 private key
+lives and what the call sequence between that signer and the database
+looks like. Once that's decided, the database-only portion (locking,
+weight computation, persistence) is a normal, buildable
+`SECURITY DEFINER`-or-Rust-orchestration task matching the existing shape
+of `finalize_contract`/`post_credit_adjustment`. Attempting to guess this
+protocol now would mean inventing new mechanics this project's own rules
+explicitly forbid ("не изобретай новую механику").
