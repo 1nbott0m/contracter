@@ -37,6 +37,7 @@ internal_id!(CollectionScarcitySnapshotItemId);
 internal_id!(SeedCommitmentId);
 internal_id!(SeedAllocationId);
 internal_id!(StockPolicyVersionId);
+internal_id!(StockPolicyBandId);
 internal_id!(RiskPolicyVersionId);
 internal_id!(QuoteSigningKeyId);
 internal_id!(QuoteId);
