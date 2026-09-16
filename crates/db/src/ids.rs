@@ -32,6 +32,8 @@ internal_id!(CreditAdjustmentEventId);
 internal_id!(ValuationSnapshotId);
 internal_id!(ValuationSnapshotItemId);
 internal_id!(PriceHaltId);
+internal_id!(CollectionScarcitySnapshotId);
+internal_id!(CollectionScarcitySnapshotItemId);
 internal_id!(QuoteId);
 internal_id!(ContractId);
 

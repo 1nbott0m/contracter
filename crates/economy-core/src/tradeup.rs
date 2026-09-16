@@ -141,6 +141,85 @@ pub fn build_outcomes(
     Ok(result)
 }
 
+/// A collection's supply-based damping factor, in `[0, 1]` as an exact
+/// rational `numerator / denominator`. `denominator` must be greater than
+/// zero and `numerator` must not exceed it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScarcityMultiplier {
+    pub numerator: u64,
+    pub denominator: u64,
+}
+
+/// Applies a per-collection scarcity multiplier to already-built outcome
+/// weights. A collection missing from `multipliers` is treated as `1/1`
+/// (no damping). An outcome whose damped weight rounds down to zero is
+/// dropped rather than carried through with a zero weight, matching
+/// [`select_outcome`]'s existing rule that a zero-weight entry is invalid
+/// rather than merely inert. The result's denominator is simply the sum of
+/// the surviving damped numerators, which already satisfies
+/// [`select_outcome`]'s "numerators sum to the shared denominator"
+/// invariant without rescaling back to the original total.
+pub fn apply_collection_scarcity(
+    outcomes: &[WeightedOutcome],
+    multipliers: &BTreeMap<String, ScarcityMultiplier>,
+) -> Result<Vec<WeightedOutcome>, TradeupError> {
+    let denominator = outcomes
+        .first()
+        .map(|outcome| outcome.weight_denominator)
+        .ok_or(TradeupError::InvalidWeights)?;
+    if outcomes
+        .iter()
+        .any(|outcome| outcome.weight_denominator != denominator)
+    {
+        return Err(TradeupError::InvalidWeights);
+    }
+
+    let mut damped = Vec::with_capacity(outcomes.len());
+    for outcome in outcomes {
+        let multiplier =
+            multipliers
+                .get(&outcome.collection_id)
+                .copied()
+                .unwrap_or(ScarcityMultiplier {
+                    numerator: 1,
+                    denominator: 1,
+                });
+        if multiplier.denominator == 0 || multiplier.numerator > multiplier.denominator {
+            return Err(TradeupError::InvalidWeights);
+        }
+        let scaled = (outcome.weight_numerator as u128)
+            .checked_mul(multiplier.numerator as u128)
+            .ok_or(TradeupError::InvalidWeights)?;
+        let damped_numerator = scaled
+            .checked_div(multiplier.denominator as u128)
+            .ok_or(TradeupError::InvalidWeights)?;
+        if damped_numerator == 0 {
+            continue;
+        }
+        let damped_numerator =
+            u64::try_from(damped_numerator).map_err(|_| TradeupError::InvalidWeights)?;
+        damped.push((outcome, damped_numerator));
+    }
+
+    let total = damped
+        .iter()
+        .try_fold(0_u64, |sum, (_, numerator)| sum.checked_add(*numerator))
+        .ok_or(TradeupError::InvalidWeights)?;
+    if total == 0 {
+        return Err(TradeupError::InvalidWeights);
+    }
+
+    Ok(damped
+        .into_iter()
+        .map(|(outcome, numerator)| WeightedOutcome {
+            sku_id: outcome.sku_id.clone(),
+            collection_id: outcome.collection_id.clone(),
+            weight_numerator: numerator,
+            weight_denominator: total,
+        })
+        .collect())
+}
+
 pub fn calculate_output_float(
     inputs: &[InputItem],
     output_min: Decimal,
