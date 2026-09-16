@@ -34,8 +34,17 @@ internal_id!(ValuationSnapshotItemId);
 internal_id!(PriceHaltId);
 internal_id!(CollectionScarcitySnapshotId);
 internal_id!(CollectionScarcitySnapshotItemId);
+internal_id!(SeedCommitmentId);
+internal_id!(SeedAllocationId);
+internal_id!(StockPolicyVersionId);
+internal_id!(RiskPolicyVersionId);
+internal_id!(QuoteSigningKeyId);
 internal_id!(QuoteId);
+internal_id!(QuoteInputId);
+internal_id!(QuoteOutcomeId);
 internal_id!(ContractId);
+internal_id!(ContractInputId);
+internal_id!(ContractOutcomeId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type)]
 #[sqlx(transparent)]

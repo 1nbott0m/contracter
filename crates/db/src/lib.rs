@@ -1,10 +1,12 @@
 mod catalog;
 mod config;
+mod contracts;
 mod database;
 mod ids;
 mod inventory;
 mod ledger;
 mod pricing;
+mod quotes;
 mod scarcity;
 
 pub use catalog::{
@@ -12,6 +14,10 @@ pub use catalog::{
     find_collection_by_public_id, find_sku_by_public_id,
 };
 pub use config::{DatabaseConfig, DatabaseConfigError};
+pub use contracts::{
+    Contract, ContractInput, ContractOutcome, find_contract_by_public_id,
+    find_contract_by_quote_id, find_contract_outcome, list_contract_inputs,
+};
 pub use database::{Database, DatabaseError, MIGRATOR};
 pub use ids::*;
 pub use inventory::{
@@ -26,6 +32,10 @@ pub use pricing::{
     CurrentValuation, PriceHalt, SnapshotValuation, ValuationSnapshot, find_current_valuation,
     find_valuation_snapshot, list_active_price_halts, list_snapshot_valuations,
     list_tradeable_current_valuations,
+};
+pub use quotes::{
+    QuoteInput, QuoteOutcome, TradeupQuote, find_active_quote_for_user, find_tradeup_quote,
+    list_quote_inputs, list_quote_outcomes,
 };
 pub use scarcity::{
     CollectionScarcity, CollectionScarcitySnapshotItem, find_current_collection_scarcity,
