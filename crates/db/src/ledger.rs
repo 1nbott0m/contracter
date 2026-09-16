@@ -72,6 +72,28 @@ where
     .await?)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::FromRow)]
+pub struct LedgerBalanceDrift {
+    pub account_id: LedgerAccountId,
+    pub cached_balance_microcredits: i64,
+    pub posted_balance_microcredits: i64,
+}
+
+/// Diagnostic-only: rows where `ledger_balances`'s cached balance disagrees
+/// with the sum of that account's append-only `ledger_postings`. An empty
+/// result is the expected, healthy state; a non-empty one is drift to
+/// investigate, not something this function can itself repair.
+pub async fn reconcile_ledger_balances<'e, E>(
+    executor: E,
+) -> Result<Vec<LedgerBalanceDrift>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT * FROM reconcile_ledger_balances()")
+        .fetch_all(executor)
+        .await?)
+}
+
 pub async fn find_credit_adjustment<'e, E>(
     executor: E,
     execution_key: Uuid,

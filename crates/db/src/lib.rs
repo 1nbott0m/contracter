@@ -26,8 +26,9 @@ pub use inventory::{
     list_available_warehouse_inventory,
 };
 pub use ledger::{
-    CreditAdjustmentEvent, LedgerAccount, LedgerBalance, find_credit_adjustment,
-    find_ledger_account, find_ledger_balance, post_credit_adjustment,
+    CreditAdjustmentEvent, LedgerAccount, LedgerBalance, LedgerBalanceDrift,
+    find_credit_adjustment, find_ledger_account, find_ledger_balance, post_credit_adjustment,
+    reconcile_ledger_balances,
 };
 pub use pricing::{
     CurrentValuation, PriceHalt, SnapshotValuation, ValuationSnapshot, find_current_valuation,
@@ -39,8 +40,9 @@ pub use quotes::{
     list_quote_inputs, list_quote_outcomes,
 };
 pub use scarcity::{
-    CollectionScarcity, CollectionScarcitySnapshotItem, find_current_collection_scarcity,
-    list_collection_scarcity_history, publish_collection_scarcity_snapshot,
+    CollectionScarcity, CollectionScarcityDrift, CollectionScarcitySnapshotItem,
+    find_current_collection_scarcity, list_collection_scarcity_history,
+    publish_collection_scarcity_snapshot, reconcile_current_collection_scarcity,
 };
 pub use sqlx::{PgPool, Postgres, Transaction};
 pub use stock::{
