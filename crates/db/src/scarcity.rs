@@ -1,5 +1,5 @@
 use sqlx::{
-    Executor, Postgres, Transaction,
+    Executor, Postgres,
     types::chrono::{DateTime, Utc},
 };
 
@@ -75,68 +75,22 @@ where
 /// active stock policy get a row (see the module-level formula note in the
 /// migration: no coverage means no damping, not zero weight).
 ///
-/// Takes an already-open transaction rather than a bare connection: this
-/// function issues three separate statements (snapshot header, computed
-/// items, the publish call itself), and requiring a `Transaction` makes it
-/// impossible to call on an autocommit connection where an interruption
-/// between statements could otherwise leave an orphaned, permanently
-/// unpublished snapshot row. The caller decides when (or whether) to commit.
-pub async fn publish_collection_scarcity_snapshot(
-    transaction: &mut Transaction<'_, Postgres>,
+/// A single call to the `SECURITY DEFINER` SQL function: the computation,
+/// insertion, and publish all happen inside its body, so this is atomic by
+/// construction (one statement) and needs only `EXECUTE`, never direct
+/// `INSERT` on the underlying tables — matching every other privileged
+/// writer in this schema (`post_credit_adjustment`, `finalize_contract`).
+pub async fn publish_collection_scarcity_snapshot<'e, E>(
+    executor: E,
     formula_version: &str,
-) -> Result<CollectionScarcitySnapshotId, DatabaseError> {
-    let snapshot_id: CollectionScarcitySnapshotId = sqlx::query_scalar(
-        "INSERT INTO collection_scarcity_snapshots (formula_version, snapshot_at) \
-         VALUES ($1, clock_timestamp()) RETURNING id",
+) -> Result<CollectionScarcitySnapshotId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_scalar("SELECT publish_collection_scarcity_snapshot($1)")
+            .bind(formula_version)
+            .fetch_one(executor)
+            .await?,
     )
-    .bind(formula_version)
-    .fetch_one(transaction.as_mut())
-    .await?;
-
-    sqlx::query(
-        "INSERT INTO collection_scarcity_snapshot_items ( \
-             snapshot_id, collection_id, available_units_total, target_units_total, \
-             weight_multiplier_numerator, weight_multiplier_denominator \
-         ) \
-         WITH collection_sku_targets AS ( \
-             SELECT catalog_items.collection_id, skus.id AS sku_id, band.target_units \
-               FROM skus \
-               JOIN catalog_items ON catalog_items.id = skus.catalog_item_id \
-               JOIN stock_policy_bands AS band \
-                 ON band.rarity_code = catalog_items.rarity_code \
-                AND band.stock_policy_version_id = ( \
-                    SELECT id FROM stock_policy_versions \
-                     WHERE activated_at IS NOT NULL AND retired_at IS NULL \
-                     ORDER BY activated_at DESC, id DESC LIMIT 1) \
-              WHERE catalog_items.enabled AND skus.enabled \
-         ), \
-         aggregated AS ( \
-             SELECT collection_sku_targets.collection_id, \
-                    COALESCE(SUM(warehouse_stock.available_units), 0)::integer \
-                        AS available_units_total, \
-                    SUM(collection_sku_targets.target_units)::integer AS target_units_total \
-               FROM collection_sku_targets \
-               LEFT JOIN warehouse_stock \
-                 ON warehouse_stock.sku_id = collection_sku_targets.sku_id \
-              GROUP BY collection_sku_targets.collection_id \
-         ) \
-         SELECT $1, \
-                aggregated.collection_id, \
-                aggregated.available_units_total, \
-                aggregated.target_units_total, \
-                LEAST(aggregated.available_units_total, aggregated.target_units_total), \
-                aggregated.target_units_total \
-           FROM aggregated \
-          WHERE aggregated.target_units_total > 0",
-    )
-    .bind(snapshot_id)
-    .execute(transaction.as_mut())
-    .await?;
-
-    sqlx::query("SELECT publish_collection_scarcity_snapshot($1)")
-        .bind(snapshot_id)
-        .execute(transaction.as_mut())
-        .await?;
-
-    Ok(snapshot_id)
 }

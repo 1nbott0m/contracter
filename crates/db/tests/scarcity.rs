@@ -102,25 +102,34 @@ async fn set_warehouse_stock(
     .expect("upsert warehouse stock");
 }
 
-/// One clearly active stock policy version plus a target-band for
-/// `rarity_code`. A seeded `version = 1` policy may already be active in a
-/// fully-seeded database, so this fixture's `activated_at` is set an hour
-/// into the future to guarantee it sorts as the most recent active version
-/// (same fix applied in `crates/db/tests/stock.rs`).
-async fn insert_active_target(
-    transaction: &mut Transaction<'_, Postgres>,
-    rarity_code: &str,
-    target_units: i32,
-) {
+/// A clearly active stock policy version, with no bands yet. A seeded
+/// `version = 1` policy may already be active in a fully-seeded database, so
+/// `activated_at` is set an hour into the future to guarantee it sorts as
+/// the most recent active version (same fix applied in
+/// `crates/db/tests/stock.rs`). The aggregation query picks exactly one
+/// "the" active version, so a test that needs bands for more than one
+/// rarity must call this once and add every band to that same id --
+/// calling it once per rarity creates competing "active" versions where
+/// only the most-recently-inserted one is actually picked up, silently
+/// orphaning every earlier band.
+async fn insert_active_stock_policy_version(transaction: &mut Transaction<'_, Postgres>) -> i64 {
     let version = (Uuid::new_v4().as_u128() % 1_000_000) as i32 + 1;
-    let stock_policy_version_id: i64 = sqlx::query_scalar(
+    sqlx::query_scalar(
         "INSERT INTO stock_policy_versions (version, activated_at) \
          VALUES ($1, clock_timestamp() + interval '1 hour') RETURNING id",
     )
     .bind(version)
     .fetch_one(transaction.as_mut())
     .await
-    .expect("insert active stock policy version");
+    .expect("insert active stock policy version")
+}
+
+async fn insert_stock_policy_band(
+    transaction: &mut Transaction<'_, Postgres>,
+    stock_policy_version_id: i64,
+    rarity_code: &str,
+    target_units: i32,
+) {
     sqlx::query(
         "INSERT INTO stock_policy_bands \
             (stock_policy_version_id, rarity_code, minimum_units, target_units, maximum_units) \
@@ -140,18 +149,20 @@ async fn publishing_a_snapshot_computes_the_exact_scarcity_multiplier() {
     let database = test_database().await;
     let mut transaction = isolated_transaction(&database).await;
 
+    let stock_policy_version_id = insert_active_stock_policy_version(&mut transaction).await;
+
     let stocked_collection = insert_collection(&mut transaction, "scarcity-stocked").await;
     let stocked_sku = insert_sku(&mut transaction, stocked_collection, "scarcity-a", 95).await;
     set_warehouse_stock(&mut transaction, stocked_sku, 40).await;
-    insert_active_target(&mut transaction, "scarcity-a", 100).await;
+    insert_stock_policy_band(&mut transaction, stock_policy_version_id, "scarcity-a", 100).await;
 
     let empty_collection = insert_collection(&mut transaction, "scarcity-empty").await;
     let empty_sku = insert_sku(&mut transaction, empty_collection, "scarcity-b", 96).await;
     // No warehouse_stock row at all for this SKU: available defaults to 0.
-    insert_active_target(&mut transaction, "scarcity-b", 50).await;
+    insert_stock_policy_band(&mut transaction, stock_policy_version_id, "scarcity-b", 50).await;
     let _ = empty_sku;
 
-    let snapshot_id = publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
+    let snapshot_id = publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
         .await
         .expect("publish scarcity snapshot");
     assert!(snapshot_id.get() > 0);
@@ -198,7 +209,7 @@ async fn collection_without_stock_policy_coverage_has_no_current_scarcity_row() 
     // Deliberately no `insert_active_target` call: no stock_policy_bands row
     // exists for rarity "scarcity-uncovered".
 
-    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
+    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
         .await
         .expect("publish scarcity snapshot");
 
@@ -219,17 +230,24 @@ async fn scarcity_history_accumulates_across_multiple_publishes() {
     let database = test_database().await;
     let mut transaction = isolated_transaction(&database).await;
 
+    let stock_policy_version_id = insert_active_stock_policy_version(&mut transaction).await;
     let collection = insert_collection(&mut transaction, "scarcity-history").await;
     let sku = insert_sku(&mut transaction, collection, "scarcity-history", 98).await;
-    insert_active_target(&mut transaction, "scarcity-history", 100).await;
+    insert_stock_policy_band(
+        &mut transaction,
+        stock_policy_version_id,
+        "scarcity-history",
+        100,
+    )
+    .await;
 
     set_warehouse_stock(&mut transaction, sku, 20).await;
-    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
+    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
         .await
         .expect("publish first snapshot");
 
     set_warehouse_stock(&mut transaction, sku, 60).await;
-    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
+    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
         .await
         .expect("publish second snapshot");
 
@@ -340,7 +358,7 @@ async fn admin_runtime_role_can_execute_publish_scarcity_snapshot() {
     let can_execute: bool = sqlx::query_scalar(
         "SELECT has_function_privilege( \
              'contracter_admin_runtime', \
-             'public.publish_collection_scarcity_snapshot(bigint)', \
+             'public.publish_collection_scarcity_snapshot(text)', \
              'EXECUTE' \
          )",
     )
@@ -373,7 +391,7 @@ async fn admin_runtime_role_can_execute_publish_scarcity_snapshot() {
         .execute("SET LOCAL ROLE contracter_admin_runtime")
         .await
         .expect("assume admin runtime role");
-    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
+    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
         .await
         .expect("admin runtime role publishes a snapshot");
     transaction.rollback().await.expect("rollback role check");

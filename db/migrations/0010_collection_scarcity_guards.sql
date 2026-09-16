@@ -31,7 +31,7 @@ BEGIN
                         current_collection_scarcity
             TO contracter_admin_runtime;
         GRANT EXECUTE ON FUNCTION
-            public.publish_collection_scarcity_snapshot(bigint)
+            public.publish_collection_scarcity_snapshot(text)
             TO contracter_admin_runtime;
     END IF;
 END;
