@@ -154,9 +154,18 @@ async fn seed_quote(transaction: &mut Transaction<'_, Postgres>, user_id: UserId
     .fetch_one(transaction.as_mut())
     .await
     .expect("insert seed commitment");
+    // clock_timestamp() is volatile and can return a different instant on
+    // each call within the same statement, so allocated_at's column DEFAULT
+    // and an independent `expires_at` expression can drift by a few
+    // microseconds and intermittently violate the "expires_at <=
+    // allocated_at + 15s" CHECK. Capture one reading and derive both
+    // columns from it instead of relying on two separate clock reads.
     let allocation_id: i64 = sqlx::query_scalar(
-        "INSERT INTO seed_allocations (commitment_id, user_id, expires_at) \
-         VALUES ($1, $2, clock_timestamp() + interval '15 seconds') RETURNING id",
+        "WITH allocation_clock AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO seed_allocations (commitment_id, user_id, allocated_at, expires_at) \
+         SELECT $1, $2, allocation_clock.now, allocation_clock.now + interval '15 seconds' \
+         FROM allocation_clock \
+         RETURNING id",
     )
     .bind(commitment_id)
     .bind(user_id)
