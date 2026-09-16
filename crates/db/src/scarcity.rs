@@ -1,5 +1,5 @@
 use sqlx::{
-    Executor, PgConnection, Postgres,
+    Executor, Postgres, Transaction,
     types::chrono::{DateTime, Utc},
 };
 
@@ -74,8 +74,15 @@ where
 /// new snapshot's id. Only collections with a positive target under the
 /// active stock policy get a row (see the module-level formula note in the
 /// migration: no coverage means no damping, not zero weight).
+///
+/// Takes an already-open transaction rather than a bare connection: this
+/// function issues three separate statements (snapshot header, computed
+/// items, the publish call itself), and requiring a `Transaction` makes it
+/// impossible to call on an autocommit connection where an interruption
+/// between statements could otherwise leave an orphaned, permanently
+/// unpublished snapshot row. The caller decides when (or whether) to commit.
 pub async fn publish_collection_scarcity_snapshot(
-    connection: &mut PgConnection,
+    transaction: &mut Transaction<'_, Postgres>,
     formula_version: &str,
 ) -> Result<CollectionScarcitySnapshotId, DatabaseError> {
     let snapshot_id: CollectionScarcitySnapshotId = sqlx::query_scalar(
@@ -83,7 +90,7 @@ pub async fn publish_collection_scarcity_snapshot(
          VALUES ($1, clock_timestamp()) RETURNING id",
     )
     .bind(formula_version)
-    .fetch_one(&mut *connection)
+    .fetch_one(transaction.as_mut())
     .await?;
 
     sqlx::query(
@@ -123,12 +130,12 @@ pub async fn publish_collection_scarcity_snapshot(
           WHERE aggregated.target_units_total > 0",
     )
     .bind(snapshot_id)
-    .execute(&mut *connection)
+    .execute(transaction.as_mut())
     .await?;
 
     sqlx::query("SELECT publish_collection_scarcity_snapshot($1)")
         .bind(snapshot_id)
-        .execute(&mut *connection)
+        .execute(transaction.as_mut())
         .await?;
 
     Ok(snapshot_id)

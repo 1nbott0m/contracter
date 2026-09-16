@@ -151,7 +151,7 @@ async fn publishing_a_snapshot_computes_the_exact_scarcity_multiplier() {
     insert_active_target(&mut transaction, "scarcity-b", 50).await;
     let _ = empty_sku;
 
-    let snapshot_id = publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
+    let snapshot_id = publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
         .await
         .expect("publish scarcity snapshot");
     assert!(snapshot_id.get() > 0);
@@ -198,7 +198,7 @@ async fn collection_without_stock_policy_coverage_has_no_current_scarcity_row() 
     // Deliberately no `insert_active_target` call: no stock_policy_bands row
     // exists for rarity "scarcity-uncovered".
 
-    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
+    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
         .await
         .expect("publish scarcity snapshot");
 
@@ -224,12 +224,12 @@ async fn scarcity_history_accumulates_across_multiple_publishes() {
     insert_active_target(&mut transaction, "scarcity-history", 100).await;
 
     set_warehouse_stock(&mut transaction, sku, 20).await;
-    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
+    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
         .await
         .expect("publish first snapshot");
 
     set_warehouse_stock(&mut transaction, sku, 60).await;
-    publish_collection_scarcity_snapshot(transaction.as_mut(), "scarcity-v1")
+    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
         .await
         .expect("publish second snapshot");
 
@@ -315,4 +315,120 @@ async fn runtime_role_can_execute_every_scarcity_read_api() {
         .expect("runtime lists scarcity history");
     assert!(history.is_empty());
     transaction.rollback().await.expect("rollback role check");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn admin_runtime_role_can_execute_publish_scarcity_snapshot() {
+    let database = test_database().await;
+    let runtime_role_required = std::env::var_os("TEST_RUNTIME_ROLE_REQUIRED").is_some();
+    let role_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_admin_runtime')",
+    )
+    .fetch_one(database.pool())
+    .await
+    .expect("inspect admin runtime role");
+    if !role_exists {
+        assert!(
+            !runtime_role_required,
+            "contracter_admin_runtime is required but does not exist"
+        );
+        eprintln!("contracter_admin_runtime does not exist; execution check skipped");
+        return;
+    }
+
+    let can_execute: bool = sqlx::query_scalar(
+        "SELECT has_function_privilege( \
+             'contracter_admin_runtime', \
+             'public.publish_collection_scarcity_snapshot(bigint)', \
+             'EXECUTE' \
+         )",
+    )
+    .fetch_one(database.pool())
+    .await
+    .expect("inspect publish privilege");
+    assert!(
+        can_execute,
+        "contracter_admin_runtime cannot execute publish_collection_scarcity_snapshot"
+    );
+
+    let can_set_role: bool =
+        sqlx::query_scalar("SELECT pg_has_role(current_user, 'contracter_admin_runtime', 'SET')")
+            .fetch_one(database.pool())
+            .await
+            .expect("inspect SET ROLE membership");
+    if !can_set_role {
+        assert!(
+            !runtime_role_required,
+            "migration user cannot SET ROLE contracter_admin_runtime"
+        );
+        eprintln!(
+            "migration user cannot SET ROLE contracter_admin_runtime; execution check skipped"
+        );
+        return;
+    }
+
+    let mut transaction = isolated_transaction(&database).await;
+    transaction
+        .execute("SET LOCAL ROLE contracter_admin_runtime")
+        .await
+        .expect("assume admin runtime role");
+    publish_collection_scarcity_snapshot(&mut transaction, "scarcity-v1")
+        .await
+        .expect("admin runtime role publishes a snapshot");
+    transaction.rollback().await.expect("rollback role check");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn runtime_role_cannot_insert_directly_into_scarcity_snapshot_items() {
+    let database = test_database().await;
+    let runtime_role_required = std::env::var_os("TEST_RUNTIME_ROLE_REQUIRED").is_some();
+    let role_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')",
+    )
+    .fetch_one(database.pool())
+    .await
+    .expect("inspect runtime role");
+    if !role_exists {
+        assert!(
+            !runtime_role_required,
+            "contracter_runtime is required but does not exist"
+        );
+        eprintln!("contracter_runtime does not exist; guard check skipped");
+        return;
+    }
+    let can_set_role: bool =
+        sqlx::query_scalar("SELECT pg_has_role(current_user, 'contracter_runtime', 'SET')")
+            .fetch_one(database.pool())
+            .await
+            .expect("inspect SET ROLE membership");
+    if !can_set_role {
+        assert!(
+            !runtime_role_required,
+            "migration user cannot SET ROLE contracter_runtime"
+        );
+        eprintln!("migration user cannot SET ROLE contracter_runtime; guard check skipped");
+        return;
+    }
+
+    let mut transaction = isolated_transaction(&database).await;
+    transaction
+        .execute("SET LOCAL ROLE contracter_runtime")
+        .await
+        .expect("assume runtime role");
+    let error = sqlx::query(
+        "INSERT INTO collection_scarcity_snapshot_items \
+            (snapshot_id, collection_id, available_units_total, target_units_total, \
+             weight_multiplier_numerator, weight_multiplier_denominator) \
+         VALUES (-1, -1, 0, 0, 0, 1)",
+    )
+    .execute(transaction.as_mut())
+    .await
+    .expect_err("runtime role must not insert directly into a journal table");
+    let sqlx::Error::Database(database_error) = error else {
+        panic!("expected a database privilege error, got {error:?}");
+    };
+    assert_eq!(database_error.code().as_deref(), Some("42501"));
+    transaction.rollback().await.expect("rollback guard check");
 }
