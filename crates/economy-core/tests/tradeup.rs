@@ -238,6 +238,33 @@ fn all_collections_depleted_is_rejected() {
 }
 
 #[test]
+fn mismatched_input_denominators_are_rejected() {
+    use economy_core::tradeup::WeightedOutcome;
+
+    // Two outcomes that do NOT share one denominator, as could happen if a
+    // future caller merged `WeightedOutcome`s from two separate
+    // `build_outcomes` calls. `apply_collection_scarcity` must not silently
+    // treat them as one weighted set.
+    let outcomes = vec![
+        WeightedOutcome {
+            sku_id: "a-1".into(),
+            collection_id: "a".into(),
+            weight_numerator: 50,
+            weight_denominator: 100,
+        },
+        WeightedOutcome {
+            sku_id: "b-1".into(),
+            collection_id: "b".into(),
+            weight_numerator: 5,
+            weight_denominator: 10,
+        },
+    ];
+
+    let error = apply_collection_scarcity(&outcomes, &BTreeMap::new()).unwrap_err();
+    assert_eq!(error, TradeupError::InvalidWeights);
+}
+
+#[test]
 fn draining_stock_cannot_increase_a_collections_own_weight() {
     let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 6];
     inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 4]);

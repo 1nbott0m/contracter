@@ -163,6 +163,17 @@ pub fn apply_collection_scarcity(
     outcomes: &[WeightedOutcome],
     multipliers: &BTreeMap<String, ScarcityMultiplier>,
 ) -> Result<Vec<WeightedOutcome>, TradeupError> {
+    let denominator = outcomes
+        .first()
+        .map(|outcome| outcome.weight_denominator)
+        .ok_or(TradeupError::InvalidWeights)?;
+    if outcomes
+        .iter()
+        .any(|outcome| outcome.weight_denominator != denominator)
+    {
+        return Err(TradeupError::InvalidWeights);
+    }
+
     let mut damped = Vec::with_capacity(outcomes.len());
     for outcome in outcomes {
         let multiplier =
