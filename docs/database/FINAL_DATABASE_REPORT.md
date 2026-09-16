@@ -25,10 +25,11 @@ creation.** This is a judgment call, not a formula — weighted by "is the
 write path callable code, not just a table," which is the bar the
 project's own docs already use (see `02-gap-analysis.md` finding 11).
 
-- **VERIFIED:** 37 requirement rows (§4) — up from an initial offline-only
+- **VERIFIED:** 38 requirement rows (§4) — up from an initial offline-only
   pass, now that real-PostgreSQL execution (§6) confirms migration
   integrity, integration tests, and fresh-DB migration for real, not just
-  structurally
+  structurally, plus a new reconciliation-diagnostics capability added and
+  proven this session
 - **PARTIAL:** 8 requirement rows
 - **MISSING:** 2 requirement rows
 - **BLOCKED:** 4 requirement rows (need a product/architecture decision, not more DB work — see `docs/database/BLOCKED_DECISIONS.md`)
@@ -191,7 +192,8 @@ scope · **N/A** = explicitly out of MVP scope per the approved design doc.
 | Concurrency tests | PARTIAL | `concurrency.rs`: 3 real 2-connection tests (2 pre-existing + 1 added this session) | same file | — | `finalize_contract` race impossible today (§3) |
 | Idempotency tests | PARTIAL | Covered for credit adjustments (incl. real concurrency); `finalize_contract` idempotency has no test | `ledger.rs`, `concurrency.rs` | — | Needs quote fixtures (§3) |
 | Property tests | MISSING | none | none | no `proptest`/`quickcheck` in `Cargo.toml` | Would suit `economy-core`'s weight arithmetic specifically |
-| Regression tests | VERIFIED | Every bug found this session (future-dated stock-policy activation, 3 separate `clock_timestamp()` races, the `publish_collection_scarcity_snapshot` atomicity/grant bug, a fixture ordering bug) has a dedicated test locking in the fix | this session's 7 commits across 4 branches (§5) | — | — |
+| Regression tests | VERIFIED | Every bug found this session (future-dated stock-policy activation, 3 separate `clock_timestamp()` races, the `publish_collection_scarcity_snapshot` atomicity/grant bug, a fixture ordering bug) has a dedicated test locking in the fix | this session's 8 commits across 5 branches (§5) | — | — |
+| Reconciliation checks | VERIFIED | `reconcile_ledger_balances()`/`reconcile_current_collection_scarcity()` (migration 0014, `feature/db-reconciliation-checks`) | `crates/db/tests/reconciliation.rs`: 4 tests, 2 proving the healthy case, 2 proving detection of a directly-tampered row | Ran for real against a real PostgreSQL instance this session; all 4 pass, including detecting an induced drift, not just its absence | Only covers the two dual-source-of-truth pairs this session identified (ledger, scarcity); `inventory_items`↔`inventory_positions`↔`warehouse_stock` and `quotes`↔`locks/reservations` reconciliation is unbuilt, and the latter is blocked on quote creation existing (§3) anyway |
 | Caller identity binding (`finalize_contract`/`approve_critical_action`) | BLOCKED | `finalize_contract_for_user`/`approve_critical_action_as_admin` wrappers added this session close the "forgot to check ownership" gap | `db/tests/001_invariants.sql` (2 new assertions this session) | `docs/database/BLOCKED_DECISIONS.md` #1 | Full closure needs a per-request identity mechanism — an authentication-architecture decision, not DB work |
 | `users.password_hash` column exposure | VERIFIED (fixed this session) | `contracter_runtime`/`contracter_admin_runtime` narrowed to a safe column list (migration 0013) | `db/tests/001_invariants.sql` (2 new `has_column_privilege` assertions) | — | — |
 | Append-only guard completeness | BLOCKED | `valuation_snapshots`/`current_valuations`/scarcity equivalents cannot get the standard guard trigger without breaking their legitimate `published_at`/upsert writes | — | `docs/database/BLOCKED_DECISIONS.md` #2 | Needs a column-aware guard design, deferred as a real (if narrow) design task |
@@ -213,22 +215,27 @@ GitHub PR list UI).
 | #5 | `feature/contract-read-access` | `feature/quote-read-access` (not main) | Already merged into `feature/quote-read-access`, not into main | Carried through unchanged as part of #4's rebuild |
 | #6 | `feature/collection-scarcity-engine` | main | Merged | 4 new follow-up commits from an independent adversarial review (concurrent-publish serialization, future-dated-activation rejection, a clock race, a documented precision limit), renumbered migration to `0012_scarcity_publish_hardening.sql`, pushed to the same branch as a fresh PR (the old PR is closed/merged; a new PR must be opened from this branch) |
 | (new) | `fix/db-security-hardening-audit-findings` | main | Did not exist | Created this session: `users.password_hash` exposure fix, `finalize_contract_for_user`/`approve_critical_action_as_admin` identity-binding wrappers, `docs/database/BLOCKED_DECISIONS.md`. Migration `0013_security_hardening.sql`. Pushed as a new branch; needs a PR opened |
+| (new) | `feature/db-reconciliation-checks` | `fix/db-security-hardening-audit-findings` | Did not exist | Created this session: `reconcile_ledger_balances()`/`reconcile_current_collection_scarcity()` read-only diagnostic functions (migration `0014_reconciliation_diagnostics.sql`), Rust wrappers, 4 new tests proving both the healthy and drifted case against a real database. Pushed as a new branch; needs a PR opened, merges last in the chain |
 
 **Required merge order** (each branch's migration numbering depends on the
 previous one already being on `main`): **#4 (quote+contract) → #2
-(stock-risk) → #6's new commits → the new security-hardening PR.** Each
-branch was prepared as a superset of the previous ones specifically so
-this order produces zero merge conflicts regardless of how long each PR
-sits open — GitHub recalculates each PR's diff against the live base
-branch, so a PR's shown diff will shrink to just its own contribution once
-the branches ahead of it in this order have merged.
+(stock-risk) → #6's new commits → the security-hardening PR → the
+reconciliation-checks PR.** Each branch was prepared as a superset of the
+previous ones specifically so this order produces zero merge conflicts
+regardless of how long each PR sits open — GitHub recalculates each PR's
+diff against the live base branch, so a PR's shown diff will shrink to
+just its own contribution once the branches ahead of it in this order have
+merged.
 
-**Two PRs still need to be opened** (no GitHub write access this session
+**Three PRs still need to be opened** (no GitHub write access this session
 — see §6): `feature/collection-scarcity-engine` (fresh PR against `main`,
-since PR #6 is closed) and `fix/db-security-hardening-audit-findings`
-(brand new). Compare links:
+since PR #6 is closed), `fix/db-security-hardening-audit-findings` (brand
+new), and `feature/db-reconciliation-checks` (brand new, base it on
+`fix/db-security-hardening-audit-findings` per the merge order above, not
+on `main`). Compare links:
 - `https://github.com/1nbott0m/contracter/compare/main...feature/collection-scarcity-engine`
 - `https://github.com/1nbott0m/contracter/compare/main...fix/db-security-hardening-audit-findings`
+- `https://github.com/1nbott0m/contracter/compare/fix/db-security-hardening-audit-findings...feature/db-reconciliation-checks`
 
 **Semantic merge conflicts resolved** (both explicitly called out by name
 in the task): `crates/db/src/ids.rs` and `crates/db/src/lib.rs` conflicted
