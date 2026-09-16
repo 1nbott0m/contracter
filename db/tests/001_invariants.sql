@@ -500,6 +500,89 @@ SELECT pg_temp.assert_sqlstate(
     $sql$
 );
 
+-- finalize_contract_for_user / approve_critical_action_as_admin
+-- (db/migrations/0009_security_hardening.sql) bind a caller-supplied
+-- identity to the quote/approval before delegating to the underlying
+-- privileged function, closing the IDOR gap those functions otherwise
+-- leave to the application layer. A nonexistent quote/critical action still
+-- surfaces the same "does not exist" error the wrapped function raises.
+SELECT pg_temp.assert_sqlstate(
+    'finalize_contract_for_user rejects a nonexistent quote the same as finalize_contract',
+    '23503',
+    $sql$
+        SELECT finalize_contract_for_user(
+            1,
+            0,
+            ARRAY[1,2,3,4,5,6,7,8,9,10]::bigint[],
+            '70000000-0000-0000-0000-000000000003'
+        )
+    $sql$
+);
+
+SELECT pg_temp.assert_sqlstate(
+    'approve_critical_action_as_admin rejects a caller impersonating another admin',
+    '42501',
+    $sql$
+        SELECT approve_critical_action_as_admin(
+            1,
+            0,
+            2,
+            decode(repeat('00', 32), 'hex')
+        )
+    $sql$
+);
+
+-- contracter_runtime and contracter_admin_runtime must never receive
+-- column-level access to password_hash: a bare GRANT SELECT ON users
+-- covers every column unless explicitly restricted (finding from an
+-- independent adversarial security review; docs/database/02-gap-analysis.md
+-- finding 12). Only exercised when the runtime roles actually exist, same
+-- convention as every other role-privilege check in this project.
+SELECT pg_temp.assert_true(
+    'contracter_runtime has no column privilege on users.password_hash',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_column_privilege('contracter_runtime', 'users', 'password_hash', 'SELECT')
+);
+SELECT pg_temp.assert_true(
+    'contracter_admin_runtime has no column privilege on users.password_hash',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_admin_runtime')
+    OR NOT has_column_privilege(
+        'contracter_admin_runtime', 'users', 'password_hash', 'SELECT'
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_runtime cannot execute finalize_contract directly, only the identity-checked wrapper',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR (
+        NOT has_function_privilege(
+            'contracter_runtime', 'finalize_contract(bigint, bigint[], uuid)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime',
+            'finalize_contract_for_user(bigint, bigint, bigint[], uuid)',
+            'EXECUTE'
+        )
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_admin_runtime cannot execute approve_critical_action directly, only the identity-checked wrapper',
+    NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'contracter_admin_runtime'
+    )
+    OR (
+        NOT has_function_privilege(
+            'contracter_admin_runtime',
+            'approve_critical_action(bigint, bigint, bytea)',
+            'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_admin_runtime',
+            'approve_critical_action_as_admin(bigint, bigint, bigint, bytea)',
+            'EXECUTE'
+        )
+    )
+);
+
 -- Exactly one durable acceptance event may exist per quote.  A retry with the
 -- same idempotency key is served from that result rather than appending again;
 -- a second acceptance with a different key is therefore blocked by quote_id.
