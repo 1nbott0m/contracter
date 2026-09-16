@@ -69,6 +69,45 @@ where
     .await?)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectionScarcityDrift {
+    pub collection_id: CollectionId,
+    pub current_snapshot_id: CollectionScarcitySnapshotId,
+    pub latest_published_snapshot_id: CollectionScarcitySnapshotId,
+}
+
+/// Diagnostic-only: collections where `current_collection_scarcity` does
+/// not point at the most recently published snapshot item for that
+/// collection. An empty result is the expected, healthy state; a
+/// non-empty one is drift to investigate, not something this function can
+/// itself repair.
+pub async fn reconcile_current_collection_scarcity<'e, E>(
+    executor: E,
+) -> Result<Vec<CollectionScarcityDrift>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let rows: Vec<(
+        CollectionId,
+        CollectionScarcitySnapshotId,
+        CollectionScarcitySnapshotId,
+    )> = sqlx::query_as("SELECT * FROM reconcile_current_collection_scarcity()")
+        .fetch_all(executor)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(collection_id, current_snapshot_id, latest_published_snapshot_id)| {
+                CollectionScarcityDrift {
+                    collection_id,
+                    current_snapshot_id,
+                    latest_published_snapshot_id,
+                }
+            },
+        )
+        .collect())
+}
+
 /// Computes and publishes a fresh collection-scarcity snapshot from current
 /// `warehouse_stock` against the active `stock_policy_bands`, returning the
 /// new snapshot's id. Only collections with a positive target under the
