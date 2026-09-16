@@ -98,9 +98,18 @@ async fn seed_quote(
     .fetch_one(transaction.as_mut())
     .await
     .expect("insert seed commitment");
+    // clock_timestamp() is volatile and can return a different instant on
+    // each call within the same statement, so allocated_at's column DEFAULT
+    // and an independent `expires_at` expression can drift by a few
+    // microseconds and intermittently violate the "expires_at <=
+    // allocated_at + 15s" CHECK. Capture one reading and derive both
+    // columns from it instead of relying on two separate clock reads.
     let allocation_id: i64 = sqlx::query_scalar(
-        "INSERT INTO seed_allocations (commitment_id, user_id, expires_at) \
-         VALUES ($1, $2, clock_timestamp() + interval '15 seconds') RETURNING id",
+        "WITH allocation_clock AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO seed_allocations (commitment_id, user_id, allocated_at, expires_at) \
+         SELECT $1, $2, allocation_clock.now, allocation_clock.now + interval '15 seconds' \
+         FROM allocation_clock \
+         RETURNING id",
     )
     .bind(commitment_id)
     .bind(user_id)
@@ -154,23 +163,30 @@ async fn seed_quote(
     .await
     .expect("insert signing key");
 
+    // As in seed_allocations above: created_at and expires_at each called
+    // clock_timestamp() independently (four times total across both CASE
+    // branches), risking drift past the 60-second window CHECK -- sharpest
+    // for the `expired` branch, whose offsets are exactly 60 seconds apart.
+    // Capture one reading in a CTE and derive every branch from it.
     let public_id = PublicId::new(Uuid::new_v4());
     let id: QuoteId = sqlx::query_scalar(
-        "INSERT INTO tradeup_quotes ( \
+        "WITH quote_clock AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO tradeup_quotes ( \
             public_id, user_id, allocation_id, commitment_id, valuation_snapshot_id, \
             stock_policy_version_id, risk_policy_version_id, signing_key_id, status_code, \
             formula_version, client_seed, nonce, verified_input_value_microcredits, \
             expected_buyback_microcredits, quote_total_microcredits, adjustment_microcredits, \
             maximum_exposure_microcredits, ordered_outcome_digest, signature, created_at, expires_at \
-         ) VALUES ( \
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, 'quote-test-v1', \
-            decode(repeat('99', 32), 'hex'), 7, 10000000, 8500000, 10000000, 0, \
-            8500000, decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 64), 'hex'), \
-            CASE WHEN $10 THEN clock_timestamp() - interval '2 minutes' \
-                 ELSE clock_timestamp() END, \
-            CASE WHEN $10 THEN clock_timestamp() - interval '1 minute' \
-                 ELSE clock_timestamp() + interval '30 seconds' END \
-         ) RETURNING id",
+         ) \
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, 'quote-test-v1', \
+                decode(repeat('99', 32), 'hex'), 7, 10000000, 8500000, 10000000, 0, \
+                8500000, decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 64), 'hex'), \
+                CASE WHEN $10 THEN quote_clock.now - interval '2 minutes' \
+                     ELSE quote_clock.now END, \
+                CASE WHEN $10 THEN quote_clock.now - interval '1 minute' \
+                     ELSE quote_clock.now + interval '30 seconds' END \
+         FROM quote_clock \
+         RETURNING id",
     )
     .bind(public_id)
     .bind(user_id)
