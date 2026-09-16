@@ -87,11 +87,19 @@ async fn insert_snapshot(
     published: bool,
 ) -> (ValuationSnapshotId, PublicId) {
     let public_id = PublicId::new(Uuid::new_v4());
+    // A single `snapshot_clock` reading feeds created_at/snapshot_at/
+    // published_at: this table's CHECK (published_at IS NULL OR
+    // published_at >= created_at) is otherwise a tight, zero-margin race
+    // between the explicit clock_timestamp() calls here and the separate
+    // one `created_at`'s column DEFAULT would otherwise evaluate (same
+    // clock-drift hazard fixed for seed_allocations in inventory.rs).
     let id = sqlx::query_scalar(
-        "INSERT INTO valuation_snapshots \
-            (public_id, formula_version, snapshot_at, published_at) \
-         VALUES ($1, 'pricing-test-v1', clock_timestamp(), \
-                 CASE WHEN $2 THEN clock_timestamp() ELSE NULL END) \
+        "WITH snapshot_clock AS (SELECT clock_timestamp() AS now) \
+         INSERT INTO valuation_snapshots \
+            (public_id, formula_version, snapshot_at, created_at, published_at) \
+         SELECT $1, 'pricing-test-v1', snapshot_clock.now, snapshot_clock.now, \
+                CASE WHEN $2 THEN snapshot_clock.now ELSE NULL END \
+           FROM snapshot_clock \
          RETURNING id",
     )
     .bind(public_id)
