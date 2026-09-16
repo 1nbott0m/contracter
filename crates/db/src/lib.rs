@@ -8,6 +8,7 @@ mod ledger;
 mod pricing;
 mod quotes;
 mod scarcity;
+mod stock;
 
 pub use catalog::{
     CatalogItem, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
@@ -42,3 +43,7 @@ pub use scarcity::{
     list_collection_scarcity_history, publish_collection_scarcity_snapshot,
 };
 pub use sqlx::{PgPool, Postgres, Transaction};
+pub use stock::{
+    RiskState, StockPolicyBand, StockPolicyVersion, WarehouseStock, find_active_stock_policy_bands,
+    find_active_stock_policy_version, find_risk_state, find_warehouse_stock,
+};
