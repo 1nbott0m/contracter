@@ -27,6 +27,25 @@ impl Database {
         Ok(Self { pool })
     }
 
+    /// Builds a pool without validating connectivity -- unlike `connect`,
+    /// this never touches the network and cannot fail. The first real
+    /// query still goes through `acquire_timeout`/normal error handling
+    /// exactly as it would for a pool built with `connect`; only the
+    /// eager startup probe is skipped. Intended for callers that need to
+    /// construct a `Database` representing "not yet known to be
+    /// reachable" deterministically (for example, proving a health-check
+    /// consumer correctly reports a database outage without depending on
+    /// how fast a real unreachable host happens to fail in a given
+    /// environment).
+    pub fn connect_lazy(config: &DatabaseConfig) -> Self {
+        let pool = PgPoolOptions::new()
+            .min_connections(config.min_connections())
+            .max_connections(config.max_connections())
+            .acquire_timeout(config.acquire_timeout())
+            .connect_lazy_with(config.connect_options());
+        Self { pool }
+    }
+
     pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
