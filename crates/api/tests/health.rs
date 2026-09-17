@@ -119,6 +119,24 @@ async fn unknown_route_returns_404_in_the_standard_error_envelope() {
 }
 
 #[tokio::test]
+async fn wrong_method_on_a_valid_route_still_gets_the_standard_envelope() {
+    let router = router_with(unreachable_db_state());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/health/live")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = router.oneshot(request).await.unwrap();
+    // Axum's default 405 is outside the fixed 9-code set; normalize_status
+    // maps a non-server-error status without a dedicated mapping to 400.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(response).await;
+    assert_eq!(body["error"]["code"], "BAD_REQUEST");
+    assert!(body["error"]["request_id"].is_string());
+}
+
+#[tokio::test]
 async fn every_response_carries_a_request_id_header() {
     let router = router_with(unreachable_db_state());
     let request = Request::builder()

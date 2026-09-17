@@ -85,7 +85,13 @@ fn build_cors_layer(allowed_origins: &[String]) -> Option<CorsLayer> {
     }
     let origins = allowed_origins
         .iter()
-        .filter_map(|origin| origin.parse().ok())
+        .filter_map(|origin| match origin.parse() {
+            Ok(parsed) => Some(parsed),
+            Err(_) => {
+                tracing::warn!(origin = %origin, "ignoring malformed CORS_ALLOWED_ORIGINS entry");
+                None
+            }
+        })
         .collect::<Vec<_>>();
     if origins.is_empty() {
         return None;
@@ -106,11 +112,14 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{CatchPanicLayer, RequestBodyLimitLayer, ServiceBuilder, handle_panic};
+    use crate::request_id::{REQUEST_ID_HEADER, request_id_middleware};
 
     /// Exercises the exact `handle_panic` callback wired into the real
     /// router, not a stand-in -- a panicking handler must become a
     /// sanitized 500 in the standard envelope, never crash the worker or
-    /// leak the panic payload.
+    /// leak the panic payload. Also wraps the request-id middleware around
+    /// it (not just `CatchPanicLayer` alone) to prove `x-request-id`
+    /// survives the panic path end to end, the same as any other response.
     #[tokio::test]
     async fn catch_panic_layer_converts_a_handler_panic_into_a_safe_internal_error() {
         async fn panics() -> axum::response::Response {
@@ -119,7 +128,8 @@ mod tests {
 
         let router = axum::Router::new()
             .route("/panics", get(panics))
-            .layer(CatchPanicLayer::custom(handle_panic));
+            .layer(CatchPanicLayer::custom(handle_panic))
+            .layer(axum::middleware::from_fn(request_id_middleware));
         let request = Request::builder()
             .uri("/panics")
             .body(Body::empty())
@@ -127,10 +137,18 @@ mod tests {
 
         let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let request_id_header = response
+            .headers()
+            .get(REQUEST_ID_HEADER)
+            .expect("x-request-id header is present even on a panic response")
+            .to_str()
+            .unwrap()
+            .to_owned();
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
             .await
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["request_id"], request_id_header);
         assert_eq!(body["error"]["code"], "INTERNAL_SERVER_ERROR");
         let raw = String::from_utf8_lossy(&bytes);
         assert!(!raw.contains("sensitive panic detail"));

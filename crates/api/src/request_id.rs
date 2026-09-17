@@ -50,9 +50,6 @@ async fn stamp_response(response: Response, id: Uuid) -> Response {
         return Response::from_parts(parts, body);
     }
 
-    let Ok(bytes) = to_bytes(body, MAX_ERROR_BODY_BYTES).await else {
-        return Response::from_parts(parts, Body::empty());
-    };
     // The envelope's supported codes are the fixed 400/401/403/404/409/
     // 422/429/500/503 set. A status outside that set (e.g. 413 from
     // tower_http's RequestBodyLimit, which this middleware does not
@@ -60,7 +57,16 @@ async fn stamp_response(response: Response, id: Uuid) -> Response {
     // never disagree.
     let normalized_status = normalize_status(parts.status);
     parts.status = normalized_status;
-    let envelope = patch_or_rebuild_envelope(&parts.headers, &bytes, normalized_status, id);
+
+    // A body that fails to read (exceeds MAX_ERROR_BODY_BYTES, or errors
+    // mid-stream) still gets a correct, fresh envelope here rather than
+    // an empty body left under the original response's stale
+    // Content-Length -- that combination is an HTTP framing mismatch,
+    // not just a cosmetic gap.
+    let envelope = match to_bytes(body, MAX_ERROR_BODY_BYTES).await {
+        Ok(bytes) => patch_or_rebuild_envelope(&parts.headers, &bytes, normalized_status, id),
+        Err(_) => fallback_envelope(normalized_status, id),
+    };
     let payload = serde_json::to_vec(&envelope).unwrap_or_default();
 
     parts
