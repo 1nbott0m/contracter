@@ -19,6 +19,9 @@ macro_rules! internal_id {
 }
 
 internal_id!(UserId);
+internal_id!(InvitationId);
+internal_id!(UserSessionId);
+internal_id!(RecoveryCodeId);
 internal_id!(AdministratorId);
 internal_id!(CriticalActionId);
 internal_id!(CollectionId);

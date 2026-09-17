@@ -22,7 +22,7 @@
 
 use db::{
     CollectionId, Database, DatabaseConfig, find_current_collection_scarcity,
-    post_credit_adjustment, publish_collection_scarcity_snapshot,
+    post_credit_adjustment, publish_collection_scarcity_snapshot, register_invited_user,
 };
 use uuid::Uuid;
 
@@ -362,5 +362,139 @@ async fn concurrent_scarcity_publishes_leave_current_pointing_at_the_latest_snap
         latest_snapshot_id,
         "current_collection_scarcity must point at the most recently created snapshot, \
          not whichever concurrent publish happened to commit last"
+    );
+}
+
+/// A committed invitation, since two connections must see it.
+async fn commit_invitation(database: &Database, hash: &[u8]) {
+    sqlx::query(
+        "INSERT INTO invitations (token_hash, expires_at) \
+         VALUES ($1, clock_timestamp() + interval '1 hour')",
+    )
+    .bind(hash)
+    .execute(database.pool())
+    .await
+    .expect("commit an invitation fixture");
+}
+
+fn random_token_hash() -> Vec<u8> {
+    let mut hash = Uuid::new_v4().as_bytes().to_vec();
+    hash.extend_from_slice(Uuid::new_v4().as_bytes());
+    hash
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn concurrent_redemptions_of_one_invitation_create_exactly_one_user() {
+    let database = test_database().await;
+    let invitation = random_token_hash();
+    commit_invitation(&database, &invitation).await;
+    let suffix = Uuid::new_v4().simple().to_string();
+    let first_login = format!("race_a_{suffix}");
+    let second_login = format!("race_b_{suffix}");
+
+    let mut connection_a = database
+        .pool()
+        .acquire()
+        .await
+        .expect("acquire connection a");
+    let mut connection_b = database
+        .pool()
+        .acquire()
+        .await
+        .expect("acquire connection b");
+
+    let (result_a, result_b) = tokio::join!(
+        register_invited_user(&mut *connection_a, &invitation, &first_login, "hash"),
+        register_invited_user(&mut *connection_b, &invitation, &second_login, "hash"),
+    );
+
+    let winners = [result_a.is_ok(), result_b.is_ok()]
+        .into_iter()
+        .filter(|succeeded| *succeeded)
+        .count();
+    assert_eq!(
+        winners, 1,
+        "exactly one concurrent redemption of a single invitation may succeed"
+    );
+
+    let redemptions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM invitation_redemptions AS redemption \
+           JOIN invitations AS invitation ON invitation.id = redemption.invitation_id \
+          WHERE invitation.token_hash = $1",
+    )
+    .bind(&invitation)
+    .fetch_one(database.pool())
+    .await
+    .expect("count redemptions");
+    assert_eq!(
+        redemptions, 1,
+        "the invitation must be redeemed exactly once"
+    );
+
+    let users: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE login IN ($1, $2)")
+        .bind(&first_login)
+        .bind(&second_login)
+        .fetch_one(database.pool())
+        .await
+        .expect("count users");
+    assert_eq!(
+        users, 1,
+        "the losing redemption must not leave a half-registered user behind"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn concurrent_registrations_of_one_login_create_exactly_one_user() {
+    let database = test_database().await;
+    let first_invitation = random_token_hash();
+    let second_invitation = random_token_hash();
+    commit_invitation(&database, &first_invitation).await;
+    commit_invitation(&database, &second_invitation).await;
+    let login = format!("login_race_{}", Uuid::new_v4().simple());
+
+    let mut connection_a = database
+        .pool()
+        .acquire()
+        .await
+        .expect("acquire connection a");
+    let mut connection_b = database
+        .pool()
+        .acquire()
+        .await
+        .expect("acquire connection b");
+
+    // Same login, different valid invitations: the unique index on
+    // lower(login) is the only thing standing between these two.
+    let shouting_login = login.to_uppercase();
+    let (result_a, result_b) = tokio::join!(
+        register_invited_user(&mut *connection_a, &first_invitation, &login, "hash"),
+        register_invited_user(
+            &mut *connection_b,
+            &second_invitation,
+            &shouting_login,
+            "hash"
+        ),
+    );
+
+    let winners = [result_a.is_ok(), result_b.is_ok()]
+        .into_iter()
+        .filter(|succeeded| *succeeded)
+        .count();
+    assert_eq!(
+        winners, 1,
+        "exactly one concurrent registration of a login may succeed"
+    );
+
+    let users: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM users WHERE lower(login) = lower($1)")
+            .bind(&login)
+            .fetch_one(database.pool())
+            .await
+            .expect("count users");
+    assert_eq!(
+        users, 1,
+        "a login must exist at most once, case-insensitively"
     );
 }
