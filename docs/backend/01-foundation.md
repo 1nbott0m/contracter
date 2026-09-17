@@ -49,9 +49,19 @@ config (ServerConfig::from_env)
 ```
 
 A fatal startup error (bad config, unreachable DB, bind failure) prints via
-`Display` to stderr and exits non-zero. It never prints `Debug` output or a
-raw SQLx error -- `ServerConfig`'s `Debug` impl redacts `database_url`
-exactly like `db::DatabaseConfig` already does.
+`Display` (never `Debug`) to stderr and exits non-zero. `ServerConfig`'s
+`Debug` impl redacts `database_url` exactly like `db::DatabaseConfig`
+already does, and neither is ever printed. Note this is narrower than "no
+SQLx text at all": a connection failure's `Display` (e.g. `db::
+DatabaseError::Sqlx`'s `"PostgreSQL operation failed: {0}"` wrapping
+`sqlx::Error`'s own message) can appear on **stderr, at process startup
+only** -- never in an HTTP response, never in `Debug` form, and (checked
+against `sqlx-core`'s error types for the connect-time failure modes that
+can actually occur here) not observed to embed the connection string or a
+credential. This is standard practice for an operator-facing startup
+failure message, not a leak, but it's a narrower guarantee than "never a
+raw SQLx error" — corrected here after an earlier draft of this doc
+overstated it.
 
 The startup health check exists so a process that can't actually reach
 PostgreSQL never claims to be listening for traffic; it fails at boot,
