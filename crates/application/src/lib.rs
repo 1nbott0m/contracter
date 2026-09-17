@@ -5,5 +5,4 @@
 
 mod health;
 
-pub use db::DatabaseError;
-pub use health::check_readiness;
+pub use health::{ReadinessError, check_readiness};
