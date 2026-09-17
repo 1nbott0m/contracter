@@ -17,5 +17,5 @@ pub use error::{ApiError, ErrorBody, ErrorEnvelope};
 pub use extract::CurrentUser;
 pub use request_id::{REQUEST_ID_HEADER, RequestId};
 pub use router::{RouterConfig, build_router};
-pub use session_cookie::SESSION_COOKIE;
+pub use session_cookie::{INSECURE_SESSION_COOKIE, SECURE_SESSION_COOKIE, SessionCookiePolicy};
 pub use state::AppState;

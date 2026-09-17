@@ -532,6 +532,22 @@ SELECT pg_temp.assert_sqlstate(
     $sql$
 );
 
+-- Every role-privilege assertion below is guarded by "the role exists",
+-- because the runtime roles are provisioned outside the migrations and a
+-- bare schema dump has none.  That guard is also a trap: without the role,
+-- each of those assertions passes for the wrong reason and the run looks
+-- exactly like one that verified them.  Say so, loudly, once.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    THEN
+        RAISE WARNING 'SKIPPED (not verified): every contracter_runtime privilege assertion in this suite. The role does not exist in this database, so the least-privilege boundary is UNVERIFIED here. Create the runtime roles before treating this run as evidence.';
+    ELSE
+        RAISE NOTICE 'contracter_runtime exists: privilege assertions below are live.';
+    END IF;
+END;
+$$;
+
 -- contracter_runtime and contracter_admin_runtime must never receive
 -- column-level access to password_hash: a bare GRANT SELECT ON users
 -- covers every column unless explicitly restricted (finding from an

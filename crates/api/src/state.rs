@@ -1,6 +1,8 @@
 use application::auth::AuthConfig;
 use db::Database;
 
+use crate::session_cookie::SessionCookiePolicy;
+
 /// Shared, cheaply-cloneable application state. `Database` wraps an
 /// `sqlx::PgPool`, which is itself `Arc`-backed, so cloning `AppState`
 /// never opens a new pool or duplicates connections.
@@ -39,5 +41,12 @@ impl AppState {
 
     pub const fn secure_cookies(&self) -> bool {
         self.secure_cookies
+    }
+
+    /// The single source of truth for which cookie name this deployment
+    /// reads and writes. Derived from the security mode rather than stored
+    /// separately, so reading and writing can never drift apart.
+    pub const fn session_cookie_policy(&self) -> SessionCookiePolicy {
+        SessionCookiePolicy::new(self.secure_cookies)
     }
 }

@@ -3,7 +3,7 @@
 //! no mocked middleware, so the cookie handling, extractor, and error
 //! envelope under test are exactly the ones that ship.
 
-use api::{AppState, RouterConfig, build_router};
+use api::{AppState, RouterConfig, SECURE_SESSION_COOKIE, build_router};
 use application::auth::{AuthConfig, SecretToken};
 use axum::{
     Router,
@@ -249,10 +249,21 @@ async fn protected_endpoints_reject_missing_tampered_and_foreign_cookies() {
     assert_eq!(unauthenticated_body["error"]["code"], "UNAUTHORIZED");
 
     for bad_cookie in [
-        format!("contracter_session={token}x"),
-        format!("contracter_session={}", SecretToken::generate().reveal()),
-        "contracter_session=".to_owned(),
+        format!("{SECURE_SESSION_COOKIE}={token}x"),
+        format!(
+            "{SECURE_SESSION_COOKIE}={}",
+            SecretToken::generate().reveal()
+        ),
+        format!("{SECURE_SESSION_COOKIE}="),
         format!("other_cookie={token}"),
+        // Cookie shadowing: the unprefixed name is the one a sibling
+        // subdomain could write, and a `Secure` deployment must not read
+        // it at all -- even carrying a genuinely valid token.
+        format!("contracter_session={token}"),
+        // A duplicated name is what an in-progress shadowing attack looks
+        // like; it is refused outright rather than resolved by position.
+        format!("{SECURE_SESSION_COOKIE}=attacker; {SECURE_SESSION_COOKIE}={token}"),
+        format!("{SECURE_SESSION_COOKIE}={token}; {SECURE_SESSION_COOKIE}=attacker"),
     ] {
         let response = router(&state)
             .oneshot(get_with_cookie("/api/v1/me", &bad_cookie))
@@ -545,7 +556,10 @@ async fn auth_failures_never_leak_sql_or_stored_hashes() {
             .await
             .unwrap(),
         router(&state)
-            .oneshot(get_with_cookie("/api/v1/me", "contracter_session=bogus"))
+            .oneshot(get_with_cookie(
+                "/api/v1/me",
+                &format!("{SECURE_SESSION_COOKIE}=bogus"),
+            ))
             .await
             .unwrap(),
         router(&state)
@@ -617,4 +631,98 @@ async fn a_disabled_account_loses_access_immediately() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The leak sweep above only ever sees 4xx bodies, which are hand-written
+/// strings -- it would pass even if the 500 path echoed the SQLx error
+/// verbatim. This provokes a genuine internal error by pointing the router
+/// at a database that is not there, and checks the one response an
+/// attacker would most like to read.
+#[tokio::test]
+async fn an_internal_database_failure_returns_a_sanitized_500() {
+    // Port 1 on the loopback: nothing listens there, and `connect_lazy`
+    // means the failure happens at query time, inside the handler, exactly
+    // where a production outage would put it.
+    let config =
+        DatabaseConfig::new("postgresql://contracter:contracter@127.0.0.1:1/contracter".to_owned())
+            .expect("valid database URL");
+    let state = AppState::new(Database::connect_lazy(&config), AuthConfig::default());
+
+    let response = router(&state)
+        .oneshot(get_with_cookie(
+            "/api/v1/me",
+            &format!("{SECURE_SESSION_COOKIE}=any-token-at-all"),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "an unreachable database must surface as a 500, not as a 401"
+    );
+    let rendered = body_json(response).await.to_string().to_lowercase();
+    for forbidden in [
+        "sqlx",
+        "postgres",
+        "connection",
+        "refused",
+        "127.0.0.1",
+        "contracter:",
+        "pool",
+        "timed out",
+    ] {
+        assert!(
+            !rendered.contains(forbidden),
+            "a 500 body must not contain {forbidden:?}: {rendered}"
+        );
+    }
+}
+
+/// `/api/v1` responses are per-account and cookie-dependent, so a shared
+/// cache must never be free to reuse one caller's for another's.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn authenticated_responses_are_not_cacheable_and_vary_on_the_cookie() {
+    let state = require_database!();
+    let (_, cookie) = registered_session(&state).await;
+
+    for uri in ["/api/v1/me", "/api/v1/me/balance"] {
+        let response = router(&state)
+            .oneshot(get_with_cookie(uri, &cookie))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store"),
+            "{uri} must not be written down by any cache"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::VARY)
+                .and_then(|value| value.to_str().ok()),
+            Some("Cookie"),
+            "{uri} must tell caches the cookie selects the response"
+        );
+    }
+
+    // The unauthenticated rejection carries them too: a cached 401 served
+    // to an authenticated caller is its own kind of wrong.
+    let response = router(&state)
+        .oneshot(get_with_cookie("/api/v1/me", "other=1"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
 }

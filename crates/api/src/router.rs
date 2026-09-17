@@ -3,6 +3,13 @@ use std::time::Duration;
 use axum::{
     BoxError, Router,
     error_handling::HandleErrorLayer,
+    extract::Request,
+    http::{
+        HeaderValue,
+        header::{CACHE_CONTROL, VARY},
+    },
+    middleware::Next,
+    response::Response,
     routing::{get, post},
 };
 use tower::ServiceBuilder;
@@ -53,7 +60,8 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/auth/logout", post(auth::logout))
         .route("/auth/logout-all", post(auth::logout_all))
         .route("/me", get(account::me))
-        .route("/me/balance", get(account::balance));
+        .route("/me/balance", get(account::balance))
+        .layer(axum::middleware::from_fn(private_response_headers));
 
     let mut router = Router::new()
         .merge(health_routes)
@@ -78,6 +86,23 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
     router
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn(request_id_middleware))
+}
+
+/// Marks every `/api/v1` response as private and cookie-dependent.
+///
+/// Without `Vary: Cookie`, any shared cache in front of this service --
+/// a CDN, a reverse proxy, a corporate middlebox -- is entitled to serve
+/// one account's `/me` to the next caller, because the requests differ
+/// only in a header it was never told mattered. `no-store` is the
+/// stronger half: these responses should not be written down at all.
+/// Applied as a layer rather than per handler so a route added later
+/// cannot forget it.
+async fn private_response_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(VARY, HeaderValue::from_static("Cookie"));
+    response
 }
 
 async fn fallback_404() -> ApiError {
@@ -119,8 +144,15 @@ fn build_cors_layer(allowed_origins: &[String]) -> Option<CorsLayer> {
     Some(
         CorsLayer::new()
             .allow_origin(origins)
-            .allow_methods([axum::http::Method::GET])
-            .allow_headers([axum::http::header::CONTENT_TYPE]),
+            .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+            .allow_headers([axum::http::header::CONTENT_TYPE])
+            // The session lives in a cookie, so a browser frontend on a
+            // different origin cannot call this API at all without it.
+            // Safe only because the origin list is explicit: the CORS spec
+            // forbids pairing credentials with a wildcard, and
+            // `build_cors_layer` returns `None` rather than a wildcard
+            // when nothing is configured.
+            .allow_credentials(true),
     )
 }
 

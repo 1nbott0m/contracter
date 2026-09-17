@@ -125,6 +125,13 @@ impl From<application::auth::AuthError> for ApiError {
             // dead session alike.
             AuthError::InvalidCredentials => Self::Unauthorized(error.to_string()),
             AuthError::SessionInvalid => Self::Unauthorized("Authentication required".to_owned()),
+            // Not the caller's fault and not a bug: every password-hashing
+            // permit is taken. 503 says "try again", which is true, where a
+            // 500 would say "something is broken", which is not.
+            AuthError::Overloaded => {
+                tracing::warn!("password hashing is saturated; shedding a request");
+                Self::ServiceUnavailable(error.to_string())
+            }
             AuthError::PasswordHashing => internal(&error, "password hashing failed"),
             AuthError::Database(ref cause) => internal(cause, "an auth database call failed"),
         }

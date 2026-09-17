@@ -1,7 +1,7 @@
 use application::auth::{self, AuthError, SecretToken};
 use axum::{extract::FromRequestParts, http::request::Parts};
 
-use crate::{error::ApiError, session_cookie, state::AppState};
+use crate::{error::ApiError, state::AppState};
 
 /// The authenticated caller behind a request.
 ///
@@ -19,7 +19,9 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let token = session_cookie::read_session_token(&parts.headers)
+        let token = state
+            .session_cookie_policy()
+            .read_token(&parts.headers)
             .map(SecretToken::new)
             .ok_or_else(unauthorized)?;
 

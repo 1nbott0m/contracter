@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::ApiError, extract::CurrentUser, session_cookie, state::AppState};
+use crate::{error::ApiError, extract::CurrentUser, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -80,18 +80,19 @@ pub async fn login(
         &request.password,
     )
     .await?;
-    let caller = auth::authenticate(state.database(), &session.token).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
         SET_COOKIE,
-        session_cookie::session_cookie(session.token.reveal(), session.ttl, state.secure_cookies()),
+        state
+            .session_cookie_policy()
+            .set(session.token.reveal(), session.ttl),
     );
 
     Ok((
         headers,
         Json(LoginResponse {
-            user_id: caller.user_public_id.get(),
+            user_id: session.user_public_id.get(),
         }),
     ))
 }
@@ -102,15 +103,12 @@ pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    if let Some(token) = session_cookie::read_session_token(&headers) {
+    if let Some(token) = state.session_cookie_policy().read_token(&headers) {
         auth::logout(state.database(), &SecretToken::new(token)).await?;
     }
 
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        SET_COOKIE,
-        session_cookie::cleared_session_cookie(state.secure_cookies()),
-    );
+    response_headers.insert(SET_COOKIE, state.session_cookie_policy().clear());
     Ok((StatusCode::NO_CONTENT, response_headers))
 }
 
@@ -125,9 +123,6 @@ pub async fn logout_all(
     let revoked_sessions = auth::logout_all(state.database(), caller.user_id).await?;
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        SET_COOKIE,
-        session_cookie::cleared_session_cookie(state.secure_cookies()),
-    );
+    headers.insert(SET_COOKIE, state.session_cookie_policy().clear());
     Ok((headers, Json(LogoutAllResponse { revoked_sessions })))
 }
