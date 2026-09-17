@@ -605,6 +605,69 @@ SELECT pg_temp.assert_append_only('critical_action_approval_events'::regclass);
 SELECT pg_temp.assert_append_only('quote_acceptance_events'::regclass);
 SELECT pg_temp.assert_append_only('sale_evidence'::regclass);
 
+-- Auth access boundary (db/migrations/0015_auth_session_access.sql): the
+-- HTTP runtime role reaches credentials and sessions only through the
+-- narrow SECURITY DEFINER functions, never by reading the tables. In
+-- particular the password_hash column restriction from 0013 must survive
+-- the addition of a login flow that needs the hash.
+SELECT pg_temp.assert_true(
+    'contracter_runtime can execute the auth functions it needs',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR (
+        has_function_privilege(
+            'contracter_runtime', 'find_user_credential_by_login(text)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'register_invited_user(bytea, text, text)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'create_user_session(bigint, bytea, interval)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'find_active_user_session(bytea)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'revoke_user_session(bytea)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'revoke_all_user_sessions(bigint)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'find_account_by_public_id(uuid)', 'EXECUTE'
+        )
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_runtime still cannot read password_hash directly after the login flow exists',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_column_privilege('contracter_runtime', 'users', 'password_hash', 'SELECT')
+);
+SELECT pg_temp.assert_true(
+    'contracter_runtime has no direct table access to sessions, invitations, or recovery codes',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR (
+        SELECT bool_and(
+            NOT has_table_privilege('contracter_runtime', protected.name, action.name)
+        )
+        FROM (VALUES
+            ('public.user_sessions'),
+            ('public.invitations'),
+            ('public.invitation_redemptions'),
+            ('public.recovery_codes')
+        ) AS protected(name)
+        CROSS JOIN (VALUES
+            ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')
+        ) AS action(name)
+    )
+);
+
+-- An invitation is single-use: the redemption table enforces it
+-- structurally, independently of register_invited_user's own check.
+SELECT pg_temp.assert_true(
+    'an invitation can be redeemed at most once',
+    pg_temp.has_unique_single_column('invitation_redemptions'::regclass, 'invitation_id')
+);
+
 SELECT '001_invariants: ok' AS result;
 
 ROLLBACK;
