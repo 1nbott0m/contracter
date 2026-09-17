@@ -26,6 +26,10 @@ pub const DEFAULT_PAGE_SIZE: u16 = 50;
 /// there is no sensible way for a caller to misuse `limit=1000000` and
 /// nothing useful to tell them beyond "you got 200".
 pub const MAX_PAGE_SIZE: u16 = 200;
+/// Longest cursor this accepts. The two shapes encode 16 and 24
+/// bytes, which is 22 and 32 base64url characters; anything longer is
+/// not a cursor this issued and is refused before it is decoded.
+const MAX_CURSOR_LENGTH: usize = 64;
 
 /// A page of results plus the cursor that continues it.
 ///
@@ -114,7 +118,11 @@ impl FromStr for Cursor {
     type Err = CursorError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value.is_empty() {
+        // Both shapes encode to at most 32 base64url characters;
+        // nothing longer can decode, so refusing it here avoids
+        // allocating and decoding whatever a caller put in the query
+        // string.
+        if value.is_empty() || value.len() > MAX_CURSOR_LENGTH {
             return Err(CursorError);
         }
         Ok(Self(value.to_owned()))
@@ -200,6 +208,10 @@ mod tests {
             );
         }
         assert!(Cursor::from_str("").is_err(), "an empty cursor is not one");
+        assert!(
+            Cursor::from_str(&"A".repeat(MAX_CURSOR_LENGTH + 1)).is_err(),
+            "an over-long cursor is refused before it is decoded"
+        );
     }
 
     #[test]

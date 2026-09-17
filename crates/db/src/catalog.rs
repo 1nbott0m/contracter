@@ -137,6 +137,20 @@ pub struct CatalogSku {
     pub is_souvenir: bool,
 }
 
+/// A collection as the public catalog exposes it.
+///
+/// Separate from `Collection` because that struct carries the internal
+/// `CollectionId`, which has no business crossing the application
+/// boundary. `CatalogSku` and `OwnedInventoryItem` are built the same
+/// way: if a projection contains no internal id, nothing downstream can
+/// leak one by forgetting to map it.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct CatalogCollection {
+    pub public_id: PublicId,
+    pub slug: String,
+    pub display_name: String,
+}
+
 /// One page of the public collection list, ordered and paged by
 /// `public_id`.
 ///
@@ -150,12 +164,17 @@ pub async fn list_collections<'e, E>(
     executor: E,
     after: Option<PublicId>,
     limit: i64,
-) -> Result<Vec<Collection>, DatabaseError>
+) -> Result<Vec<CatalogCollection>, DatabaseError>
 where
     E: Executor<'e, Database = Postgres>,
 {
     Ok(sqlx::query_as(
-        "SELECT id, public_id, slug, display_name, enabled          FROM collections          WHERE enabled            AND ($1::uuid IS NULL OR public_id > $1)          ORDER BY public_id          LIMIT $2",
+        "SELECT public_id, slug, display_name \
+         FROM collections \
+         WHERE enabled \
+           AND ($1::uuid IS NULL OR public_id > $1) \
+         ORDER BY public_id \
+         LIMIT $2",
     )
     .bind(after)
     .bind(limit)

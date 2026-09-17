@@ -101,41 +101,42 @@ pub struct OwnedInventoryItem {
     pub is_souvenir: bool,
 }
 
-/// The SELECT list and joins shared by the owner's listing and the
-/// owner's single-item read, so the two can never disagree about what an
-/// owned item is or which columns it exposes.
+/// The SELECT list shared by the owner's listing and the owner's
+/// single-item read, so the two can never disagree about what an owned
+/// item is or which columns it exposes.
+///
+/// Reads `owned_inventory` (migration 0017) rather than joining the base
+/// tables here. The `locked` flag needs `inventory_item_locks`, which
+/// `contracter_runtime` deliberately cannot read -- and an `EXISTS`
+/// subquery in that role's own statement is still subject to that role's
+/// privileges. Only a view runs with its owner's rights, so the view is
+/// what keeps the guard table unreadable while still reporting the flag.
 ///
 /// A macro rather than a `const`, because SQLx 0.9 accepts only
 /// `&'static str` -- a deliberate guardrail against queries assembled at
 /// runtime. `concat!` over macro-expanded literals keeps the shared text
 /// in one place *and* keeps every query a compile-time constant, so the
 /// guardrail stays on rather than being waved away with `AssertSqlSafe`.
+///
+/// `$1` is reserved for the owner. A caller adding a filter starts at
+/// `$2`.
 macro_rules! owned_inventory_projection {
     () => {
-        "SELECT item.public_id, \
-                item.created_at, \
-                item.canonical_float, \
-                EXISTS ( \
-                    SELECT 1 FROM inventory_item_locks AS item_lock \
-                    WHERE item_lock.inventory_item_id = item.id \
-                      AND item_lock.expires_at > clock_timestamp() \
-                ) AS locked, \
-                skus.public_id AS sku_public_id, \
-                catalog_items.public_id AS catalog_item_public_id, \
-                collections.public_id AS collection_public_id, \
-                collections.display_name AS collection_display_name, \
-                catalog_items.stable_name, \
-                catalog_items.rarity_code, \
-                wear_bands.code AS wear_band_code, \
-                catalog_items.is_stattrak, \
-                catalog_items.is_souvenir \
-         FROM inventory_items AS item \
-         JOIN inventory_positions AS position ON position.inventory_item_id = item.id \
-         JOIN skus ON skus.id = item.sku_id \
-         JOIN catalog_items ON catalog_items.id = skus.catalog_item_id \
-         JOIN collections ON collections.id = catalog_items.collection_id \
-         JOIN wear_bands ON wear_bands.id = skus.wear_band_id \
-         WHERE position.owner_user_id = $1 AND item.retired_at IS NULL"
+        "SELECT public_id, \
+                created_at, \
+                canonical_float, \
+                locked, \
+                sku_public_id, \
+                catalog_item_public_id, \
+                collection_public_id, \
+                collection_display_name, \
+                stable_name, \
+                rarity_code, \
+                wear_band_code, \
+                is_stattrak, \
+                is_souvenir \
+         FROM owned_inventory \
+         WHERE owner_user_id = $1"
     };
 }
 
@@ -169,13 +170,13 @@ where
 
     Ok(sqlx::query_as(concat!(
         owned_inventory_projection!(),
-        " AND ($2::uuid IS NULL OR collections.public_id = $2) \
-           AND ($3::text IS NULL OR catalog_items.rarity_code = $3) \
+        " AND ($2::uuid IS NULL OR collection_public_id = $2) \
+           AND ($3::text IS NULL OR rarity_code = $3) \
            AND ( \
                $4::timestamptz IS NULL \
-               OR (item.created_at, item.public_id) < ($4, $5) \
+               OR (created_at, public_id) < ($4, $5) \
            ) \
-         ORDER BY item.created_at DESC, item.public_id DESC \
+         ORDER BY created_at DESC, public_id DESC \
          LIMIT $6"
     ))
     .bind(owner_user_id)
@@ -204,7 +205,7 @@ where
 {
     Ok(sqlx::query_as(concat!(
         owned_inventory_projection!(),
-        " AND item.public_id = $2"
+        " AND public_id = $2"
     ))
     .bind(owner_user_id)
     .bind(public_id)

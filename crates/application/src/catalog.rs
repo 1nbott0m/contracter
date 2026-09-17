@@ -5,7 +5,7 @@
 //! account-specific, so nothing here needs an identity -- and an endpoint
 //! that needs no identity cannot leak one account's data to another.
 
-use db::{CatalogSku, Collection, Database, DatabaseError, PublicId};
+use db::{CatalogCollection, CatalogSku, Database, DatabaseError, PublicId};
 use thiserror::Error;
 
 use crate::pagination::{Cursor, Page, page_size};
@@ -41,7 +41,7 @@ pub async fn list_collections(
     database: &Database,
     cursor: Option<&Cursor>,
     limit: Option<u16>,
-) -> Result<Page<Collection>, CatalogError> {
+) -> Result<Page<CatalogCollection>, CatalogError> {
     let limit = page_size(limit);
     let after = decode_public_id_cursor(cursor)?;
 

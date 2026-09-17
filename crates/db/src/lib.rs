@@ -12,9 +12,9 @@ mod scarcity;
 mod stock;
 
 pub use catalog::{
-    CatalogItem, CatalogSku, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
-    find_collection_by_public_id, find_sku_by_public_id, list_catalog_skus,
-    list_catalog_skus_after, list_collections,
+    CatalogCollection, CatalogItem, CatalogSku, Collection, Sku, find_active_skus,
+    find_catalog_item_by_public_id, find_collection_by_public_id, find_sku_by_public_id,
+    list_catalog_skus, list_catalog_skus_after, list_collections,
 };
 pub use config::{DatabaseConfig, DatabaseConfigError};
 pub use contracts::{

@@ -18,15 +18,34 @@ another. The inventory is addressed as `/me`, not
 `/users/{id}/inventory`: the owner comes from `CurrentUser`, which has no
 constructor taking a client-supplied id.
 
-## No migration
+## One migration, and why
 
 `contracter_runtime` already had `SELECT` on `collections`,
 `catalog_items`, `skus`, `rarities`, `wear_bands`, `inventory_items` and
-`inventory_positions` from earlier milestones, and it deliberately still
-has none on `inventory_item_locks`. Every query here fits inside those
-grants, so this milestone adds no migration and widens no privilege. The
-lock state is read through an `EXISTS` subquery the runtime role may
-execute, not by reading the guard table.
+`inventory_positions`, so the catalog queries need nothing new.
+
+The inventory did. The owner's view reports a `locked` flag derived from
+`inventory_item_locks`, and migration `0005` deliberately withholds that
+table from the runtime role. An earlier draft of this milestone read it
+through an inline `EXISTS` subquery and documented that as safe. **It was
+not:** a subquery in a role's own statement is still evaluated with that
+role's privileges, so both inventory endpoints would have returned `500`
+in production while passing every test, because the tests run as the
+migration superuser. An independent review caught it; the failure is
+reproducible with `SET LOCAL ROLE contracter_runtime` and the exact query
+text, which yields `permission denied for table inventory_item_locks`.
+
+Migration `0017` fixes it the way migration `0007` already solved the
+same problem: a `security_barrier` view, `owned_inventory`, owned by the
+migration user and granted to `contracter_runtime`. A view executes with
+its owner's rights, so the flag is readable while the guard table stays
+unreadable — which the pre-existing invariant at
+`crates/db/tests/inventory.rs` still asserts. No grant was widened.
+
+`0017` also adds `inventory_items_recent_idx` on
+`(created_at DESC, public_id DESC) WHERE retired_at IS NULL`. Without it
+the keyset argument below is theatre: every page would fetch the owner's
+whole non-retired set and sort it.
 
 ## Pagination
 
@@ -107,10 +126,29 @@ that keeps money in integer microcredits applies here.
 | Layer | File | Count | Covers |
 |---|---|---|---|
 | db | `crates/db/tests/catalog.rs` | 2 new | Paging by public id, disabled rows hidden, the enabled chain, filters applied in SQL |
-| db | `crates/db/tests/inventory.rs` | 3 new | Locked shown / retired hidden, cross-owner reads, paging without skip or repeat |
+| db | `crates/db/tests/inventory.rs` | 5 new + 1 extended | Locked shown / retired hidden, cross-owner reads, paging without skip or repeat, newest-first ordering, an all-tied-timestamp page walk, and both owner reads executed under `contracter_runtime` |
 | application | `crates/application/src/pagination.rs` | 6 unit | Limit clamping, both cursor shapes round-tripping, corrupt and wrong-shape cursors, page-end detection |
 | application | `crates/application/src/catalog.rs` | 1 unit | A corrupt cursor is refused before any query runs |
-| api | `crates/api/tests/catalog_inventory.rs` | 7 | Public catalog, clamping, cursor and unknown-filter rejection, auth required, locked/retired visibility, IDOR, paging, cache headers, malformed ids |
+| api | `crates/api/tests/catalog_inventory.rs` | 8 | Public catalog, clamping, cursor and unknown-filter rejection, auth required, locked/retired visibility, IDOR, paging, cache headers, malformed ids |
+
+## What the tests are built to catch
+
+Three of them exist because the obvious version of the test does not
+actually check what it claims:
+
+- **Ordering.** The paging tests sort before comparing, deliberately, so
+  they can see gaps and duplicates — which means they cannot see a
+  reversed `ORDER BY`. A separate test asserts the direction. Flipping
+  `DESC` to `ASC` fails three tests; verified by doing it.
+- **The timestamp tie.** The composite cursor exists only because
+  `created_at` is not unique, yet every fixture lets it default to
+  `clock_timestamp()`, which hands each statement its own instant — so
+  the tie is never reproduced. One test forces six rows onto one instant
+  and walks them two at a time.
+- **The runtime role.** Every other `db` module has a
+  `SET LOCAL ROLE contracter_runtime` execution test. The owner reads did
+  not, which is exactly how the privilege bug above shipped with
+  confident documentation attached. They do now.
 
 ## A note on test fixtures
 

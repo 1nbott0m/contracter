@@ -351,6 +351,15 @@ async fn give_item(state: &AppState, owner: i64, retired: bool, locked: bool) ->
 async fn the_catalog_is_public_paginated_and_free_of_internal_ids() {
     let state = require_database!();
 
+    // Seeded, not assumed. Asserting `items.len() <= 2` against whatever
+    // rows other suites happened to leave behind passes trivially on an
+    // empty result, and the per-item checks below would never run at all.
+    let (owner, _) = registered_session(&state).await;
+    let mut seeded = Vec::new();
+    for _ in 0..3 {
+        seeded.push(give_item(&state, owner, false, false).await);
+    }
+
     let response = router(&state)
         .oneshot(get("/api/v1/catalog/collections?limit=2"))
         .await
@@ -361,31 +370,98 @@ async fn the_catalog_is_public_paginated_and_free_of_internal_ids() {
         "the catalog needs no session: nothing in it is account-specific"
     );
     let body = body_json(response).await;
-    let items = body["items"].as_array().expect("items is an array");
-    assert!(items.len() <= 2, "the limit is honoured");
+    let items = body["items"].as_array().expect("items is an array").clone();
+    assert_eq!(
+        items.len(),
+        2,
+        "the fixture seeded more than two collections, so a page is exactly the limit"
+    );
+    assert!(
+        body["next_cursor"].is_string(),
+        "a full page carries a cursor to continue from"
+    );
 
-    for item in items {
+    for item in &items {
         assert!(
             Uuid::parse_str(item["collection_id"].as_str().expect("a string")).is_ok(),
             "collections are addressed by public UUID"
         );
         assert!(
-            item.get("id").is_none() && item.get("collection_internal_id").is_none(),
-            "no internal sequential id appears in the response: {item}"
+            item.get("id").is_none() && item.get("enabled").is_none(),
+            "no internal id and no internal flag appears in the response: {item}"
         );
     }
 
-    // A limit beyond the ceiling is clamped rather than obeyed.
+    // The cursor advances rather than repeating the first page.
+    let cursor = body["next_cursor"].as_str().expect("a cursor");
+    let second = router(&state)
+        .oneshot(get(&format!(
+            "/api/v1/catalog/collections?limit=2&cursor={cursor}"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    let second = body_json(second).await;
+    let first_page_ids: Vec<_> = items
+        .iter()
+        .map(|item| item["collection_id"].as_str().unwrap().to_owned())
+        .collect();
+    for item in second["items"].as_array().expect("array") {
+        assert!(
+            !first_page_ids.contains(&item["collection_id"].as_str().unwrap().to_owned()),
+            "the second page must not repeat the first"
+        );
+    }
+
+    // Every seeded SKU is reachable, and a limit beyond the ceiling is
+    // clamped rather than obeyed.
     let response = router(&state)
         .oneshot(get("/api/v1/catalog/skus?limit=65535"))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
+    let skus = body["items"].as_array().expect("array");
     assert!(
-        body["items"].as_array().expect("array").len() <= 200,
+        skus.len() <= 200,
         "a client cannot ask the database for unbounded work"
     );
+    assert!(
+        !skus.is_empty(),
+        "the fixture seeded browsable skus, so this is not vacuously true"
+    );
+    for sku in skus {
+        for field in ["sku_id", "item_id", "collection_id"] {
+            assert!(
+                Uuid::parse_str(sku[field].as_str().expect("a string")).is_ok(),
+                "{field} is a public UUID"
+            );
+        }
+        assert!(
+            sku["min_float"].is_string() && sku["max_float"].is_string(),
+            "exact decimals cross the wire as strings, never as JSON floats"
+        );
+    }
+    assert!(!seeded.is_empty());
+}
+
+/// The public catalog is identical for every caller and carries no
+/// session, so unlike `/me/*` it must stay cacheable.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn the_public_catalog_is_not_marked_private() {
+    let state = require_database!();
+
+    let response = router(&state)
+        .oneshot(get("/api/v1/catalog/collections"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers().get(header::CACHE_CONTROL).is_none(),
+        "no-store on public catalog data would forbid every CDN from caching it"
+    );
+    assert!(response.headers().get(header::VARY).is_none());
 }
 
 #[tokio::test]

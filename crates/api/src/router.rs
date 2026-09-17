@@ -63,9 +63,13 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/me/balance", get(account::balance))
         .route("/me/inventory", get(inventory::list))
         .route("/me/inventory/{item_id}", get(inventory::detail))
+        .layer(axum::middleware::from_fn(private_response_headers))
+        // The catalog is the same for everyone and carries no session, so
+        // it is deliberately outside that layer: marking it `no-store`
+        // would forbid every CDN and proxy from caching the one part of
+        // this API that is safe to cache.
         .route("/catalog/collections", get(catalog::collections))
-        .route("/catalog/skus", get(catalog::skus))
-        .layer(axum::middleware::from_fn(private_response_headers));
+        .route("/catalog/skus", get(catalog::skus));
 
     let mut router = Router::new()
         .merge(health_routes)
