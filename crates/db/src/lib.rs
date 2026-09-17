@@ -12,8 +12,9 @@ mod scarcity;
 mod stock;
 
 pub use catalog::{
-    CatalogItem, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
-    find_collection_by_public_id, find_sku_by_public_id,
+    CatalogItem, CatalogSku, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
+    find_collection_by_public_id, find_sku_by_public_id, list_catalog_skus,
+    list_catalog_skus_after, list_collections,
 };
 pub use config::{DatabaseConfig, DatabaseConfigError};
 pub use contracts::{
@@ -28,8 +29,8 @@ pub use identity::{
 };
 pub use ids::*;
 pub use inventory::{
-    InventoryItem, find_inventory_item, list_available_user_inventory,
-    list_available_warehouse_inventory,
+    InventoryItem, OwnedInventoryItem, find_inventory_item, find_owned_inventory_item,
+    list_available_user_inventory, list_available_warehouse_inventory, list_owned_inventory,
 };
 pub use ledger::{
     CreditAdjustmentEvent, LedgerAccount, LedgerBalance, LedgerBalanceDrift,

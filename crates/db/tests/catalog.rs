@@ -373,3 +373,176 @@ async fn catalog_item_float_bounds_read_as_decimal_without_precision_loss() {
 
     transaction.rollback().await.expect("rollback fixture");
 }
+
+/// Catalog browsing pages forward by public id, never by the sequential
+/// internal id -- a cursor is handed to clients, and a sequential one
+/// would tell them how many rows exist and let them walk rows they were
+/// never shown.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn listing_collections_pages_by_public_id_and_hides_disabled_rows() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+
+    let mut expected = Vec::new();
+    for index in 0..5 {
+        let collection = insert_collection(&mut transaction, &format!("paged-{index}"), true).await;
+        expected.push(collection.public_id);
+    }
+    let hidden = insert_collection(&mut transaction, "paged-disabled", false).await;
+    expected.sort();
+
+    let first = db::list_collections(transaction.as_mut(), None, 2)
+        .await
+        .expect("first page");
+    assert_eq!(first.len(), 2, "a page is capped at the requested limit");
+
+    // Walk the whole catalog in pages of two and collect what this
+    // fixture inserted, proving no row is skipped or repeated.
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = db::list_collections(transaction.as_mut(), cursor, 2)
+            .await
+            .expect("page");
+        if page.is_empty() {
+            break;
+        }
+        cursor = Some(page.last().expect("non-empty").public_id);
+        seen.extend(page.into_iter().map(|row| row.public_id));
+    }
+
+    let mut mine: Vec<_> = seen
+        .iter()
+        .copied()
+        .filter(|id| expected.contains(id))
+        .collect();
+    mine.sort();
+    assert_eq!(mine, expected, "every enabled row appears exactly once");
+    assert!(
+        !seen.contains(&hidden.public_id),
+        "a disabled collection is not part of the public catalog"
+    );
+
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+/// A SKU is only browsable when its whole chain is enabled, and the
+/// projection carries the public context a client needs so no caller has
+/// to issue a query per row.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn listing_skus_joins_public_context_and_respects_the_enabled_chain() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    ensure_lookup_rows(&mut transaction).await;
+    let (factory_new, minimal_wear) = wear_band_ids(&mut transaction).await;
+
+    let collection = insert_collection(&mut transaction, "sku-listing", true).await;
+    let item = insert_catalog_item(
+        &mut transaction,
+        collection.id,
+        "mil-spec",
+        "Listed Item",
+        true,
+        "0",
+        "1",
+    )
+    .await;
+    let visible = insert_sku(&mut transaction, item.id, factory_new, true).await;
+    let disabled_sku = insert_sku(&mut transaction, item.id, minimal_wear, false).await;
+
+    let disabled_item = insert_catalog_item(
+        &mut transaction,
+        collection.id,
+        "mil-spec",
+        "Disabled Item",
+        false,
+        "0",
+        "1",
+    )
+    .await;
+    let sku_of_disabled_item =
+        insert_sku(&mut transaction, disabled_item.id, factory_new, true).await;
+
+    let disabled_collection = insert_collection(&mut transaction, "sku-hidden", false).await;
+    let item_in_disabled_collection = insert_catalog_item(
+        &mut transaction,
+        disabled_collection.id,
+        "mil-spec",
+        "Hidden Item",
+        true,
+        "0",
+        "1",
+    )
+    .await;
+    let sku_in_disabled_collection = insert_sku(
+        &mut transaction,
+        item_in_disabled_collection.id,
+        factory_new,
+        true,
+    )
+    .await;
+
+    let listed = db::list_catalog_skus(transaction.as_mut(), None, None, None, 200)
+        .await
+        .expect("list skus");
+    let found = listed
+        .iter()
+        .find(|row| row.sku_public_id == visible.public_id)
+        .expect("the fully enabled sku is listed");
+
+    assert_eq!(found.collection_public_id, collection.public_id);
+    assert_eq!(found.collection_display_name, "sku-listing");
+    assert_eq!(found.catalog_item_public_id, item.public_id);
+    assert_eq!(found.stable_name, "Listed Item");
+    assert_eq!(found.rarity_code, "mil-spec");
+    assert_eq!(found.wear_band_code, "factory_new");
+
+    for hidden in [
+        disabled_sku.public_id,
+        sku_of_disabled_item.public_id,
+        sku_in_disabled_collection.public_id,
+    ] {
+        assert!(
+            !listed.iter().any(|row| row.sku_public_id == hidden),
+            "a disabled link anywhere in the chain hides the sku"
+        );
+    }
+
+    // Filters narrow rather than widen: an unrelated collection's skus
+    // never appear under this collection's filter.
+    let filtered = db::list_catalog_skus(
+        transaction.as_mut(),
+        Some(collection.public_id),
+        Some("mil-spec"),
+        None,
+        200,
+    )
+    .await
+    .expect("filtered list");
+    assert!(
+        filtered
+            .iter()
+            .all(|row| row.collection_public_id == collection.public_id),
+        "the collection filter is applied in SQL, not hoped for"
+    );
+    assert!(
+        filtered
+            .iter()
+            .any(|row| row.sku_public_id == visible.public_id)
+    );
+
+    let empty = db::list_catalog_skus(
+        transaction.as_mut(),
+        Some(collection.public_id),
+        Some("no-such-rarity"),
+        None,
+        200,
+    )
+    .await
+    .expect("filtered list");
+    assert!(empty.is_empty(), "an unmatched filter returns nothing");
+
+    transaction.rollback().await.expect("rollback fixture");
+}
