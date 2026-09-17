@@ -23,8 +23,8 @@ pub use contracts::{
 pub use database::{Database, DatabaseError, MIGRATOR};
 pub use identity::{
     Account, ActiveSession, UserCredential, create_user_session, find_account_by_public_id,
-    find_active_user_session, find_user_credential_by_login, register_invited_user,
-    revoke_all_user_sessions, revoke_user_session,
+    find_active_user_session, find_user_credential_by_login, find_user_credit_balance,
+    register_invited_user, revoke_all_user_sessions, revoke_user_session,
 };
 pub use ids::*;
 pub use inventory::{

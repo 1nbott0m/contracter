@@ -221,6 +221,15 @@ pub async fn account(
         .ok_or(AuthError::SessionInvalid)
 }
 
+/// The caller's own balance, in integer microcredits, derived from the
+/// ledger. Never a float, and never another account's balance: the id
+/// comes from the session, not from the client.
+pub async fn balance(database: &Database, user_public_id: PublicId) -> Result<i64, AuthError> {
+    db::find_user_credit_balance(database.pool(), user_public_id)
+        .await?
+        .ok_or(AuthError::SessionInvalid)
+}
+
 fn validate_login(login: &str) -> Result<(), AuthError> {
     let trimmed = login.trim();
     if trimmed != login || !LOGIN_LENGTH.contains(&login.chars().count()) {

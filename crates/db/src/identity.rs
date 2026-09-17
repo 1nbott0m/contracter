@@ -165,3 +165,21 @@ where
     .fetch_optional(executor)
     .await?)
 }
+
+/// The caller's own credit balance in integer microcredits, derived from
+/// the ledger. Returns `None` for an unknown or disabled user; a user
+/// with no ledger account yet reads as `0`.
+pub async fn find_user_credit_balance<'e, E>(
+    executor: E,
+    user_public_id: PublicId,
+) -> Result<Option<i64>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_scalar("SELECT balance_microcredits FROM find_user_credit_balance($1)")
+            .bind(user_public_id)
+            .fetch_optional(executor)
+            .await?,
+    )
+}

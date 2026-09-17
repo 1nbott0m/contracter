@@ -1,12 +1,21 @@
 use std::time::Duration;
 
-use axum::{BoxError, Router, error_handling::HandleErrorLayer, routing::get};
+use axum::{
+    BoxError, Router,
+    error_handling::HandleErrorLayer,
+    routing::{get, post},
+};
 use tower::ServiceBuilder;
 use tower_http::{
     catch_panic::CatchPanicLayer, cors::CorsLayer, limit::RequestBodyLimitLayer, trace::TraceLayer,
 };
 
-use crate::{error::ApiError, request_id::request_id_middleware, routes::health, state::AppState};
+use crate::{
+    error::ApiError,
+    request_id::request_id_middleware,
+    routes::{account, auth, health},
+    state::AppState,
+};
 
 /// Router construction knobs that depend on runtime configuration
 /// (`crates/server`), never hardcoded production values.
@@ -36,8 +45,19 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready));
 
+    // Everything a client calls lives under /api/v1; /health stays
+    // outside it so orchestrators never depend on an API version.
+    let api_v1 = Router::new()
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/logout-all", post(auth::logout_all))
+        .route("/me", get(account::me))
+        .route("/me/balance", get(account::balance));
+
     let mut router = Router::new()
         .merge(health_routes)
+        .nest("/api/v1", api_v1)
         .fallback(fallback_404)
         .with_state(state)
         .layer(CatchPanicLayer::custom(handle_panic))

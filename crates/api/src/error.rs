@@ -98,3 +98,35 @@ impl IntoResponse for ApiError {
             .into_response()
     }
 }
+
+/// Logs the real cause and returns the generic 500. The single place a
+/// non-client error becomes an HTTP response, so the cause is always
+/// recorded and never transmitted.
+pub(crate) fn internal(error: &dyn std::fmt::Display, context: &'static str) -> ApiError {
+    tracing::error!(error = %error, "{context}");
+    ApiError::Internal
+}
+
+impl From<application::auth::AuthError> for ApiError {
+    fn from(error: application::auth::AuthError) -> Self {
+        use application::auth::AuthError;
+
+        match error {
+            // Input the caller can fix, described precisely: these carry
+            // no information about other accounts or stored state.
+            AuthError::InvalidLogin | AuthError::WeakPassword => {
+                Self::UnprocessableEntity(error.to_string())
+            }
+            AuthError::LoginTaken => Self::Conflict(error.to_string()),
+            // One outcome for every unusable invitation, so a response
+            // never reveals whether an invitation exists or was spent.
+            AuthError::InvitationUnusable => Self::Forbidden(error.to_string()),
+            // One outcome for a wrong password, an unknown login, and a
+            // dead session alike.
+            AuthError::InvalidCredentials => Self::Unauthorized(error.to_string()),
+            AuthError::SessionInvalid => Self::Unauthorized("Authentication required".to_owned()),
+            AuthError::PasswordHashing => internal(&error, "password hashing failed"),
+            AuthError::Database(ref cause) => internal(cause, "an auth database call failed"),
+        }
+    }
+}

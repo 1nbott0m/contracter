@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use api::{AppState, RouterConfig, build_router};
+use application::auth::AuthConfig;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
@@ -22,7 +23,7 @@ fn unreachable_db_state() -> AppState {
     let config = DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/nonexistent")
         .expect("well-formed but unreachable URL")
         .with_acquire_timeout(Duration::from_millis(200));
-    AppState::new(Database::connect_lazy(&config))
+    AppState::new(Database::connect_lazy(&config), AuthConfig::default())
 }
 
 async fn real_db_state() -> Option<AppState> {
@@ -31,7 +32,7 @@ async fn real_db_state() -> Option<AppState> {
     let database = Database::connect(&config)
         .await
         .expect("connect to isolated PostgreSQL");
-    Some(AppState::new(database))
+    Some(AppState::new(database, AuthConfig::default()))
 }
 
 fn router_with(state: AppState) -> axum::Router {
@@ -191,7 +192,10 @@ async fn readiness_failure_never_leaks_the_configured_database_credential() {
     let config = DatabaseConfig::new("postgres://admin:super-secret@example/db")
         .expect("well-formed URL")
         .with_acquire_timeout(Duration::from_millis(200));
-    let router = router_with(AppState::new(Database::connect_lazy(&config)));
+    let router = router_with(AppState::new(
+        Database::connect_lazy(&config),
+        AuthConfig::default(),
+    ));
     let request = Request::builder()
         .uri("/health/ready")
         .body(Body::empty())
@@ -220,7 +224,10 @@ async fn a_request_that_exceeds_the_configured_timeout_gets_a_deterministic_503(
     let db_config = DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/nonexistent")
         .expect("well-formed but unreachable URL")
         .with_acquire_timeout(Duration::from_secs(5));
-    let router = build_router(AppState::new(Database::connect_lazy(&db_config)), &config);
+    let router = build_router(
+        AppState::new(Database::connect_lazy(&db_config), AuthConfig::default()),
+        &config,
+    );
     let request = Request::builder()
         .uri("/health/ready")
         .body(Body::empty())
