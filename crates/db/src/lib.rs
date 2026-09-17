@@ -51,6 +51,11 @@ pub use scarcity::{
     find_current_collection_scarcity, list_collection_scarcity_history,
     publish_collection_scarcity_snapshot, reconcile_current_collection_scarcity,
 };
+/// Re-exported so callers can name the timestamp type in this crate's
+/// row structs without taking their own dependency on SQLx. `db` is the
+/// PostgreSQL boundary; nothing above it should need to link the driver
+/// just to spell `DateTime<Utc>`.
+pub use sqlx::types::chrono;
 pub use sqlx::{PgPool, Postgres, Transaction};
 pub use stock::{
     RiskState, StockPolicyBand, StockPolicyVersion, WarehouseStock, find_active_stock_policy_bands,

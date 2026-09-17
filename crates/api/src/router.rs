@@ -20,7 +20,7 @@ use tower_http::{
 use crate::{
     error::ApiError,
     request_id::request_id_middleware,
-    routes::{account, auth, health},
+    routes::{account, auth, catalog, health, inventory},
     state::AppState,
 };
 
@@ -61,6 +61,10 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/auth/logout-all", post(auth::logout_all))
         .route("/me", get(account::me))
         .route("/me/balance", get(account::balance))
+        .route("/me/inventory", get(inventory::list))
+        .route("/me/inventory/{item_id}", get(inventory::detail))
+        .route("/catalog/collections", get(catalog::collections))
+        .route("/catalog/skus", get(catalog::skus))
         .layer(axum::middleware::from_fn(private_response_headers));
 
     let mut router = Router::new()
