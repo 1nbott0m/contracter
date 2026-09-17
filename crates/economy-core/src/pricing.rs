@@ -1,9 +1,41 @@
 use rust_decimal::Decimal;
 use thiserror::Error;
 
+/// The sell-back spread: converting an item to credits pays 85% of its
+/// verified market value.
+///
+/// This is not the house edge and must not be confused with it. It
+/// applies when a player *leaves* the item economy; the house edge below
+/// applies when a player runs a contract. A player who contracts and
+/// never sells pays the edge and never the spread.
 const BUYBACK_PERCENT: i64 = 85;
 const PERCENT_DENOMINATOR: i64 = 100;
 const MIN_SALES: usize = 20;
+/// Basis points, so 10_000 is one whole.
+const BPS_DENOMINATOR: i64 = 10_000;
+
+/// The house edge on a contract, in basis points: 8%.
+///
+/// The margin is taken at contract time, by charging more than the
+/// outcome distribution is worth, rather than by damping the outcome
+/// probabilities. Keeping it out of the weights is what lets collection
+/// probability stay exactly proportional to input composition and lets
+/// scarcity remain a supply signal rather than a hidden margin dial --
+/// the two must stay separable, or neither can be audited.
+pub const HOUSE_EDGE_BPS: i64 = 800;
+
+/// What a contract is expected to return, as a fraction of what it costs:
+/// 92%. The complement of [`HOUSE_EDGE_BPS`], derived rather than written
+/// down twice so the two cannot drift apart.
+pub const TARGET_EV_BPS: i64 = BPS_DENOMINATOR - HOUSE_EDGE_BPS;
+
+/// The least an item may be worth and still be tradeable: 20 credits.
+///
+/// One credit is 1,000,000 microcredits, so this is 20_000_000. The floor
+/// exists so that rounding, spreads and fees stay small relative to the
+/// amounts they act on: on a one-microcredit item every one of them would
+/// dominate the price.
+pub const MINIMUM_ITEM_VALUE_MICROCREDITS: i64 = 20_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PricedOutcome {
@@ -46,6 +78,26 @@ pub enum PricingError {
     InvalidProbabilities,
     #[error("checked arithmetic overflow")]
     Overflow,
+    #[error(
+        "an item must be worth at least {MINIMUM_ITEM_VALUE_MICROCREDITS} microcredits, got {value_microcredits}"
+    )]
+    ItemBelowMinimumValue { value_microcredits: i64 },
+}
+
+/// Rejects an item too cheap to trade.
+///
+/// A negative value is reported as [`PricingError::NegativeAmount`]
+/// rather than as "too cheap": it is not a price at all, and collapsing
+/// the two would let a data fault be read as an ordinary business
+/// refusal.
+pub const fn validate_item_value(value_microcredits: i64) -> Result<(), PricingError> {
+    if value_microcredits < 0 {
+        return Err(PricingError::NegativeAmount);
+    }
+    if value_microcredits < MINIMUM_ITEM_VALUE_MICROCREDITS {
+        return Err(PricingError::ItemBelowMinimumValue { value_microcredits });
+    }
+    Ok(())
 }
 
 pub fn trimmed_mean_microcredits(sales: &[i64]) -> Result<i64, PricingError> {
@@ -129,7 +181,26 @@ pub fn quote_adjustment_microcredits(
         .checked_mul(i128::from(PERCENT_DENOMINATOR))
         .ok_or(PricingError::Overflow)?;
     let expected = round_ratio_half_even(expected_buyback_numerator, expected_buyback_denominator)?;
-    let quote_total = ceil_ratio(market_numerator, common_denominator)?;
+    // The house edge lives here, and only here.
+    //
+    // The contract costs `market_value / 0.92`, so the player's expected
+    // return is 92% of what they paid and the house keeps 8%. Charging
+    // the market value itself -- which is what this did before the
+    // game-mechanics document fixed an explicit edge -- would leave a 0%
+    // contract-time margin and make the whole house take depend on
+    // players later selling back.
+    //
+    // Rounded up, deliberately: rounding must not fall on the player's
+    // side of the edge, or the realised margin would sit below the
+    // configured one by up to a microcredit on every contract.
+    let quote_total = ceil_ratio(
+        market_numerator
+            .checked_mul(i128::from(BPS_DENOMINATOR))
+            .ok_or(PricingError::Overflow)?,
+        common_denominator
+            .checked_mul(i128::from(TARGET_EV_BPS))
+            .ok_or(PricingError::Overflow)?,
+    )?;
     let adjustment = quote_total
         .checked_sub(verified_input_value_microcredits)
         .ok_or(PricingError::Overflow)?;
