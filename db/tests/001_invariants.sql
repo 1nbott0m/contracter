@@ -474,28 +474,74 @@ SELECT pg_temp.assert_sqlstate(
 );
 
 -- Input cardinality is validated before quote lookup or mutation.  This keeps
--- malformed requests cheap and makes exact-ten enforcement independently
+-- malformed requests cheap and makes the accepted range independently
 -- observable even though quote/stock fixtures are introduced by later tests.
+-- A contract takes four to ten inputs inclusive (0018); both edges are
+-- asserted, because a range guard that only checks one side is half a guard.
 SELECT pg_temp.assert_sqlstate(
-    'nine locked contract inputs cannot be finalized',
+    'three locked contract inputs are below the minimum',
     '23514',
     $sql$
         SELECT finalize_contract(
             0,
-            ARRAY[1,2,3,4,5,6,7,8,9]::bigint[],
+            ARRAY[1,2,3]::bigint[],
             '70000000-0000-0000-0000-000000000001'
         )
     $sql$
 );
 
 SELECT pg_temp.assert_sqlstate(
-    'eleven locked contract inputs cannot be finalized',
+    'eleven locked contract inputs are above the maximum',
     '23514',
     $sql$
         SELECT finalize_contract(
             0,
             ARRAY[1,2,3,4,5,6,7,8,9,10,11]::bigint[],
             '70000000-0000-0000-0000-000000000002'
+        )
+    $sql$
+);
+
+-- Distinctness is not implied by the range.  Without this, one item passed
+-- five times would satisfy a bare length check and be spent as though it
+-- were five different items.
+SELECT pg_temp.assert_sqlstate(
+    'a repeated inventory item cannot pad a contract to the minimum',
+    '23514',
+    $sql$
+        SELECT finalize_contract(
+            0,
+            ARRAY[1,1,2,3]::bigint[],
+            '70000000-0000-0000-0000-000000000003'
+        )
+    $sql$
+);
+
+-- The lower and upper bounds themselves are accepted by the cardinality
+-- guard: each gets past it and fails later, on the quote that does not
+-- exist (23503, a foreign-key failure distinct from the 23514 above), which
+-- is what proves the guard let them through rather than the call happening
+-- to fail for the same reason as the out-of-range cases.
+SELECT pg_temp.assert_sqlstate(
+    'four unique inputs pass the cardinality guard',
+    '23503',
+    $sql$
+        SELECT finalize_contract(
+            0,
+            ARRAY[1,2,3,4]::bigint[],
+            '70000000-0000-0000-0000-000000000004'
+        )
+    $sql$
+);
+
+SELECT pg_temp.assert_sqlstate(
+    'ten unique inputs pass the cardinality guard',
+    '23503',
+    $sql$
+        SELECT finalize_contract(
+            0,
+            ARRAY[1,2,3,4,5,6,7,8,9,10]::bigint[],
+            '70000000-0000-0000-0000-000000000005'
         )
     $sql$
 );

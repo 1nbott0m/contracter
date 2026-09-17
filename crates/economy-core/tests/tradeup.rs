@@ -26,11 +26,110 @@ fn output(sku: &str, collection: &str, rarity: u8, available: bool) -> OutputIte
     }
 }
 
+/// A contract takes four to ten inputs inclusive. The old "exactly ten"
+/// rule is gone; the bounds are what remain, and both edges are real.
 #[test]
-fn rejects_any_input_count_other_than_ten() {
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 9];
-    let error = build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err();
-    assert_eq!(error, TradeupError::InputCount { actual: 9 });
+fn rejects_an_input_count_outside_four_to_ten() {
+    for count in [0_usize, 1, 2, 3, 11, 20] {
+        let inputs = vec![input("in", "a", 2, dec!(0.20)); count];
+        let error = build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err();
+        assert_eq!(
+            error,
+            TradeupError::InputCount { actual: count },
+            "{count} inputs must be refused"
+        );
+    }
+}
+
+#[test]
+fn accepts_every_input_count_from_four_to_ten() {
+    for count in 4_usize..=10 {
+        let inputs = vec![input("in", "a", 2, dec!(0.20)); count];
+        let outcomes = build_outcomes(
+            &inputs,
+            &[output("out-a", "a", 3, true), output("out-b", "a", 3, true)],
+        )
+        .unwrap_or_else(|error| panic!("{count} inputs must be accepted, got {error:?}"));
+
+        // Whatever the count, the weights still form a proper
+        // distribution: one shared denominator that the numerators sum to.
+        let denominator = outcomes[0].weight_denominator;
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| outcome.weight_denominator == denominator),
+            "{count} inputs: outcomes must share one denominator"
+        );
+        let total: u64 = outcomes
+            .iter()
+            .map(|outcome| outcome.weight_numerator)
+            .sum();
+        assert_eq!(
+            total, denominator,
+            "{count} inputs: numerators must sum to the denominator"
+        );
+    }
+}
+
+/// The worked example from the game-mechanics document: four inputs,
+/// three from collection A and one from B, gives A 75% and B 25%.
+/// Collection probability follows input composition, and that must hold
+/// at any accepted count, not only at ten.
+#[test]
+fn collection_probability_follows_input_composition_at_any_count() {
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 3];
+    inputs.push(input("b-in", "b", 2, dec!(0.20)));
+
+    let outcomes = build_outcomes(
+        &inputs,
+        &[output("a-out", "a", 3, true), output("b-out", "b", 3, true)],
+    )
+    .expect("four mixed inputs build outcomes");
+
+    let denominator = outcomes[0].weight_denominator;
+    let weight_of = |sku: &str| {
+        outcomes
+            .iter()
+            .find(|outcome| outcome.sku_id == sku)
+            .map(|outcome| outcome.weight_numerator)
+            .unwrap_or_else(|| panic!("{sku} is among the outcomes"))
+    };
+
+    // Exact rational equality, not a rounded percentage: 3/4 and 1/4.
+    assert_eq!(
+        u128::from(weight_of("a-out")) * 4,
+        u128::from(denominator) * 3,
+        "collection A holds three of four inputs, so 75%"
+    );
+    assert_eq!(
+        u128::from(weight_of("b-out")) * 4,
+        u128::from(denominator),
+        "collection B holds one of four inputs, so 25%"
+    );
+}
+
+/// The output float averages over the inputs that were actually
+/// submitted. Dividing by a hard-coded ten would understate the average
+/// for every contract with fewer than ten inputs, quietly biasing every
+/// result toward Factory New.
+#[test]
+fn output_float_averages_over_the_actual_input_count() {
+    // Four inputs, all at the very top of their catalog range: the
+    // normalized average is 1, so the output must sit at its own maximum.
+    let inputs = vec![input("in", "a", 2, dec!(0.50)); 4];
+    let float = calculate_output_float(&inputs, dec!(0.00), dec!(1.00))
+        .expect("four inputs produce a float");
+    assert_eq!(
+        float,
+        dec!(1.00000000),
+        "averaging over ten instead of four would give 0.4"
+    );
+
+    // And at the bottom of the range, the output sits at its minimum.
+    let inputs = vec![input("in", "a", 2, dec!(0.10)); 5];
+    let float = calculate_output_float(&inputs, dec!(0.20), dec!(0.80))
+        .expect("five inputs produce a float");
+    assert_eq!(float, dec!(0.20000000));
 }
 
 #[test]

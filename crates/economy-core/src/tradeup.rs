@@ -3,7 +3,14 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-const INPUT_COUNT: usize = 10;
+/// A contract takes four to ten inputs, inclusive.
+///
+/// The count is not a constant in the probability maths that follow: the
+/// collection weights and the output float both divide by the number of
+/// inputs actually submitted. Dividing by a fixed ten instead would make
+/// every shorter contract's weights fail to sum to one, and would bias
+/// every output float toward Factory New.
+const INPUT_RANGE: std::ops::RangeInclusive<usize> = 4..=10;
 const COVERT_RARITY: u8 = 5;
 const MIN_WEIGHT_DENOMINATOR: u64 = 100;
 const HASH_DOMAIN: &[u8] = b"contracter/outcome/v1";
@@ -43,7 +50,7 @@ pub struct Selection {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TradeupError {
-    #[error("exactly ten inputs are required, got {actual}")]
+    #[error("between {} and {} inputs are required, got {actual}", INPUT_RANGE.start(), INPUT_RANGE.end())]
     InputCount { actual: usize },
     #[error("input rarities must match")]
     MixedInputRarities,
@@ -103,6 +110,10 @@ pub fn build_outcomes(
             .push(output);
     }
 
+    // The divisor is the submitted count, not a constant. Because the
+    // per-collection input counts sum to exactly this, the per-outcome
+    // weights still sum to `common` for any accepted count.
+    let input_total = inputs.len() as u64;
     let mut common = 1_u64;
     for collection in counts.keys() {
         let count = grouped
@@ -111,8 +122,7 @@ pub fn build_outcomes(
                 collection_id: (*collection).to_owned(),
             })?
             .len() as u64;
-        common =
-            checked_lcm(common, INPUT_COUNT as u64 * count).ok_or(TradeupError::InvalidWeights)?;
+        common = checked_lcm(common, input_total * count).ok_or(TradeupError::InvalidWeights)?;
     }
     if common < MIN_WEIGHT_DENOMINATOR {
         common *= MIN_WEIGHT_DENOMINATOR.div_ceil(common);
@@ -123,7 +133,7 @@ pub fn build_outcomes(
         let collection_outputs = &grouped[collection];
         let each = input_count
             .checked_mul(common)
-            .and_then(|v| v.checked_div(INPUT_COUNT as u64 * collection_outputs.len() as u64))
+            .and_then(|v| v.checked_div(input_total * collection_outputs.len() as u64))
             .ok_or(TradeupError::InvalidWeights)?;
         for output in collection_outputs {
             result.push(WeightedOutcome {
@@ -248,7 +258,7 @@ pub fn calculate_output_float(
             .checked_add(normalized)
             .ok_or(TradeupError::InvalidWeights)
     })?;
-    let average = sum / Decimal::from(INPUT_COUNT);
+    let average = sum / Decimal::from(inputs.len());
     let value = output_min + average * (output_max - output_min);
     Ok(value.round_dp_with_strategy(8, RoundingStrategy::MidpointNearestEven))
 }
@@ -304,7 +314,7 @@ pub fn select_outcome(
 }
 
 fn validate_inputs(inputs: &[InputItem]) -> Result<(), TradeupError> {
-    if inputs.len() != INPUT_COUNT {
+    if !INPUT_RANGE.contains(&inputs.len()) {
         return Err(TradeupError::InputCount {
             actual: inputs.len(),
         });
