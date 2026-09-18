@@ -163,9 +163,12 @@ pub fn quote_adjustment_microcredits(
     }
 
     let market_numerator = outcomes.iter().try_fold(0_i128, |sum, outcome| {
-        if outcome.verified_price_microcredits < 0 {
-            return Err(PricingError::NegativeAmount);
-        }
+        // The floor is enforced here, on the path a quote actually takes,
+        // rather than merely being defined: an outcome cheaper than the
+        // minimum tradeable value must not be priced into a contract at
+        // all. Defining the constant without consulting it is how a rule
+        // ends up documented but absent.
+        validate_item_value(outcome.verified_price_microcredits)?;
         let scaled_weight = i128::from(outcome.weight_numerator)
             .checked_mul(common_denominator / i128::from(outcome.weight_denominator))
             .ok_or(PricingError::Overflow)?;
@@ -180,7 +183,16 @@ pub fn quote_adjustment_microcredits(
     let expected_buyback_denominator = common_denominator
         .checked_mul(i128::from(PERCENT_DENOMINATOR))
         .ok_or(PricingError::Overflow)?;
-    let expected = round_ratio_half_even(expected_buyback_numerator, expected_buyback_denominator)?;
+    // Floored, matching `buyback_microcredits` exactly.
+    //
+    // This used to round half-even, which meant the figure quoted before
+    // acceptance could exceed the figure settlement pays by a microcredit
+    // -- two rounding rules for one quantity, and the discrepancy always
+    // fell against the player. A quote has to promise what it will pay.
+    let expected = expected_buyback_numerator
+        .checked_div(expected_buyback_denominator)
+        .ok_or(PricingError::Overflow)?;
+    let expected = i64::try_from(expected).map_err(|_| PricingError::Overflow)?;
     // The house edge lives here, and only here.
     //
     // The contract costs `market_value / 0.92`, so the player's expected
@@ -205,7 +217,19 @@ pub fn quote_adjustment_microcredits(
         .checked_sub(verified_input_value_microcredits)
         .ok_or(PricingError::Overflow)?;
     let fee = adjustment.max(0);
-    let rebate = adjustment.checked_neg().unwrap_or(0).max(0);
+    // A rebate is paid at the buyback rate, not at face value.
+    //
+    // Paid in full it would be a spread-free exit from the item economy:
+    // contract valuable inputs into a cheap outcome set, take the
+    // difference in credits at 100%, and keep the output item as well --
+    // strictly better than selling, which pays 85%. The rebate is a
+    // sell-back of the excess, so it is priced as one.
+    let excess = adjustment.checked_neg().unwrap_or(0).max(0);
+    let rebate = if excess == 0 {
+        0
+    } else {
+        buyback_microcredits(excess)?
+    };
     let effective_spread = if quote_total == 0 {
         Decimal::ZERO
     } else {

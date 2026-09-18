@@ -30,71 +30,75 @@ fn buyback_is_exactly_eighty_five_percent_rounded_down() {
 
 #[test]
 fn quote_returns_fee_and_actual_effective_spread() {
+    // Realistic magnitudes: every item here is at or above the 20-credit
+    // floor, because an item below it cannot exist in this economy and a
+    // quote now refuses one.
     let outcomes = [
-        PricedOutcome::new(1_000_000, 1, 2),
-        PricedOutcome::new(2_000_000, 1, 2),
+        PricedOutcome::new(20_000_000, 1, 2),
+        PricedOutcome::new(40_000_000, 1, 2),
     ];
-    let quote = quote_adjustment_microcredits(1_400_000, &outcomes).unwrap();
+    let quote = quote_adjustment_microcredits(28_000_000, &outcomes).unwrap();
 
-    // Market value is 1_500_000; the contract costs that over 0.92, so
+    // Market value is 30_000_000; the contract costs that over 0.92, so
     // the house keeps 8% of what the player pays.
-    assert_eq!(quote.quote_total_microcredits, 1_630_435);
+    assert_eq!(quote.quote_total_microcredits, 32_608_696);
     // The buyback figure is untouched by the edge: it is still 85% of the
     // market value, because it describes selling the result, not buying
     // the contract.
-    assert_eq!(quote.expected_buyback_microcredits, 1_275_000);
-    assert_eq!(quote.adjustment_microcredits, 230_435);
-    assert_eq!(quote.fee_microcredits, 230_435);
+    assert_eq!(quote.expected_buyback_microcredits, 25_500_000);
+    assert_eq!(quote.adjustment_microcredits, 4_608_696);
+    assert_eq!(quote.fee_microcredits, 4_608_696);
     assert_eq!(quote.rebate_microcredits, 0);
-    // The spread a player actually faces is now both layers compounded:
+    // The spread a player actually faces is both layers compounded:
     // 1 - 0.85 * 0.92 = 0.218.
     assert_eq!(quote.effective_spread.round_dp(3), dec!(0.218));
 }
 
 #[test]
 fn quote_rounds_only_after_exact_weighted_market_value() {
-    let outcomes = [PricedOutcome::new(101, 1, 1)];
-    let quote = quote_adjustment_microcredits(101, &outcomes).unwrap();
-    assert_eq!(quote.expected_buyback_microcredits, 86);
-    // 101 / 0.92 = 109.78..., rounded up. The division happens once, on
-    // the exact weighted value, never on already-rounded parts.
-    assert_eq!(quote.quote_total_microcredits, 110);
+    // A price one microcredit above the floor, so the rounding is visible
+    // without the value being one an item could never have.
+    let outcomes = [PricedOutcome::new(20_000_101, 1, 1)];
+    let quote = quote_adjustment_microcredits(20_000_101, &outcomes).unwrap();
+    assert_eq!(quote.expected_buyback_microcredits, 17_000_085);
+    // The division happens once, on the exact weighted value, never on
+    // already-rounded parts.
+    assert_eq!(quote.quote_total_microcredits, 21_739_241);
 }
 
 #[test]
 fn quote_accepts_equivalent_mixed_probability_denominators() {
     let outcomes = [
-        PricedOutcome::new(600, 1, 2),
-        PricedOutcome::new(600, 1, 3),
-        PricedOutcome::new(600, 1, 6),
+        PricedOutcome::new(20_000_000, 1, 2),
+        PricedOutcome::new(20_000_000, 1, 3),
+        PricedOutcome::new(20_000_000, 1, 6),
     ];
-    // 600 / 0.92 = 652.17..., rounded up. Equivalent denominators must
-    // still reduce to one exact market value before the edge is applied.
+    // Equivalent denominators must reduce to one exact market value
+    // before the edge is applied.
     assert_eq!(
-        quote_adjustment_microcredits(600, &outcomes)
+        quote_adjustment_microcredits(20_000_000, &outcomes)
             .unwrap()
             .quote_total_microcredits,
-        653
+        21_739_131
     );
 }
 
 #[test]
 fn quote_returns_rebate_without_a_simultaneous_fee() {
-    // A rebate still happens, but the edge means the inputs must now be
-    // worth more than the outcome's market value before one appears:
-    // 1_000_000 / 0.92 = 1_086_957, so 1_200_000 of inputs earns 113_043
-    // back rather than the whole difference.
-    let outcomes = [PricedOutcome::new(1_000_000, 1, 1)];
-    let quote = quote_adjustment_microcredits(1_200_000, &outcomes).unwrap();
-    assert_eq!(quote.quote_total_microcredits, 1_086_957);
-    assert_eq!(quote.adjustment_microcredits, -113_043);
+    // A rebate still happens, but the edge means the inputs must be worth
+    // more than the contract costs before one appears, and the rebate is
+    // the excess at the buyback rate rather than at face value.
+    let outcomes = [PricedOutcome::new(20_000_000, 1, 1)];
+    let quote = quote_adjustment_microcredits(100_000_000, &outcomes).unwrap();
+    assert_eq!(quote.quote_total_microcredits, 21_739_131);
+    assert_eq!(quote.adjustment_microcredits, -78_260_869);
     assert_eq!(quote.fee_microcredits, 0);
-    assert_eq!(quote.rebate_microcredits, 113_043);
+    assert_eq!(quote.rebate_microcredits, 66_521_738);
 
-    // And inputs merely equal to the market value now owe a fee, because
-    // the contract costs more than the distribution is worth.
-    let quote = quote_adjustment_microcredits(1_000_000, &outcomes).unwrap();
-    assert_eq!(quote.fee_microcredits, 86_957);
+    // And inputs merely equal to the market value owe a fee, because the
+    // contract costs more than the distribution is worth.
+    let quote = quote_adjustment_microcredits(20_000_000, &outcomes).unwrap();
+    assert_eq!(quote.fee_microcredits, 1_739_131);
     assert_eq!(quote.rebate_microcredits, 0);
 }
 
@@ -170,7 +174,7 @@ fn the_house_edge_and_the_target_expected_value_are_complements() {
 /// is rounded up, so the realised edge is at least the configured one.
 #[test]
 fn rounding_the_quote_total_never_shrinks_the_house_edge() {
-    for market_value in [1_i64, 7, 999, 1_000_001, 123_456_789] {
+    for market_value in [20_000_000_i64, 20_000_001, 20_000_999, 123_456_789] {
         let outcomes = [PricedOutcome::new(market_value, 1, 1)];
         let price = quote_adjustment_microcredits(0, &outcomes).expect("price the quote");
         let realised_ev = i128::from(market_value) * 10_000;
@@ -206,4 +210,67 @@ fn items_below_the_minimum_value_are_refused() {
     );
     // A negative price is not merely cheap; it is not a price.
     assert_eq!(validate_item_value(-1), Err(PricingError::NegativeAmount));
+}
+
+/// The buyback figure quoted before acceptance must be the figure paid at
+/// settlement. Two different rounding rules for one quantity means the
+/// quote over-promises by up to a microcredit per item, always in the
+/// player's disfavour when they come to sell.
+#[test]
+fn the_quoted_buyback_matches_what_the_buyback_function_pays() {
+    for price in [20_000_000_i64, 20_000_001, 20_000_101, 123_456_789] {
+        let outcomes = [PricedOutcome::new(price, 1, 1)];
+        let quote = quote_adjustment_microcredits(0, &outcomes).expect("price the quote");
+        assert_eq!(
+            quote.expected_buyback_microcredits,
+            buyback_microcredits(price).expect("buyback"),
+            "price {price}: the quote must promise exactly what settlement pays"
+        );
+    }
+}
+
+/// A rebate must never be a cheaper exit from the item economy than
+/// selling. Otherwise a player contracts valuable inputs into a cheap
+/// outcome set, takes the difference in credits at face value, and keeps
+/// the output item too -- minting credits around the 85% spread.
+#[test]
+fn a_rebate_never_pays_more_than_selling_the_difference_would() {
+    let outcomes = [PricedOutcome::new(20_000_000, 1, 1)];
+    // Inputs worth far more than the outcome distribution.
+    let quote = quote_adjustment_microcredits(100_000_000, &outcomes).expect("price the quote");
+
+    assert!(
+        quote.rebate_microcredits > 0,
+        "this case must produce a rebate"
+    );
+    let excess = 100_000_000 - quote.quote_total_microcredits;
+    assert_eq!(
+        quote.rebate_microcredits,
+        buyback_microcredits(excess).expect("buyback of the excess"),
+        "the rebate is the excess at the buyback rate, not at face value"
+    );
+    assert!(
+        quote.rebate_microcredits < excess,
+        "paying the excess in full would be a spread-free exit"
+    );
+}
+
+/// An outcome cannot be priced below the tradeable floor.
+#[test]
+fn a_quote_refuses_an_outcome_below_the_minimum_item_value() {
+    let outcomes = [PricedOutcome::new(
+        MINIMUM_ITEM_VALUE_MICROCREDITS - 1,
+        1,
+        1,
+    )];
+    assert_eq!(
+        quote_adjustment_microcredits(0, &outcomes).unwrap_err(),
+        PricingError::ItemBelowMinimumValue {
+            value_microcredits: MINIMUM_ITEM_VALUE_MICROCREDITS - 1
+        },
+        "the floor must be enforced on a real path, not merely defined"
+    );
+    // At the floor exactly, accepted.
+    let outcomes = [PricedOutcome::new(MINIMUM_ITEM_VALUE_MICROCREDITS, 1, 1)];
+    assert!(quote_adjustment_microcredits(0, &outcomes).is_ok());
 }

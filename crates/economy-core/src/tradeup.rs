@@ -122,7 +122,10 @@ pub fn build_outcomes(
                 collection_id: (*collection).to_owned(),
             })?
             .len() as u64;
-        common = checked_lcm(common, input_total * count).ok_or(TradeupError::InvalidWeights)?;
+        let scaled = input_total
+            .checked_mul(count)
+            .ok_or(TradeupError::InvalidWeights)?;
+        common = checked_lcm(common, scaled).ok_or(TradeupError::InvalidWeights)?;
     }
     if common < MIN_WEIGHT_DENOMINATOR {
         common *= MIN_WEIGHT_DENOMINATOR.div_ceil(common);
@@ -133,7 +136,11 @@ pub fn build_outcomes(
         let collection_outputs = &grouped[collection];
         let each = input_count
             .checked_mul(common)
-            .and_then(|v| v.checked_div(input_total * collection_outputs.len() as u64))
+            .and_then(|v| {
+                input_total
+                    .checked_mul(collection_outputs.len() as u64)
+                    .and_then(|divisor| v.checked_div(divisor))
+            })
             .ok_or(TradeupError::InvalidWeights)?;
         for output in collection_outputs {
             result.push(WeightedOutcome {
