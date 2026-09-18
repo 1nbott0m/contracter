@@ -699,6 +699,19 @@ SELECT pg_temp.assert_true(
         )
     )
 );
+-- The runtime role must not be able to enumerate logins.
+--
+-- It cannot read password_hash directly, but it can execute
+-- find_user_credential_by_login, which returns one. Reading `users.login`
+-- as well turns that verification function into a bulk dump via
+-- CROSS JOIN LATERAL. Migration 0019 removed the column grant; this keeps
+-- it removed, because restoring it looks harmless in isolation.
+SELECT pg_temp.assert_true(
+    'contracter_runtime cannot read users.login, so it cannot enumerate credentials',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_column_privilege('contracter_runtime', 'users', 'login', 'SELECT')
+);
+
 SELECT pg_temp.assert_true(
     'contracter_runtime still cannot read password_hash directly after the login flow exists',
     NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')

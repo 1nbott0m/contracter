@@ -136,6 +136,20 @@ pub async fn register(
     validate_login(login)?;
     validate_password(password)?;
 
+    // Check the invitation before paying for the hash.
+    //
+    // Argon2id costs ~19 MiB and tens of milliseconds by design, and the
+    // number that may run at once is capped by `hashing_permits`. Hashing
+    // first meant an attacker with no invitation at all could keep that
+    // cap saturated with garbage registrations, and every legitimate
+    // login would then queue and be shed as 503. This is a probe, not the
+    // authorization: `register_invited_user` below still locks the
+    // invitation and redeems it atomically, so a caller that wins this
+    // check and loses the race still gets `InvitationUnusable`.
+    if !db::invitation_is_redeemable(database.pool(), &invitation_token.hash()).await? {
+        return Err(AuthError::InvitationUnusable);
+    }
+
     let password_hash = hash_password(password.to_owned()).await?;
     let result = db::register_invited_user(
         database.pool(),
@@ -177,7 +191,12 @@ pub async fn login(
     // denies an attacker the cheapest way to buy 19 MiB of server work.
     // It is not an oracle: the answer depends only on what the caller
     // typed, never on whether the login exists.
-    if validate_password(password).is_err() {
+    // The same reasoning applies to the login field, which is otherwise
+    // bounded only by the 256 KiB body limit: a 250 KiB login buys a full
+    // case-folding comparison in PostgreSQL and then a full Argon2id
+    // verification. `InvalidCredentials` rather than `InvalidLogin`, so a
+    // malformed login is still indistinguishable from a wrong password.
+    if validate_password(password).is_err() || validate_login(login).is_err() {
         return Err(AuthError::InvalidCredentials);
     }
 

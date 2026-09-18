@@ -192,14 +192,84 @@ fn normalized_input_floats_determine_output_float() {
 }
 
 #[test]
-fn rejects_an_unavailable_candidate_instead_of_rerolling() {
+fn a_zero_stock_outcome_is_excluded_and_the_rest_renormalised() {
+    // The game-mechanics document: "Zero-stock outcome исключается.
+    // Оставшиеся вероятности нормализуются." Refusing the whole contract
+    // instead -- which is what this did before -- means one out-of-stock
+    // candidate makes every contract touching that collection impossible.
+    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
+    let outcomes = build_outcomes(
+        &inputs,
+        &[
+            output("in-stock", "a", 3, true),
+            output("out-of-stock", "a", 3, false),
+        ],
+    )
+    .expect("an out-of-stock candidate is excluded, not fatal");
+
+    assert_eq!(outcomes.len(), 1, "only the in-stock candidate survives");
+    assert_eq!(outcomes[0].sku_id, "in-stock");
+    assert_eq!(
+        outcomes[0].weight_numerator, outcomes[0].weight_denominator,
+        "the survivor takes the whole probability mass, exactly"
+    );
+}
+
+/// Exclusion is not the same as tolerating an empty collection. If a
+/// represented collection has nothing left in stock, there is no valid
+/// outcome for those inputs and the contract must still be refused.
+#[test]
+fn a_collection_with_no_stock_left_is_still_refused() {
     let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
     let error = build_outcomes(&inputs, &[output("out", "a", 3, false)]).unwrap_err();
     assert_eq!(
         error,
-        TradeupError::UnavailableOutput {
-            sku_id: "out".into()
+        TradeupError::MissingOutput {
+            collection_id: "a".into()
         }
+    );
+}
+
+/// Excluding an outcome must not disturb the collection odds, which the
+/// document ties to input composition. Three of A and one of B stays
+/// 75/25 even when one of A's candidates is out of stock.
+#[test]
+fn exclusion_renormalises_within_a_collection_without_moving_collection_odds() {
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 3];
+    inputs.push(input("b-in", "b", 2, dec!(0.20)));
+
+    let outcomes = build_outcomes(
+        &inputs,
+        &[
+            output("a-live", "a", 3, true),
+            output("a-dead", "a", 3, false),
+            output("b-live", "b", 3, true),
+        ],
+    )
+    .expect("build outcomes with one candidate out of stock");
+
+    let denominator = outcomes[0].weight_denominator;
+    let weight_of = |sku: &str| {
+        outcomes
+            .iter()
+            .find(|outcome| outcome.sku_id == sku)
+            .map(|outcome| outcome.weight_numerator)
+            .unwrap_or_else(|| panic!("{sku} is among the outcomes"))
+    };
+
+    assert!(
+        !outcomes.iter().any(|outcome| outcome.sku_id == "a-dead"),
+        "the zero-stock candidate is gone"
+    );
+    assert_eq!(
+        u128::from(weight_of("a-live")) * 4,
+        u128::from(denominator) * 3,
+        "collection A still holds three of four inputs, so still 75%"
+    );
+    assert_eq!(
+        u128::from(weight_of("b-live")) * 4,
+        u128::from(denominator),
+        "and B still 25%"
     );
 }
 

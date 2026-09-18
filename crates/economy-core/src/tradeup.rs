@@ -64,8 +64,6 @@ pub enum TradeupError {
     FloatOutOfRange { sku_id: String },
     #[error("collection {collection_id} has no next-rarity output")]
     MissingOutput { collection_id: String },
-    #[error("candidate output is unavailable: {sku_id}")]
-    UnavailableOutput { sku_id: String },
     #[error("candidate output has the wrong rarity: {sku_id}")]
     WrongOutputRarity { sku_id: String },
     #[error("outcome weights are invalid")]
@@ -99,10 +97,18 @@ pub fn build_outcomes(
                 sku_id: output.sku_id.clone(),
             });
         }
+        // Zero stock excludes the candidate; it does not doom the
+        // contract. The remaining candidates are renormalised by the
+        // weight maths below, which divides by how many survived in each
+        // collection. Refusing outright -- the previous behaviour --
+        // meant one out-of-stock skin made every contract touching its
+        // collection impossible.
+        //
+        // A collection left with nothing in stock is still refused, but
+        // as `MissingOutput` below, which is the honest description: the
+        // inputs have no reachable next-rarity result.
         if !output.available {
-            return Err(TradeupError::UnavailableOutput {
-                sku_id: output.sku_id.clone(),
-            });
+            continue;
         }
         grouped
             .entry(output.collection_id.as_str())

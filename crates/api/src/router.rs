@@ -132,17 +132,55 @@ fn handle_panic(payload: Box<dyn std::any::Any + Send + 'static>) -> axum::respo
     axum::response::IntoResponse::into_response(ApiError::Internal)
 }
 
+/// An origin is a scheme and an authority, and nothing else.
+///
+/// Deliberately hand-written rather than pulling in a URL parser: the
+/// rule is small enough to state exactly, and the failure mode of getting
+/// it wrong is granting credentialed cross-origin access, which is worth
+/// being able to read in full here.
+fn is_valid_origin(origin: &str) -> bool {
+    let Some(authority) = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    // No path, query or fragment, and a non-empty host. `*` and `null`
+    // fail here because neither carries a scheme.
+    !authority.is_empty()
+        && !authority.contains(['/', '?', '#', ',', ' '])
+        && authority.chars().all(|c| c.is_ascii_graphic())
+}
+
 fn build_cors_layer(allowed_origins: &[String]) -> Option<CorsLayer> {
     if allowed_origins.is_empty() {
         return None;
     }
     let origins = allowed_origins
         .iter()
-        .filter_map(|origin| match origin.parse() {
-            Ok(parsed) => Some(parsed),
-            Err(_) => {
+        .filter_map(|origin| {
+            // `HeaderValue::from_str` accepts any printable ASCII, so it
+            // is not a validator. Two entries in particular must never
+            // reach the layer:
+            //
+            //   `*`    - tower-http *panics* when a wildcard appears in an
+            //            origin list, which would crash the process during
+            //            router construction, before the listener binds. A
+            //            configuration typo must not be fatal.
+            //   `null` - a real Origin value sent by sandboxed iframes,
+            //            `data:` documents and `file://` pages. Paired with
+            //            `allow_credentials`, trusting it hands credentialed
+            //            access to exactly those contexts.
+            if !is_valid_origin(origin) {
                 tracing::warn!(origin = %origin, "ignoring malformed CORS_ALLOWED_ORIGINS entry");
-                None
+                return None;
+            }
+            match origin.parse() {
+                Ok(parsed) => Some(parsed),
+                Err(_) => {
+                    tracing::warn!(origin = %origin, "ignoring unencodable CORS_ALLOWED_ORIGINS entry");
+                    None
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -212,6 +250,53 @@ mod tests {
         assert_eq!(body["error"]["code"], "INTERNAL_SERVER_ERROR");
         let raw = String::from_utf8_lossy(&bytes);
         assert!(!raw.contains("sensitive panic detail"));
+    }
+
+    /// A wildcard in a credentialed origin list makes tower-http panic,
+    /// which would crash the process during router construction -- before
+    /// the listener binds, so the service never starts and the operator
+    /// sees a panic rather than a configuration error. `null` is a real
+    /// Origin sent by sandboxed iframes, `data:` documents and `file://`
+    /// pages; trusting it alongside `allow_credentials` hands credentialed
+    /// access to exactly those contexts. Both are dropped with a warning,
+    /// and a well-formed neighbour in the same list still works.
+    #[test]
+    fn a_malformed_cors_origin_is_dropped_rather_than_fatal() {
+        use super::{build_cors_layer, is_valid_origin};
+
+        for rejected in [
+            "*",
+            "null",
+            "",
+            "example.com",
+            "https://",
+            "ftp://example.com",
+            "https://example.com/path",
+            "https://example.com,https://other.example",
+        ] {
+            assert!(!is_valid_origin(rejected), "{rejected:?} must be refused");
+        }
+        for accepted in [
+            "https://example.com",
+            "http://localhost:3000",
+            "https://sub.example.com:8443",
+        ] {
+            assert!(is_valid_origin(accepted), "{accepted:?} must be accepted");
+        }
+
+        // The whole list, including the entries that would have panicked.
+        let layer = build_cors_layer(&[
+            "*".to_owned(),
+            "null".to_owned(),
+            "https://ok.example".to_owned(),
+        ]);
+        assert!(
+            layer.is_some(),
+            "one good origin survives a list containing a wildcard"
+        );
+        // And a list with nothing usable produces no layer at all, rather
+        // than a layer that allows everything.
+        assert!(build_cors_layer(&["*".to_owned()]).is_none());
     }
 
     /// `RequestBodyLimit` (what `RequestBodyLimitLayer` applies) rejects a
