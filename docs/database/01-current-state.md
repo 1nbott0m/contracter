@@ -43,7 +43,10 @@ Postgres often denies `CREATEROLE` to the migration user — roles are
 provisioned externally, not by a migration:
 - `contracter_runtime` — narrow `SELECT` on read-path tables/views + `EXECUTE` on `finalize_contract` only. No journal table is directly writable even by this role (0005's append-only guard blocks it structurally, not just by grant).
 - `contracter_admin_runtime` — `SELECT` on admin/ledger/audit tables + `EXECUTE` on `post_credit_adjustment`, `approve_critical_action`, `publish_valuation_snapshot`.
-- `contracter_readonly` — `SELECT` on every table, for reporting/analytics.
+- `contracter_readonly` — `SELECT` only on the explicit catalog, pricing,
+  stock, risk, scarcity, and public-verification allowlist. It cannot read
+  account/authentication data, administration, individual inventory, ledger,
+  quote/contract, or server-seed relations.
 
 ## 2. Open, unmerged branches (proposed, not yet part of the source of truth)
 
