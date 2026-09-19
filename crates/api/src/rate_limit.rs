@@ -65,6 +65,18 @@ pub enum RateLimitKey {
     /// index is case-insensitive, so treating them separately would be a
     /// free doubling.
     Login(String),
+    /// One invitation's probe budget, keyed on the token's SHA-256 and
+    /// never on the token itself.
+    ///
+    /// Registration answers "that login is taken" with `409` and anything
+    /// else with `403`, which a holder of one valid invitation can use as
+    /// an unlimited login-existence oracle: a failed probe does not
+    /// consume the invitation. Collapsing the two responses would hide the
+    /// one thing an honest user needs to be told, so the probe is bounded
+    /// instead. The address budget alone does not close this -- an
+    /// attacker with many addresses and one invitation would still get
+    /// unlimited attempts.
+    Invitation([u8; 32]),
     /// Used when the peer address is unavailable, which happens in tests
     /// driving the router directly. One shared bucket still bounds total
     /// work; it simply cannot tell callers apart.

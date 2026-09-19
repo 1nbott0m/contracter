@@ -72,11 +72,18 @@ pub async fn register(
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Before any work at all, including the invitation lookup.
-    if let Err(retry) = state.auth_rate_limiter().check(&peer_key(peer)) {
+    let limiter = state.auth_rate_limiter();
+    if let Err(retry) = limiter.check(&peer_key(peer)) {
         return Err(ApiError::too_many_requests(retry.0));
     }
 
     let invitation = SecretToken::new(request.invitation_token);
+    // And a budget for the invitation itself. A failed registration does
+    // not consume the invitation, so without this a holder of one valid
+    // invitation could probe logins indefinitely by rotating addresses.
+    if let Err(retry) = limiter.check(&RateLimitKey::Invitation(invitation.hash())) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
     let user_id = auth::register(
         state.database(),
         &invitation,

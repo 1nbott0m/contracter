@@ -122,6 +122,35 @@ where
     )
 }
 
+/// Creates a session for a login whose stored hash the caller presents.
+///
+/// The hash is proof that the caller read this account's credential --
+/// which requires executing the narrow lookup function for that exact
+/// login. It is not proof of password verification; that still happens in
+/// `application`, where Argon2id lives. What it buys is that a caller
+/// holding only the database credential cannot mint a session for an
+/// arbitrary account id.
+pub async fn create_user_session_for_credential<'e, E>(
+    executor: E,
+    login: &str,
+    password_hash: &str,
+    session_token_hash: &[u8],
+    ttl: std::time::Duration,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar(
+        "SELECT create_user_session_for_credential($1, $2, $3, make_interval(secs => $4))",
+    )
+    .bind(login)
+    .bind(password_hash)
+    .bind(session_token_hash)
+    .bind(ttl.as_secs_f64())
+    .fetch_one(executor)
+    .await?)
+}
+
 /// Resolves a presented session token hash to its owner, or `None` if the
 /// token is unknown, expired, revoked, or its user has been disabled --
 /// deliberately indistinguishable cases.

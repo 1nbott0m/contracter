@@ -1,7 +1,7 @@
 use economy_core::pricing::{
     HOUSE_EDGE_BPS, MINIMUM_ITEM_VALUE_MICROCREDITS, PricedOutcome, PricingError, TARGET_EV_BPS,
-    buyback_microcredits, quote_adjustment_microcredits, trimmed_mean_microcredits,
-    validate_item_value,
+    buyback_microcredits, pricing_formula_version, quote_adjustment_microcredits,
+    trimmed_mean_microcredits, validate_item_value,
 };
 use rust_decimal_macros::dec;
 
@@ -273,4 +273,42 @@ fn a_quote_refuses_an_outcome_below_the_minimum_item_value() {
     // At the floor exactly, accepted.
     let outcomes = [PricedOutcome::new(MINIMUM_ITEM_VALUE_MICROCREDITS, 1, 1)];
     assert!(quote_adjustment_microcredits(0, &outcomes).is_ok());
+}
+
+/// A quote records which rules produced it, so a dispute or a
+/// reconciliation can be settled after the parameters change.
+#[test]
+fn a_quote_carries_the_version_of_the_rules_that_priced_it() {
+    let outcomes = [PricedOutcome::new(20_000_000, 1, 1)];
+    let quote = quote_adjustment_microcredits(0, &outcomes).expect("price the quote");
+
+    assert_eq!(quote.formula_version, pricing_formula_version());
+    // Derived from the parameters, not maintained by hand, so it cannot
+    // sit unchanged while the numbers under it move.
+    assert_eq!(quote.formula_version.house_edge_bps, HOUSE_EDGE_BPS);
+    assert_eq!(
+        quote.formula_version.minimum_item_value_microcredits,
+        MINIMUM_ITEM_VALUE_MICROCREDITS
+    );
+    assert_eq!(
+        quote.formula_version.buyback_percent + 15,
+        100,
+        "the buyback spread is part of what a stored quote must pin down"
+    );
+}
+
+/// The edge multiplies by 10_000, which costs four decimal digits of i128
+/// headroom. Reducing first keeps quotes that priced before the edge
+/// existed from starting to refuse.
+#[test]
+fn a_large_but_legitimate_quote_still_prices_after_the_edge() {
+    // A realistic ceiling: a very valuable item across many weighted
+    // outcomes sharing a large denominator.
+    let outcomes = [
+        PricedOutcome::new(900_000_000_000_000, 1, 3),
+        PricedOutcome::new(900_000_000_000_000, 1, 3),
+        PricedOutcome::new(900_000_000_000_000, 1, 3),
+    ];
+    let quote = quote_adjustment_microcredits(0, &outcomes).expect("must not overflow");
+    assert!(quote.quote_total_microcredits > 900_000_000_000_000);
 }

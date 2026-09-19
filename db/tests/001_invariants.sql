@@ -683,7 +683,9 @@ SELECT pg_temp.assert_true(
             'contracter_runtime', 'register_invited_user(bytea, text, text)', 'EXECUTE'
         )
         AND has_function_privilege(
-            'contracter_runtime', 'create_user_session(bigint, bytea, interval)', 'EXECUTE'
+            'contracter_runtime',
+            'create_user_session_for_credential(text, text, bytea, interval)',
+            'EXECUTE'
         )
         AND has_function_privilege(
             'contracter_runtime', 'find_active_user_session(bytea)', 'EXECUTE'
@@ -760,6 +762,22 @@ SELECT pg_temp.assert_true(
 -- as well turns that verification function into a bulk dump via
 -- CROSS JOIN LATERAL. Migration 0019 removed the column grant; this keeps
 -- it removed, because restoring it looks harmless in isolation.
+-- Session creation must name the credential it acts on.
+--
+-- The unbound create_user_session trusts whatever internal id it is
+-- handed, so a leaked runtime credential would mint a session for any
+-- account -- full takeover with no password. 0022 binds the runtime role
+-- to the variant that must be shown the account's stored hash. The
+-- unbound one stays defined for later administrative and recovery paths,
+-- which run as an admin role.
+SELECT pg_temp.assert_true(
+    'contracter_runtime cannot create a session from an internal id alone',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_function_privilege(
+        'contracter_runtime', 'create_user_session(bigint, bytea, interval)', 'EXECUTE'
+    )
+);
+
 SELECT pg_temp.assert_true(
     'contracter_runtime cannot read users.login, so it cannot enumerate credentials',
     NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')

@@ -209,22 +209,32 @@ pub async fn login(
     let (stored_hash, user) = match credential {
         Some(credential) if credential.disabled_at.is_none() => (
             Some(credential.password_hash),
-            Some((credential.user_id, credential.user_public_id)),
+            Some(credential.user_public_id),
         ),
         // Unknown login, or a disabled account: still spend a full
         // verification against a decoy hash before failing.
         _ => (None, None),
     };
 
-    let password_matches = verify_password(password.to_owned(), stored_hash).await?;
-    let (true, Some((user_id, user_public_id))) = (password_matches, user) else {
+    let password_matches = verify_password(password.to_owned(), stored_hash.clone()).await?;
+    let (true, Some(user_public_id), Some(verified_hash)) = (password_matches, user, stored_hash)
+    else {
         return Err(AuthError::InvalidCredentials);
     };
 
     let token = SecretToken::generate();
-    let session_public_id =
-        db::create_user_session(database.pool(), user_id, &token.hash(), config.session_ttl)
-            .await?;
+    // The stored hash goes back to the database, which refuses unless it
+    // still matches that login's credential. Handing over an internal id
+    // instead would let anyone holding the database credential mint a
+    // session for any account; see migration 0022.
+    let session_public_id = db::create_user_session_for_credential(
+        database.pool(),
+        login,
+        &verified_hash,
+        &token.hash(),
+        config.session_ttl,
+    )
+    .await?;
 
     Ok(IssuedSession {
         token,

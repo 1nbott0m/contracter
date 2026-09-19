@@ -37,6 +37,34 @@ pub const TARGET_EV_BPS: i64 = BPS_DENOMINATOR - HOUSE_EDGE_BPS;
 /// dominate the price.
 pub const MINIMUM_ITEM_VALUE_MICROCREDITS: i64 = 20_000_000;
 
+/// The identity of the pricing rules a quote was produced under.
+///
+/// The game-mechanics document requires the formula to be deterministic,
+/// versioned, and fixed in the quote before it is accepted. Without a
+/// version, a quote priced yesterday and one priced after a parameter
+/// change are indistinguishable in storage, so neither a dispute nor a
+/// reconciliation can be settled: there is no way to say which rules
+/// applied.
+///
+/// Derived from the parameters rather than written down beside them. A
+/// hand-maintained version is a version someone forgets to bump, and a
+/// stale one is worse than none because it asserts something false.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PricingFormulaVersion {
+    pub house_edge_bps: i64,
+    pub buyback_percent: i64,
+    pub minimum_item_value_microcredits: i64,
+}
+
+/// The rules currently in force.
+pub const fn pricing_formula_version() -> PricingFormulaVersion {
+    PricingFormulaVersion {
+        house_edge_bps: HOUSE_EDGE_BPS,
+        buyback_percent: BUYBACK_PERCENT,
+        minimum_item_value_microcredits: MINIMUM_ITEM_VALUE_MICROCREDITS,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PricedOutcome {
     pub verified_price_microcredits: i64,
@@ -60,6 +88,10 @@ impl PricedOutcome {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuotePrice {
+    /// The rules this price was computed under, carried with the price so
+    /// a stored quote records them rather than relying on whatever the
+    /// code happens to say when the quote is later read.
+    pub formula_version: PricingFormulaVersion,
     pub expected_buyback_microcredits: i64,
     pub quote_total_microcredits: i64,
     pub adjustment_microcredits: i64,
@@ -205,11 +237,18 @@ pub fn quote_adjustment_microcredits(
     // Rounded up, deliberately: rounding must not fall on the player's
     // side of the edge, or the realised margin would sit below the
     // configured one by up to a microcredit on every contract.
+    // Reduced before the edge is applied. `market_numerator` is already a
+    // product of prices and weights, and multiplying by 10_000 costs four
+    // more decimal digits of headroom; without this, a quote that priced
+    // fine before the edge existed could start refusing with `Overflow`.
+    // Dividing both sides by their common factor first is exact, so the
+    // result is unchanged -- only the range it survives grows.
+    let reduction = gcd_i128(market_numerator, common_denominator).max(1);
     let quote_total = ceil_ratio(
-        market_numerator
+        (market_numerator / reduction)
             .checked_mul(i128::from(BPS_DENOMINATOR))
             .ok_or(PricingError::Overflow)?,
-        common_denominator
+        (common_denominator / reduction)
             .checked_mul(i128::from(TARGET_EV_BPS))
             .ok_or(PricingError::Overflow)?,
     )?;
@@ -244,6 +283,7 @@ pub fn quote_adjustment_microcredits(
     };
 
     Ok(QuotePrice {
+        formula_version: pricing_formula_version(),
         expected_buyback_microcredits: expected,
         quote_total_microcredits: quote_total,
         adjustment_microcredits: adjustment,
