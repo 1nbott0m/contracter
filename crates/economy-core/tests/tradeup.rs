@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use economy_core::tradeup::{
-    InputItem, OutputItem, ScarcityMultiplier, TradeupError, apply_collection_scarcity,
+    InputItem, OutputItem, ScarcityMultiplier, TradeupError, apply_outcome_scarcity,
     build_outcomes, calculate_output_float, select_outcome, server_seed_commitment,
 };
 use rust_decimal_macros::dec;
@@ -299,262 +299,6 @@ fn rejects_rarity_that_cannot_have_a_next_tier_without_panicking() {
 }
 
 #[test]
-fn scarcity_multiplier_scales_a_single_collections_weight_exactly() {
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
-    let outcomes = build_outcomes(
-        &inputs,
-        &[output("a-1", "a", 3, true), output("a-2", "a", 3, true)],
-    )
-    .unwrap();
-    assert_eq!(outcomes[0].weight_numerator, 50);
-    assert_eq!(outcomes[0].weight_denominator, 100);
-
-    let mut multipliers = BTreeMap::new();
-    multipliers.insert(
-        "a".to_string(),
-        ScarcityMultiplier {
-            numerator: 1,
-            denominator: 2,
-        },
-    );
-    let damped = apply_collection_scarcity(&outcomes, &multipliers).unwrap();
-
-    assert_eq!(damped.len(), 2);
-    assert!(damped.iter().all(|outcome| outcome.weight_numerator == 25));
-    assert_eq!(damped[0].weight_denominator, 50);
-    assert_eq!(
-        damped.iter().map(|o| o.weight_numerator).sum::<u64>(),
-        damped[0].weight_denominator
-    );
-}
-
-#[test]
-fn undamped_collections_keep_their_relative_share() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 5];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 5]);
-    let outcomes = build_outcomes(
-        &inputs,
-        &[output("a-1", "a", 3, true), output("b-1", "b", 3, true)],
-    )
-    .unwrap();
-    let baseline_b = outcomes
-        .iter()
-        .find(|o| o.collection_id == "b")
-        .unwrap()
-        .weight_numerator;
-    let baseline_denominator = outcomes[0].weight_denominator;
-
-    // "a" is damped; "b" is absent from the map and defaults to 1/1.
-    let mut multipliers = BTreeMap::new();
-    multipliers.insert(
-        "a".to_string(),
-        ScarcityMultiplier {
-            numerator: 1,
-            denominator: 4,
-        },
-    );
-    let damped = apply_collection_scarcity(&outcomes, &multipliers).unwrap();
-    let damped_b = damped.iter().find(|o| o.collection_id == "b").unwrap();
-    let damped_total = damped[0].weight_denominator;
-
-    // b's share of the total strictly increases (cross-multiplied to avoid floats).
-    assert!(
-        (damped_b.weight_numerator as u128) * (baseline_denominator as u128)
-            > (baseline_b as u128) * (damped_total as u128)
-    );
-}
-
-#[test]
-fn fully_depleted_collection_is_dropped_not_zeroed() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 5];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 5]);
-    let outcomes = build_outcomes(
-        &inputs,
-        &[output("a-1", "a", 3, true), output("b-1", "b", 3, true)],
-    )
-    .unwrap();
-
-    let mut multipliers = BTreeMap::new();
-    multipliers.insert(
-        "a".to_string(),
-        ScarcityMultiplier {
-            numerator: 0,
-            denominator: 10,
-        },
-    );
-    let damped = apply_collection_scarcity(&outcomes, &multipliers).unwrap();
-
-    assert_eq!(damped.len(), 1);
-    assert_eq!(damped[0].collection_id, "b");
-    assert!(damped.iter().all(|o| o.weight_numerator > 0));
-}
-
-#[test]
-fn all_collections_depleted_is_rejected() {
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
-    let outcomes = build_outcomes(&inputs, &[output("a-1", "a", 3, true)]).unwrap();
-
-    let mut multipliers = BTreeMap::new();
-    multipliers.insert(
-        "a".to_string(),
-        ScarcityMultiplier {
-            numerator: 0,
-            denominator: 1,
-        },
-    );
-    let error = apply_collection_scarcity(&outcomes, &multipliers).unwrap_err();
-    assert_eq!(error, TradeupError::InvalidWeights);
-}
-
-#[test]
-fn mismatched_input_denominators_are_rejected() {
-    use economy_core::tradeup::WeightedOutcome;
-
-    // Two outcomes that do NOT share one denominator, as could happen if a
-    // future caller merged `WeightedOutcome`s from two separate
-    // `build_outcomes` calls. `apply_collection_scarcity` must not silently
-    // treat them as one weighted set.
-    let outcomes = vec![
-        WeightedOutcome {
-            sku_id: "a-1".into(),
-            collection_id: "a".into(),
-            weight_numerator: 50,
-            weight_denominator: 100,
-        },
-        WeightedOutcome {
-            sku_id: "b-1".into(),
-            collection_id: "b".into(),
-            weight_numerator: 5,
-            weight_denominator: 10,
-        },
-    ];
-
-    let error = apply_collection_scarcity(&outcomes, &BTreeMap::new()).unwrap_err();
-    assert_eq!(error, TradeupError::InvalidWeights);
-}
-
-#[test]
-fn draining_stock_cannot_increase_a_collections_own_weight() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 6];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 4]);
-    let outcomes = build_outcomes(
-        &inputs,
-        &[output("a-1", "a", 3, true), output("b-1", "b", 3, true)],
-    )
-    .unwrap();
-
-    let well_stocked = apply_collection_scarcity(
-        &outcomes,
-        &BTreeMap::from([(
-            "a".to_string(),
-            ScarcityMultiplier {
-                numerator: 8,
-                denominator: 10,
-            },
-        )]),
-    )
-    .unwrap();
-    let depleted = apply_collection_scarcity(
-        &outcomes,
-        &BTreeMap::from([(
-            "a".to_string(),
-            ScarcityMultiplier {
-                numerator: 3,
-                denominator: 10,
-            },
-        )]),
-    )
-    .unwrap();
-
-    let collection_share = |set: &[economy_core::tradeup::WeightedOutcome]| -> (u128, u128) {
-        let numerator: u128 = set
-            .iter()
-            .filter(|o| o.collection_id == "a")
-            .map(|o| o.weight_numerator as u128)
-            .sum();
-        (numerator, set[0].weight_denominator as u128)
-    };
-    let (well_numerator, well_denominator) = collection_share(&well_stocked);
-    let (depleted_numerator, depleted_denominator) = collection_share(&depleted);
-
-    // depleted share <= well-stocked share (cross-multiplied to avoid floats).
-    assert!(depleted_numerator * well_denominator <= well_numerator * depleted_denominator);
-}
-
-#[test]
-fn draining_stock_cannot_increase_a_collections_own_weight_but_may_have_no_effect_at_low_weight() {
-    use economy_core::tradeup::WeightedOutcome;
-
-    // Documents a real precision limit of apply_collection_scarcity (see its
-    // doc comment): at low weight scale, two meaningfully different
-    // multiplier sets can floor to the identical damped distribution. Here
-    // both outcomes start at weight_numerator = 3; a "symmetric, no real
-    // damping" multiplier set and a "skewed, one collection more scarce"
-    // multiplier set both floor to (1, 1) for every outcome.
-    let outcomes = vec![
-        WeightedOutcome {
-            sku_id: "a".into(),
-            collection_id: "a".into(),
-            weight_numerator: 3,
-            weight_denominator: 6,
-        },
-        WeightedOutcome {
-            sku_id: "b".into(),
-            collection_id: "b".into(),
-            weight_numerator: 3,
-            weight_denominator: 6,
-        },
-    ];
-
-    let symmetric = apply_collection_scarcity(
-        &outcomes,
-        &BTreeMap::from([
-            (
-                "a".to_string(),
-                ScarcityMultiplier {
-                    numerator: 50,
-                    denominator: 100,
-                },
-            ),
-            (
-                "b".to_string(),
-                ScarcityMultiplier {
-                    numerator: 50,
-                    denominator: 100,
-                },
-            ),
-        ]),
-    )
-    .unwrap();
-    let skewed = apply_collection_scarcity(
-        &outcomes,
-        &BTreeMap::from([
-            (
-                "a".to_string(),
-                ScarcityMultiplier {
-                    numerator: 40,
-                    denominator: 100,
-                },
-            ),
-            (
-                "b".to_string(),
-                ScarcityMultiplier {
-                    numerator: 60,
-                    denominator: 100,
-                },
-            ),
-        ]),
-    )
-    .unwrap();
-
-    assert_eq!(
-        symmetric, skewed,
-        "known precision limit: distinct multiplier sets can collapse to the same \
-         damped distribution at low weight scale"
-    );
-}
-
-#[test]
 fn rejects_weight_sum_overflow_without_panicking() {
     use economy_core::tradeup::WeightedOutcome;
     let outcomes = [
@@ -575,4 +319,275 @@ fn rejects_weight_sum_overflow_without_panicking() {
         select_outcome(&outcomes, &[0; 32], b"client", 1).unwrap_err(),
         TradeupError::InvalidWeights
     );
+}
+
+#[test]
+fn scarcity_redistributes_within_a_collection_without_moving_collection_odds() {
+    // The document ties collection odds to input composition and says
+    // scarcity changes the weights of eligible outcomes *inside* the
+    // chosen collection. Together those mean a scarcity multiplier must
+    // never move probability between collections.
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 3];
+    inputs.push(input("b-in", "b", 2, dec!(0.20)));
+
+    let outcomes = build_outcomes(
+        &inputs,
+        &[
+            output("a-1", "a", 3, true),
+            output("a-2", "a", 3, true),
+            output("b-1", "b", 3, true),
+        ],
+    )
+    .expect("build outcomes");
+
+    // Damp one SKU inside collection A. B is untouched.
+    let mut multipliers = BTreeMap::new();
+    multipliers.insert(
+        "a-1".to_string(),
+        ScarcityMultiplier {
+            numerator: 1,
+            denominator: 4,
+        },
+    );
+    let damped = apply_outcome_scarcity(&outcomes, &multipliers).expect("apply scarcity");
+
+    let denominator = damped[0].weight_denominator;
+    assert!(
+        damped
+            .iter()
+            .all(|outcome| outcome.weight_denominator == denominator)
+    );
+    let share = |collection: &str| -> u128 {
+        damped
+            .iter()
+            .filter(|outcome| outcome.collection_id == collection)
+            .map(|outcome| u128::from(outcome.weight_numerator))
+            .sum()
+    };
+
+    assert_eq!(
+        share("a") * 4,
+        u128::from(denominator) * 3,
+        "collection A holds three of four inputs and must still be 75%"
+    );
+    assert_eq!(
+        share("b") * 4,
+        u128::from(denominator),
+        "and B still 25%, untouched by a multiplier applied inside A"
+    );
+
+    let weight_of = |sku: &str| -> u128 {
+        damped
+            .iter()
+            .find(|outcome| outcome.sku_id == sku)
+            .map(|outcome| u128::from(outcome.weight_numerator))
+            .unwrap_or_else(|| panic!("{sku} is among the outcomes"))
+    };
+    assert_eq!(
+        weight_of("a-1") * 4,
+        weight_of("a-2"),
+        "a 1/4 multiplier means a quarter of its sibling's weight, exactly"
+    );
+}
+
+#[test]
+fn an_unmultiplied_outcome_set_keeps_every_share_exactly() {
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 6];
+    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 4]);
+    let outcomes = build_outcomes(
+        &inputs,
+        &[output("a-1", "a", 3, true), output("b-1", "b", 3, true)],
+    )
+    .expect("build outcomes");
+
+    let damped = apply_outcome_scarcity(&outcomes, &BTreeMap::new()).expect("no multipliers");
+
+    let denominator = damped[0].weight_denominator;
+    for outcome in &outcomes {
+        let after = damped
+            .iter()
+            .find(|candidate| candidate.sku_id == outcome.sku_id)
+            .expect("every outcome survives");
+        // Cross-multiplied, so this compares proportions rather than
+        // whatever common denominator the rescale happened to pick.
+        assert_eq!(
+            u128::from(after.weight_numerator) * u128::from(outcome.weight_denominator),
+            u128::from(outcome.weight_numerator) * u128::from(denominator),
+            "{} must keep its exact share",
+            outcome.sku_id
+        );
+    }
+}
+
+#[test]
+fn an_outcome_damped_to_nothing_is_dropped_and_its_collection_renormalised() {
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 5];
+    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 5]);
+    let outcomes = build_outcomes(
+        &inputs,
+        &[
+            output("a-1", "a", 3, true),
+            output("a-2", "a", 3, true),
+            output("b-1", "b", 3, true),
+        ],
+    )
+    .expect("build outcomes");
+
+    let mut multipliers = BTreeMap::new();
+    multipliers.insert(
+        "a-1".to_string(),
+        ScarcityMultiplier {
+            numerator: 0,
+            denominator: 1,
+        },
+    );
+    let damped = apply_outcome_scarcity(&outcomes, &multipliers).expect("apply scarcity");
+
+    assert!(
+        !damped.iter().any(|outcome| outcome.sku_id == "a-1"),
+        "a fully depleted outcome is dropped rather than carried at zero"
+    );
+
+    let denominator = damped[0].weight_denominator;
+    let share = |collection: &str| -> u128 {
+        damped
+            .iter()
+            .filter(|outcome| outcome.collection_id == collection)
+            .map(|outcome| u128::from(outcome.weight_numerator))
+            .sum()
+    };
+    // The mass a-1 held goes to a-2, never to collection B.
+    assert_eq!(
+        share("a") * 2,
+        u128::from(denominator),
+        "collection A still holds five of ten inputs, so still 50%"
+    );
+    assert_eq!(share("b") * 2, u128::from(denominator));
+}
+
+#[test]
+fn a_collection_damped_to_nothing_is_an_error_rather_than_a_silent_shift() {
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 5];
+    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 5]);
+    let outcomes = build_outcomes(
+        &inputs,
+        &[output("a-1", "a", 3, true), output("b-1", "b", 3, true)],
+    )
+    .expect("build outcomes");
+
+    let mut multipliers = BTreeMap::new();
+    multipliers.insert(
+        "a-1".to_string(),
+        ScarcityMultiplier {
+            numerator: 0,
+            denominator: 1,
+        },
+    );
+
+    // Silently handing A's 50% to B would break the tie between collection
+    // odds and input composition, which is the one thing scarcity must not
+    // do. There is no correct answer here, so there is no answer.
+    assert_eq!(
+        apply_outcome_scarcity(&outcomes, &multipliers).unwrap_err(),
+        TradeupError::MissingOutput {
+            collection_id: "a".into()
+        }
+    );
+}
+
+#[test]
+fn scarcity_rejects_an_invalid_multiplier_or_a_malformed_outcome_set() {
+    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
+    let outcomes = build_outcomes(
+        &inputs,
+        &[output("a-1", "a", 3, true), output("a-2", "a", 3, true)],
+    )
+    .expect("build outcomes");
+
+    // Above one would let scarcity *raise* a weight, which is not damping
+    // and would move probability between collections.
+    let mut invalid = BTreeMap::new();
+    invalid.insert(
+        "a-1".to_string(),
+        ScarcityMultiplier {
+            numerator: 3,
+            denominator: 2,
+        },
+    );
+    assert_eq!(
+        apply_outcome_scarcity(&outcomes, &invalid).unwrap_err(),
+        TradeupError::InvalidWeights
+    );
+
+    let mut zero_denominator = BTreeMap::new();
+    zero_denominator.insert(
+        "a-1".to_string(),
+        ScarcityMultiplier {
+            numerator: 0,
+            denominator: 0,
+        },
+    );
+    assert_eq!(
+        apply_outcome_scarcity(&outcomes, &zero_denominator).unwrap_err(),
+        TradeupError::InvalidWeights
+    );
+
+    // An empty set, and one whose members disagree about their
+    // denominator, are malformed rather than merely unusual.
+    assert_eq!(
+        apply_outcome_scarcity(&[], &BTreeMap::new()).unwrap_err(),
+        TradeupError::InvalidWeights
+    );
+    let mut mismatched = outcomes.clone();
+    mismatched[1].weight_denominator += 1;
+    assert_eq!(
+        apply_outcome_scarcity(&mismatched, &BTreeMap::new()).unwrap_err(),
+        TradeupError::InvalidWeights
+    );
+}
+
+/// A damped distribution must remain something `select_outcome` accepts:
+/// one shared denominator the numerators sum to, and no zero weight.
+#[test]
+fn a_damped_distribution_is_still_selectable() {
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 7];
+    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 3]);
+    let outcomes = build_outcomes(
+        &inputs,
+        &[
+            output("a-1", "a", 3, true),
+            output("a-2", "a", 3, true),
+            output("a-3", "a", 3, true),
+            output("b-1", "b", 3, true),
+        ],
+    )
+    .expect("build outcomes");
+
+    let mut multipliers = BTreeMap::new();
+    multipliers.insert(
+        "a-2".to_string(),
+        ScarcityMultiplier {
+            numerator: 1,
+            denominator: 3,
+        },
+    );
+    multipliers.insert(
+        "b-1".to_string(),
+        ScarcityMultiplier {
+            numerator: 7,
+            denominator: 10,
+        },
+    );
+    let damped = apply_outcome_scarcity(&outcomes, &multipliers).expect("apply scarcity");
+
+    let denominator = damped[0].weight_denominator;
+    assert!(damped.iter().all(|outcome| outcome.weight_numerator > 0));
+    assert_eq!(
+        damped
+            .iter()
+            .map(|outcome| u128::from(outcome.weight_numerator))
+            .sum::<u128>(),
+        u128::from(denominator)
+    );
+    select_outcome(&damped, &[3_u8; 32], b"client", 1).expect("a damped set is selectable");
 }
