@@ -2,6 +2,7 @@ mod config;
 mod shutdown;
 
 use api::{AppState, RouterConfig, build_router};
+use application::auth::AuthConfig;
 use config::ServerConfig;
 use db::{Database, DatabaseConfig};
 
@@ -24,7 +25,13 @@ async fn run() -> Result<(), StartupError> {
     // rather than discovering that only when the first request arrives.
     database.health_check().await?;
 
-    let state = AppState::new(database);
+    let mut state = AppState::new(database, AuthConfig::default());
+    if config.insecure_cookies() {
+        tracing::warn!(
+            "INSECURE_COOKIES is set: session cookies omit the Secure attribute,              which is only safe for local HTTP development"
+        );
+        state = state.with_insecure_cookies();
+    }
     let router = build_router(state, &RouterConfig::default());
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;

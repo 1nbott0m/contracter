@@ -1,12 +1,28 @@
 use std::time::Duration;
 
-use axum::{BoxError, Router, error_handling::HandleErrorLayer, routing::get};
+use axum::{
+    BoxError, Router,
+    error_handling::HandleErrorLayer,
+    extract::Request,
+    http::{
+        HeaderValue,
+        header::{CACHE_CONTROL, VARY},
+    },
+    middleware::Next,
+    response::Response,
+    routing::{get, post},
+};
 use tower::ServiceBuilder;
 use tower_http::{
     catch_panic::CatchPanicLayer, cors::CorsLayer, limit::RequestBodyLimitLayer, trace::TraceLayer,
 };
 
-use crate::{error::ApiError, request_id::request_id_middleware, routes::health, state::AppState};
+use crate::{
+    error::ApiError,
+    request_id::request_id_middleware,
+    routes::{account, auth, catalog, health, inventory},
+    state::AppState,
+};
 
 /// Router construction knobs that depend on runtime configuration
 /// (`crates/server`), never hardcoded production values.
@@ -36,8 +52,28 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready));
 
+    // Everything a client calls lives under /api/v1; /health stays
+    // outside it so orchestrators never depend on an API version.
+    let api_v1 = Router::new()
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/logout-all", post(auth::logout_all))
+        .route("/me", get(account::me))
+        .route("/me/balance", get(account::balance))
+        .route("/me/inventory", get(inventory::list))
+        .route("/me/inventory/{item_id}", get(inventory::detail))
+        .layer(axum::middleware::from_fn(private_response_headers))
+        // The catalog is the same for everyone and carries no session, so
+        // it is deliberately outside that layer: marking it `no-store`
+        // would forbid every CDN and proxy from caching the one part of
+        // this API that is safe to cache.
+        .route("/catalog/collections", get(catalog::collections))
+        .route("/catalog/skus", get(catalog::skus));
+
     let mut router = Router::new()
         .merge(health_routes)
+        .nest("/api/v1", api_v1)
         .fallback(fallback_404)
         .with_state(state)
         .layer(CatchPanicLayer::custom(handle_panic))
@@ -58,6 +94,23 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
     router
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn(request_id_middleware))
+}
+
+/// Marks every `/api/v1` response as private and cookie-dependent.
+///
+/// Without `Vary: Cookie`, any shared cache in front of this service --
+/// a CDN, a reverse proxy, a corporate middlebox -- is entitled to serve
+/// one account's `/me` to the next caller, because the requests differ
+/// only in a header it was never told mattered. `no-store` is the
+/// stronger half: these responses should not be written down at all.
+/// Applied as a layer rather than per handler so a route added later
+/// cannot forget it.
+async fn private_response_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(VARY, HeaderValue::from_static("Cookie"));
+    response
 }
 
 async fn fallback_404() -> ApiError {
@@ -99,8 +152,15 @@ fn build_cors_layer(allowed_origins: &[String]) -> Option<CorsLayer> {
     Some(
         CorsLayer::new()
             .allow_origin(origins)
-            .allow_methods([axum::http::Method::GET])
-            .allow_headers([axum::http::header::CONTENT_TYPE]),
+            .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+            .allow_headers([axum::http::header::CONTENT_TYPE])
+            // The session lives in a cookie, so a browser frontend on a
+            // different origin cannot call this API at all without it.
+            // Safe only because the origin list is explicit: the CORS spec
+            // forbids pairing credentials with a wildcard, and
+            // `build_cors_layer` returns `None` rather than a wildcard
+            // when nothing is configured.
+            .allow_credentials(true),
     )
 }
 

@@ -1,8 +1,13 @@
 //! Orchestration layer between the HTTP API and the `db`/`economy-core`
-//! boundaries. Deliberately minimal for BACKEND-01: only the readiness
-//! use-case exists so far. Business use-cases (auth, market, contracts)
-//! are out of scope until a dedicated BACKEND task adds them.
+//! boundaries. Holds the use-cases: readiness (BACKEND-01),
+//! authentication/account (BACKEND-02), and catalog/inventory reads
+//! (BACKEND-03). Market and contract use-cases are out of scope until a
+//! dedicated BACKEND task adds them.
 
+pub mod auth;
+pub mod catalog;
 mod health;
+pub mod inventory;
+pub mod pagination;
 
 pub use health::{ReadinessError, check_readiness};

@@ -2,6 +2,7 @@ mod catalog;
 mod config;
 mod contracts;
 mod database;
+mod identity;
 mod ids;
 mod inventory;
 mod ledger;
@@ -11,8 +12,9 @@ mod scarcity;
 mod stock;
 
 pub use catalog::{
-    CatalogItem, Collection, Sku, find_active_skus, find_catalog_item_by_public_id,
-    find_collection_by_public_id, find_sku_by_public_id,
+    CatalogCollection, CatalogItem, CatalogSku, Collection, Sku, find_active_skus,
+    find_catalog_item_by_public_id, find_collection_by_public_id, find_sku_by_public_id,
+    list_catalog_skus, list_catalog_skus_after, list_collections,
 };
 pub use config::{DatabaseConfig, DatabaseConfigError};
 pub use contracts::{
@@ -20,10 +22,15 @@ pub use contracts::{
     find_contract_by_quote_id, find_contract_outcome, list_contract_inputs,
 };
 pub use database::{Database, DatabaseError, MIGRATOR};
+pub use identity::{
+    Account, ActiveSession, UserCredential, create_user_session, find_account_by_public_id,
+    find_active_user_session, find_user_credential_by_login, find_user_credit_balance,
+    register_invited_user, revoke_all_user_sessions, revoke_user_session,
+};
 pub use ids::*;
 pub use inventory::{
-    InventoryItem, find_inventory_item, list_available_user_inventory,
-    list_available_warehouse_inventory,
+    InventoryItem, OwnedInventoryItem, find_inventory_item, find_owned_inventory_item,
+    list_available_user_inventory, list_available_warehouse_inventory, list_owned_inventory,
 };
 pub use ledger::{
     CreditAdjustmentEvent, LedgerAccount, LedgerBalance, LedgerBalanceDrift,
@@ -44,6 +51,11 @@ pub use scarcity::{
     find_current_collection_scarcity, list_collection_scarcity_history,
     publish_collection_scarcity_snapshot, reconcile_current_collection_scarcity,
 };
+/// Re-exported so callers can name the timestamp type in this crate's
+/// row structs without taking their own dependency on SQLx. `db` is the
+/// PostgreSQL boundary; nothing above it should need to link the driver
+/// just to spell `DateTime<Utc>`.
+pub use sqlx::types::chrono;
 pub use sqlx::{PgPool, Postgres, Transaction};
 pub use stock::{
     RiskState, StockPolicyBand, StockPolicyVersion, WarehouseStock, find_active_stock_policy_bands,

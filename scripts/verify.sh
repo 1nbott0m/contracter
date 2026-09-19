@@ -20,7 +20,11 @@ if [ -n "${TEST_DATABASE_URL:-}" ]; then
         fi
     fi
     ./db/verify.sh
-    cargo test -p db --tests -- --ignored
+    # Whole workspace, not just `db`: the api/application suites carry the
+    # HTTP and use-case integration tests, and they must run after
+    # db/verify.sh, which expects a pristine database (the Rust suites
+    # commit fixtures on purpose).
+    cargo test --workspace --tests -- --ignored
 else
     echo "PostgreSQL integration skipped: TEST_DATABASE_URL is not set"
 fi

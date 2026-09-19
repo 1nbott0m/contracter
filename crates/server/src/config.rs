@@ -8,6 +8,7 @@ pub struct ServerConfig {
     database_url: String,
     bind_addr: SocketAddr,
     log_filter: String,
+    insecure_cookies: bool,
 }
 
 impl ServerConfig {
@@ -24,11 +25,16 @@ impl ServerConfig {
             .map_err(|_| ConfigError::InvalidBindAddress { host, port })?;
 
         let log_filter = std::env::var("LOG_FILTER").unwrap_or_else(|_| "info".to_owned());
+        // Opt-out only, and only by an exact value: any typo leaves the
+        // Secure attribute on rather than silently dropping it.
+        let insecure_cookies =
+            std::env::var("INSECURE_COOKIES").is_ok_and(|value| value.eq_ignore_ascii_case("true"));
 
         Ok(Self {
             database_url,
             bind_addr,
             log_filter,
+            insecure_cookies,
         })
     }
 
@@ -43,6 +49,10 @@ impl ServerConfig {
     pub fn log_filter(&self) -> &str {
         &self.log_filter
     }
+
+    pub const fn insecure_cookies(&self) -> bool {
+        self.insecure_cookies
+    }
 }
 
 impl fmt::Debug for ServerConfig {
@@ -52,6 +62,7 @@ impl fmt::Debug for ServerConfig {
             .field("database_url", &"[REDACTED]")
             .field("bind_addr", &self.bind_addr)
             .field("log_filter", &self.log_filter)
+            .field("insecure_cookies", &self.insecure_cookies)
             .finish()
     }
 }
