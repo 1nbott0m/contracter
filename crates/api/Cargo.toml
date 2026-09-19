@@ -15,6 +15,9 @@ serde_json.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+# Fixed-width rate-limit keys: the login is attacker-chosen and retained,
+# so the key must not be the string itself.
+sha2.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

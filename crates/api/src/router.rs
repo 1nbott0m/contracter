@@ -191,7 +191,23 @@ fn build_cors_layer(allowed_origins: &[String]) -> Option<CorsLayer> {
         CorsLayer::new()
             .allow_origin(origins)
             .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
-            .allow_headers([axum::http::header::CONTENT_TYPE])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                // The request-id contract says a caller may supply its
+                // own; without this a cross-origin `fetch` that does so
+                // fails preflight, so the contract held for every client
+                // except the one CORS exists for.
+                axum::http::HeaderName::from_static(crate::request_id::REQUEST_ID_HEADER),
+            ])
+            // By default a browser exposes only the seven safelisted
+            // response headers, so a JS client could not read the
+            // correlation id it was just told to use, nor the `Retry-After`
+            // that tells it when to come back. Documented behaviour that a
+            // client cannot observe is not behaviour.
+            .expose_headers([
+                axum::http::HeaderName::from_static(crate::request_id::REQUEST_ID_HEADER),
+                axum::http::header::RETRY_AFTER,
+            ])
             // The session lives in a cookie, so a browser frontend on a
             // different origin cannot call this API at all without it.
             // Safe only because the origin list is explicit: the CORS spec

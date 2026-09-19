@@ -15,6 +15,7 @@
 //! here rather than discovered later, and the right answer when that
 //! matters is a limiter at the edge, not a database call in this path.
 
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     net::IpAddr,
@@ -61,10 +62,17 @@ impl Default for RateLimitConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RateLimitKey {
     Peer(IpAddr),
-    /// Lower-cased, so `Alice` and `alice` share one budget -- the `users`
-    /// index is case-insensitive, so treating them separately would be a
-    /// free doubling.
-    Login(String),
+    /// A login's budget, keyed on the SHA-256 of its lower-cased form.
+    ///
+    /// Lower-cased because the `users` index is case-insensitive, so
+    /// `Alice` and `alice` are one account and must share one budget.
+    /// Hashed because the key is attacker-chosen and is retained: the
+    /// limiter is consulted before the login's length is validated, so
+    /// storing the string itself would let a caller park up to a body's
+    /// worth of bytes per bucket. `MAX_TRACKED_KEYS` bounds the number of
+    /// entries, not their size, so without this the table's ceiling is
+    /// counted in gigabytes rather than entries.
+    Login([u8; 32]),
     /// One invitation's probe budget, keyed on the token's SHA-256 and
     /// never on the token itself.
     ///
@@ -85,7 +93,7 @@ pub enum RateLimitKey {
 
 impl RateLimitKey {
     pub fn login(value: &str) -> Self {
-        Self::Login(value.to_lowercase())
+        Self::Login(Sha256::digest(value.to_lowercase().as_bytes()).into())
     }
 }
 
@@ -288,6 +296,21 @@ mod tests {
         );
     }
 
+    /// The key must be fixed-width whatever the caller sends, because the
+    /// limiter runs before the login's length is validated and the key is
+    /// retained afterwards.
+    #[test]
+    fn a_login_key_is_fixed_width_however_long_the_login() {
+        let RateLimitKey::Login(short) = RateLimitKey::login("alice") else {
+            panic!("a login key")
+        };
+        let RateLimitKey::Login(enormous) = RateLimitKey::login(&"a".repeat(250_000)) else {
+            panic!("a login key")
+        };
+        assert_eq!(short.len(), enormous.len());
+        assert_ne!(short, enormous, "different logins must not collide");
+    }
+
     #[test]
     fn peer_and_login_budgets_are_separate_namespaces() {
         let limiter = limiter(1, 60);
@@ -316,7 +339,7 @@ mod tests {
         // bucket can be evicted as settled -- this exercises the
         // furthest-from-now path rather than the cheap one.
         for index in 0..(MAX_TRACKED_KEYS + 500) {
-            let key = RateLimitKey::Login(format!("forged-{index}"));
+            let key = RateLimitKey::login(&format!("forged-{index}"));
             let _ = limiter.check_at(&key, start);
         }
         let tracked = limiter

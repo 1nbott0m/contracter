@@ -286,7 +286,7 @@ async fn give_item(state: &AppState, owner: i64, retired: bool, locked: bool) ->
     .expect("seed rarity");
     sqlx::query(
         "INSERT INTO wear_bands (code, lower_bound, upper_bound, includes_upper_bound) \
-         VALUES ('http_catalog', 0, 1, true) ON CONFLICT (code) DO NOTHING",
+         VALUES ('http_catalog', 0, 1, true) ON CONFLICT DO NOTHING",
     )
     .execute(pool)
     .await

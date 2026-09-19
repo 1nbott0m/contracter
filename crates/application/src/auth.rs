@@ -1,4 +1,8 @@
-use std::{fmt, sync::OnceLock, time::Duration};
+use std::{
+    fmt,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use argon2::{
     Argon2,
@@ -331,9 +335,9 @@ fn hashing_concurrency() -> usize {
         .max(2)
 }
 
-fn hashing_permits() -> &'static Semaphore {
-    static PERMITS: OnceLock<Semaphore> = OnceLock::new();
-    PERMITS.get_or_init(|| Semaphore::new(hashing_concurrency()))
+fn hashing_permits() -> Arc<Semaphore> {
+    static PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    Arc::clone(PERMITS.get_or_init(|| Arc::new(Semaphore::new(hashing_concurrency()))))
 }
 
 static HASHING_QUEUE_TIMEOUT: OnceLock<Duration> = OnceLock::new();
@@ -363,10 +367,6 @@ pub fn set_hashing_queue_timeout(timeout: Duration) -> Result<(), Duration> {
 }
 
 /// Runs one Argon2id operation, holding a permit for its whole duration.
-///
-/// The permit is taken before `spawn_blocking` and released only when the
-/// blocking task returns, so it accounts for the memory actually held --
-/// including for a request whose caller has already gone away.
 async fn with_hashing_permit<T, F>(work: F) -> Result<T, AuthError>
 where
     F: FnOnce() -> Result<T, AuthError> + Send + 'static,
@@ -378,21 +378,37 @@ where
 /// The body of `with_hashing_permit`, taking its limiter explicitly so a
 /// test can exercise saturation against a pool it owns rather than the
 /// process-wide one (which every other test in this binary is also using).
-async fn run_permitted<T, F>(permits: &Semaphore, work: F) -> Result<T, AuthError>
+///
+/// The permit is **moved into the blocking closure**, not held by this
+/// future. That distinction is the whole bound.
+///
+/// A blocking task cannot be cancelled: dropping its `JoinHandle` detaches
+/// it and it runs to completion regardless. But dropping this future --
+/// which hyper does the instant a client closes its connection, and which
+/// the request timeout does on its own schedule -- destroys every local
+/// this future owns. An earlier version kept the permit in such a local,
+/// so an abandoned request handed its permit straight back while its 19
+/// MiB Argon2 kept running. A client that fired requests and closed the
+/// socket could therefore hold far more memory than the semaphore admits,
+/// which is precisely the denial of service the semaphore was added to
+/// prevent. Owned by the closure, the permit survives exactly as long as
+/// the allocation it accounts for.
+async fn run_permitted<T, F>(permits: Arc<Semaphore>, work: F) -> Result<T, AuthError>
 where
     F: FnOnce() -> Result<T, AuthError> + Send + 'static,
     T: Send + 'static,
 {
-    let permit = tokio::time::timeout(hashing_queue_timeout(), permits.acquire())
+    let permit = tokio::time::timeout(hashing_queue_timeout(), permits.acquire_owned())
         .await
         .map_err(|_| AuthError::Overloaded)?
         .map_err(|_| AuthError::PasswordHashing)?;
 
-    let result = tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|_| AuthError::PasswordHashing)?;
-    drop(permit);
-    result
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|_| AuthError::PasswordHashing)?
 }
 
 /// Argon2id is deliberately CPU- and memory-hard, so it runs on the
@@ -597,6 +613,66 @@ mod tests {
         );
     }
 
+    /// Abandoning a request must not hand its permit back early.
+    ///
+    /// A blocking task cannot be cancelled, so the Argon2 keeps running
+    /// and keeps its memory. If the permit went back the moment the future
+    /// was dropped, a client that fires requests and closes the socket
+    /// would hold unbounded memory while the semaphore reported room --
+    /// the exact denial of service the semaphore exists to stop.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_abandoned_request_keeps_its_permit_until_its_hash_finishes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let permits = Arc::new(Semaphore::new(1));
+        let started = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicBool::new(false));
+
+        let work = {
+            let started = Arc::clone(&started);
+            let finished = Arc::clone(&finished);
+            move || {
+                started.store(true, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(400));
+                finished.store(true, Ordering::SeqCst);
+                Ok::<_, AuthError>(())
+            }
+        };
+
+        let handle = tokio::spawn(run_permitted(Arc::clone(&permits), work));
+
+        // Wait until the blocking work is genuinely under way, so the
+        // permit has been taken and the task spawned.
+        while !started.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Abandon the request, exactly as a closed connection does.
+        handle.abort();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(
+            !finished.load(Ordering::SeqCst),
+            "the blocking work must still be running for this test to mean anything"
+        );
+        assert_eq!(
+            permits.available_permits(),
+            0,
+            "an abandoned request must not release its permit while its hash is still running"
+        );
+
+        // And once the work really finishes, the permit does come back.
+        while !finished.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            permits.available_permits(),
+            1,
+            "the permit is released when the work it accounts for completes"
+        );
+    }
+
     #[tokio::test]
     async fn a_missing_stored_hash_verifies_against_the_decoy_and_never_succeeds() {
         // The absent-credential path must still cost a real verification,
@@ -630,14 +706,14 @@ mod tests {
 
         // A pool of its own, so this does not race the other tests in
         // this binary against the process-wide limiter.
-        let permits = Semaphore::new(1);
+        let permits = Arc::new(Semaphore::new(1));
         let held = permits.acquire().await.expect("take the only permit");
 
         // With every permit held, further work waits instead of being
         // admitted -- which is the whole point: the memory is capped.
         let admitted = tokio::time::timeout(
             Duration::from_millis(200),
-            run_permitted(&permits, || Ok::<_, AuthError>(())),
+            run_permitted(Arc::clone(&permits), || Ok::<_, AuthError>(())),
         )
         .await;
         assert!(
@@ -647,7 +723,7 @@ mod tests {
 
         // ...and recovers once the pool drains.
         drop(held);
-        run_permitted(&permits, || Ok::<_, AuthError>(()))
+        run_permitted(Arc::clone(&permits), || Ok::<_, AuthError>(()))
             .await
             .expect("a drained pool admits work again");
     }

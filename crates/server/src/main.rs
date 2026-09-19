@@ -1,7 +1,7 @@
 mod config;
 mod shutdown;
 
-use api::{AppState, RouterConfig, build_router};
+use api::{AppState, build_router};
 use application::auth::AuthConfig;
 use config::ServerConfig;
 use db::{Database, DatabaseConfig};
@@ -32,7 +32,7 @@ async fn run() -> Result<(), StartupError> {
         );
         state = state.with_insecure_cookies();
     }
-    let router = build_router(state, &RouterConfig::default());
+    let router = build_router(state, &config.router_config());
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;
     tracing::info!(addr = %config.bind_addr(), "contracter-server listening");

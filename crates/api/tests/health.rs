@@ -129,11 +129,17 @@ async fn wrong_method_on_a_valid_route_still_gets_the_standard_envelope() {
         .unwrap();
 
     let response = router.oneshot(request).await.unwrap();
-    // Axum's default 405 is outside the fixed 9-code set; normalize_status
-    // maps a non-server-error status without a dedicated mapping to 400.
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // 405 keeps its meaning rather than collapsing to 400. It used to
+    // collapse, which produced a self-contradictory response -- a 400
+    // carrying axum's `Allow` header -- and made "wrong method"
+    // indistinguishable from "malformed body".
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert!(
+        response.headers().contains_key(axum::http::header::ALLOW),
+        "a 405 must still say which methods would work"
+    );
     let body = body_json(response).await;
-    assert_eq!(body["error"]["code"], "BAD_REQUEST");
+    assert_eq!(body["error"]["code"], "METHOD_NOT_ALLOWED");
     assert!(body["error"]["request_id"].is_string());
 }
 

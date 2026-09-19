@@ -148,8 +148,20 @@ pub async fn login(
 /// Idempotent.
 pub async fn logout(
     State(state): State<AppState>,
+    peer: PeerAddress,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Unauthenticated, and it writes: `revoke_user_session` runs against
+    // whatever token hash the caller supplies. Each call is cheap, which is
+    // why this is not where the Argon2 budget matters, but an unlimited
+    // stream of them is still an unlimited stream of database writes.
+    // Charging the peer budget costs an honest caller nothing, because
+    // logging out is idempotent and a refused logout leaves the session
+    // exactly as a successful one would have left a stale cookie.
+    if let Err(retry) = state.auth_rate_limiter().check(&peer_key(peer)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+
     if let Some(token) = state.session_cookie_policy().read_token(&headers) {
         auth::logout(state.database(), &SecretToken::new(token)).await?;
     }

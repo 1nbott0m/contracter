@@ -591,3 +591,99 @@ fn a_damped_distribution_is_still_selectable() {
     );
     select_outcome(&damped, &[3_u8; 32], b"client", 1).expect("a damped set is selectable");
 }
+
+/// A five-collection contract with the multiplier denominators the stock
+/// policy actually produces.
+///
+/// An earlier version took the lowest common multiple of the collections'
+/// damped totals, which is a product of near-coprime numbers: this case
+/// needed a 67-bit denominator and came back as `InvalidWeights`, so an
+/// ordinary multi-collection trade-up simply failed, and the error blamed
+/// the data rather than an internal range limit.
+#[test]
+fn a_multi_collection_contract_with_awkward_denominators_still_prices() {
+    let mut inputs = Vec::new();
+    let mut outputs = Vec::new();
+    for collection in 0..5 {
+        let id = format!("c{collection}");
+        inputs.extend(vec![input("in", &id, 2, dec!(0.20)); 2]);
+        for candidate in 0..2 {
+            outputs.push(output(&format!("c{collection}-{candidate}"), &id, 3, true));
+        }
+    }
+
+    let outcomes = build_outcomes(&inputs, &outputs).expect("ten inputs over five collections");
+
+    // Denominators taken from the shape `publish_collection_scarcity_snapshot`
+    // writes: available over target, with targets from the rarity policy.
+    let denominators = [167_u64, 125, 83, 42, 17, 7, 199, 151, 113, 61];
+    let mut multipliers = BTreeMap::new();
+    for (index, outcome) in outcomes.iter().enumerate() {
+        let denominator = denominators[index % denominators.len()];
+        multipliers.insert(
+            outcome.sku_id.clone(),
+            ScarcityMultiplier {
+                numerator: denominator - 1,
+                denominator,
+            },
+        );
+    }
+
+    let damped = apply_outcome_scarcity(&outcomes, &multipliers)
+        .expect("awkward denominators must not exhaust the weight range");
+
+    // Each collection holds two of ten inputs, so each must still hold
+    // exactly a fifth -- the rounding happens strictly inside a
+    // collection, never across them.
+    let denominator = u128::from(damped[0].weight_denominator);
+    for collection in 0..5 {
+        let id = format!("c{collection}");
+        let share: u128 = damped
+            .iter()
+            .filter(|outcome| outcome.collection_id == id)
+            .map(|outcome| u128::from(outcome.weight_numerator))
+            .sum();
+        assert_eq!(
+            share * 5,
+            denominator,
+            "collection {id} holds two of ten inputs and must still be a fifth"
+        );
+    }
+
+    select_outcome(&damped, &[9_u8; 32], b"client", 7).expect("and the result is selectable");
+}
+
+/// Two runs over the same inputs must assign the same leftover units, or a
+/// quote is not reproducible.
+#[test]
+fn apportioning_leftovers_is_deterministic() {
+    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 7];
+    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 3]);
+    let outputs = [
+        output("a-1", "a", 3, true),
+        output("a-2", "a", 3, true),
+        output("a-3", "a", 3, true),
+        output("b-1", "b", 3, true),
+    ];
+    let outcomes = build_outcomes(&inputs, &outputs).expect("build outcomes");
+
+    let mut multipliers = BTreeMap::new();
+    multipliers.insert(
+        "a-1".to_string(),
+        ScarcityMultiplier {
+            numerator: 1,
+            denominator: 3,
+        },
+    );
+    multipliers.insert(
+        "a-2".to_string(),
+        ScarcityMultiplier {
+            numerator: 1,
+            denominator: 7,
+        },
+    );
+
+    let first = apply_outcome_scarcity(&outcomes, &multipliers).expect("first run");
+    let second = apply_outcome_scarcity(&outcomes, &multipliers).expect("second run");
+    assert_eq!(first, second, "the same inputs must give the same weights");
+}

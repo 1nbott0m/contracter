@@ -768,6 +768,19 @@ async fn the_auth_endpoints_refuse_a_flood_with_a_retry_hint() {
     // Over budget: refused by the limiter instead.
     let response = attempt().await.unwrap();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    // Machine-readable, not only prose: a delay a client cannot parse is a
+    // delay no client honours.
+    let retry_after = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .expect("a 429 must carry Retry-After")
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
+    assert!(
+        retry_after.parse::<u64>().expect("whole seconds") >= 1,
+        "Retry-After must be a positive whole number of seconds, got {retry_after}"
+    );
     let body = body_json(response).await;
     assert_eq!(body["error"]["code"], "TOO_MANY_REQUESTS");
     assert!(

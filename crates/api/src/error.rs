@@ -1,4 +1,10 @@
-use axum::{Json, http::StatusCode, response::IntoResponse};
+use std::time::Duration;
+
+use axum::{
+    Json,
+    http::{HeaderValue, StatusCode, header::RETRY_AFTER},
+    response::IntoResponse,
+};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -32,7 +38,10 @@ pub enum ApiError {
     NotFound(String),
     Conflict(String),
     UnprocessableEntity(String),
-    TooManyRequests(String),
+    TooManyRequests {
+        message: String,
+        retry_after: Duration,
+    },
     Internal,
     ServiceUnavailable(String),
 }
@@ -46,14 +55,21 @@ impl ApiError {
         Self::ServiceUnavailable(message.into())
     }
 
-    /// The caller is over budget. `retry_after` reaches the response as a
-    /// `Retry-After` header, because a 429 that does not say when to come
-    /// back invites an immediate retry and so costs more than it saves.
-    pub fn too_many_requests(retry_after: std::time::Duration) -> Self {
-        Self::TooManyRequests(format!(
-            "Too many requests; retry in {} seconds",
-            retry_after.as_secs().max(1)
-        ))
+    /// The caller is over budget.
+    ///
+    /// `retry_after` is carried in the variant rather than only formatted
+    /// into the message, because it has to reach the response as a
+    /// `Retry-After` header. A 429 whose delay is only readable as English
+    /// prose is a 429 no client, proxy or SDK can honour, so it invites
+    /// the immediate retry it was meant to prevent.
+    pub fn too_many_requests(retry_after: Duration) -> Self {
+        Self::TooManyRequests {
+            message: format!(
+                "Too many requests; retry in {} seconds",
+                retry_after.as_secs().max(1)
+            ),
+            retry_after,
+        }
     }
 
     /// `(status, stable code, safe message)`. `Internal`'s real cause is
@@ -73,7 +89,7 @@ impl ApiError {
                 "UNPROCESSABLE_ENTITY",
                 message.clone(),
             ),
-            Self::TooManyRequests(message) => (
+            Self::TooManyRequests { message, .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "TOO_MANY_REQUESTS",
                 message.clone(),
@@ -95,7 +111,17 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let (status, code, message) = self.parts();
-        (
+        // Whole seconds, and never zero: `Retry-After` has no sub-second
+        // form, and rounding down to zero would tell a client to retry
+        // immediately, which is the behaviour being refused.
+        let retry_after = match &self {
+            Self::TooManyRequests { retry_after, .. } => {
+                Some(retry_after.as_secs().max(1).to_string())
+            }
+            _ => None,
+        };
+
+        let mut response = (
             status,
             Json(ErrorEnvelope {
                 error: ErrorBody {
@@ -105,7 +131,14 @@ impl IntoResponse for ApiError {
                 },
             }),
         )
-            .into_response()
+            .into_response();
+
+        if let Some(seconds) = retry_after
+            && let Ok(value) = HeaderValue::from_str(&seconds)
+        {
+            response.headers_mut().insert(RETRY_AFTER, value);
+        }
+        response
     }
 }
 

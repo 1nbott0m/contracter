@@ -13,6 +13,16 @@ use thiserror::Error;
 const INPUT_RANGE: std::ops::RangeInclusive<usize> = 4..=10;
 const COVERT_RARITY: u8 = 5;
 const MIN_WEIGHT_DENOMINATOR: u64 = 100;
+/// How finely a scarcity multiplier is resolved, and the factor by which
+/// `apply_outcome_scarcity` scales the outcome denominator.
+///
+/// Fixed rather than derived from the multipliers, so the final
+/// denominator is known before any damping and cannot grow with them. A
+/// million parts is far finer than any supply signal warrants -- the
+/// published multipliers are ratios of unit counts in the low hundreds --
+/// and it keeps the denominator around 10^8 for realistic contracts,
+/// three orders of magnitude inside `u64`.
+const SCARCITY_RESOLUTION: u128 = 1_000_000;
 const HASH_DOMAIN: &[u8] = b"contracter/outcome/v1";
 const COMMITMENT_DOMAIN: &[u8] = b"contracter/server-seed/v1";
 
@@ -219,8 +229,8 @@ pub fn apply_outcome_scarcity(
         return Err(TradeupError::InvalidWeights);
     }
 
-    // Group by collection, preserving the order the outcomes arrived in so
-    // the result stays deterministic.
+    // Group by collection. `BTreeMap` orders by collection id, which makes
+    // the result independent of the order the outcomes arrived in.
     let mut collections: BTreeMap<&str, Vec<&WeightedOutcome>> = BTreeMap::new();
     for outcome in outcomes {
         collections
@@ -229,19 +239,43 @@ pub fn apply_outcome_scarcity(
             .push(outcome);
     }
 
-    // Per collection: the damped weight of each surviving outcome, and the
-    // collection's original share. Both are needed to renormalise without
-    // moving the share.
-    struct Damped<'a> {
-        outcome: &'a WeightedOutcome,
-        weight: u128,
-    }
-    let mut damped_by_collection: Vec<(&str, u128, Vec<Damped<'_>>, u128)> = Vec::new();
+    // Every collection's slice of the final denominator is exactly
+    // `original_share * SCARCITY_RESOLUTION`, so the final denominator is
+    // fixed before any damping happens and cannot grow with the
+    // multipliers. That is the whole reason this is laid out as it is: an
+    // earlier version took the lowest common multiple of the collections'
+    // damped totals, which is a product of near-coprime numbers. With
+    // multiplier denominators of the shape the stock policy actually
+    // produces -- 167, 125, 83, 42, 17, 7 -- a five-collection contract
+    // needed a 67-bit denominator and was refused as `InvalidWeights`, so
+    // an ordinary multi-collection trade-up failed and the error pointed
+    // at corrupt data rather than at an internal range limit.
+    let final_denominator = u128::from(denominator)
+        .checked_mul(SCARCITY_RESOLUTION)
+        .ok_or(TradeupError::InvalidWeights)?;
+    let final_denominator =
+        u64::try_from(final_denominator).map_err(|_| TradeupError::InvalidWeights)?;
+
+    let mut result = Vec::with_capacity(outcomes.len());
 
     for (collection, members) in &collections {
-        // One common denominator for every multiplier in this collection,
-        // so the damped weights are integers that can be compared exactly.
-        let mut common_multiplier_denominator = 1_u128;
+        // The share this collection must still hold afterwards, in units
+        // of the final denominator. Computed from the incoming weights, so
+        // it is whatever `build_outcomes` decided from input composition.
+        let mut original_share = 0_u128;
+        for member in members {
+            original_share = original_share
+                .checked_add(u128::from(member.weight_numerator))
+                .ok_or(TradeupError::InvalidWeights)?;
+        }
+        let collection_target = original_share
+            .checked_mul(SCARCITY_RESOLUTION)
+            .ok_or(TradeupError::InvalidWeights)?;
+
+        // Damped weights, in arbitrary units: only their ratios matter,
+        // because the collection's total is pinned above.
+        let mut damped = Vec::with_capacity(members.len());
+        let mut damped_total = 0_u128;
         for member in members {
             let multiplier =
                 multipliers
@@ -254,33 +288,17 @@ pub fn apply_outcome_scarcity(
             if multiplier.denominator == 0 || multiplier.numerator > multiplier.denominator {
                 return Err(TradeupError::InvalidWeights);
             }
-            common_multiplier_denominator = checked_lcm_u128(
-                common_multiplier_denominator,
-                u128::from(multiplier.denominator),
-            )
-            .ok_or(TradeupError::InvalidWeights)?;
-        }
-
-        let mut original_share = 0_u128;
-        let mut survivors = Vec::new();
-        let mut damped_total = 0_u128;
-        for member in members {
-            original_share = original_share
-                .checked_add(u128::from(member.weight_numerator))
-                .ok_or(TradeupError::InvalidWeights)?;
-
-            let multiplier =
-                multipliers
-                    .get(&member.sku_id)
-                    .copied()
-                    .unwrap_or(ScarcityMultiplier {
-                        numerator: 1,
-                        denominator: 1,
-                    });
-            let scale = common_multiplier_denominator / u128::from(multiplier.denominator);
+            // Normalised to a fixed resolution rather than to a common
+            // multiple of the multipliers' own denominators. Flooring here
+            // only loses a multiplier finer than one part in
+            // SCARCITY_RESOLUTION, and a multiplier that floors to zero was
+            // already "damped to nothing".
+            let normalised = u128::from(multiplier.numerator)
+                .checked_mul(SCARCITY_RESOLUTION)
+                .ok_or(TradeupError::InvalidWeights)?
+                / u128::from(multiplier.denominator);
             let weight = u128::from(member.weight_numerator)
-                .checked_mul(u128::from(multiplier.numerator))
-                .and_then(|value| value.checked_mul(scale))
+                .checked_mul(normalised)
                 .ok_or(TradeupError::InvalidWeights)?;
             if weight == 0 {
                 continue;
@@ -288,51 +306,69 @@ pub fn apply_outcome_scarcity(
             damped_total = damped_total
                 .checked_add(weight)
                 .ok_or(TradeupError::InvalidWeights)?;
-            survivors.push(Damped {
-                outcome: member,
-                weight,
-            });
+            damped.push((member, weight));
         }
 
         if damped_total == 0 {
-            // Every candidate in this collection is out of stock. Its
-            // inputs have no reachable result, and giving its share to a
-            // different collection would break the one invariant scarcity
-            // must uphold.
+            // Every candidate here is out of stock. These inputs have no
+            // reachable result, and giving the share to a different
+            // collection would break the one invariant scarcity must
+            // uphold.
             return Err(TradeupError::MissingOutput {
                 collection_id: (*collection).to_owned(),
             });
         }
 
-        damped_by_collection.push((collection, original_share, survivors, damped_total));
-    }
-
-    // Scale the whole distribution so every collection's share divides
-    // exactly by its own damped total. Without this the division would
-    // truncate and the shares would drift.
-    let mut scale = 1_u128;
-    for (_, _, _, damped_total) in &damped_by_collection {
-        scale = checked_lcm_u128(scale, *damped_total).ok_or(TradeupError::InvalidWeights)?;
-    }
-
-    let final_denominator = u128::from(denominator)
-        .checked_mul(scale)
-        .ok_or(TradeupError::InvalidWeights)?;
-    let final_denominator =
-        u64::try_from(final_denominator).map_err(|_| TradeupError::InvalidWeights)?;
-
-    let mut result = Vec::with_capacity(outcomes.len());
-    for (_, original_share, survivors, damped_total) in &damped_by_collection {
-        let per_unit = scale / damped_total;
-        for survivor in survivors {
-            let numerator = original_share
-                .checked_mul(survivor.weight)
-                .and_then(|value| value.checked_mul(per_unit))
+        // Apportion `collection_target` among the survivors in proportion
+        // to their damped weights, by largest remainder. The floors alone
+        // would leave a few units unassigned and the collection's share
+        // would come out short; handing each leftover unit to the largest
+        // remainder assigns exactly the target, so the share stays exact
+        // while only the within-collection split rounds.
+        let mut assigned = Vec::with_capacity(damped.len());
+        let mut distributed = 0_u128;
+        for (member, weight) in &damped {
+            let exact = collection_target
+                .checked_mul(*weight)
                 .ok_or(TradeupError::InvalidWeights)?;
+            let floor = exact / damped_total;
+            assigned.push((*member, floor, exact % damped_total));
+            distributed = distributed
+                .checked_add(floor)
+                .ok_or(TradeupError::InvalidWeights)?;
+        }
+
+        // Ties break on sku id, so two runs over the same inputs assign the
+        // same leftovers -- a quote has to be reproducible.
+        let mut order: Vec<usize> = (0..assigned.len()).collect();
+        order.sort_by(|left, right| {
+            assigned[*right]
+                .2
+                .cmp(&assigned[*left].2)
+                .then_with(|| assigned[*left].0.sku_id.cmp(&assigned[*right].0.sku_id))
+        });
+        let mut leftover = collection_target - distributed;
+        for index in order {
+            if leftover == 0 {
+                break;
+            }
+            assigned[index].1 += 1;
+            leftover -= 1;
+        }
+
+        for (member, numerator, _) in assigned {
+            if numerator == 0 {
+                // Rounded away entirely: dropped rather than carried at
+                // zero, matching `select_outcome`'s rule that a zero weight
+                // is invalid rather than merely inert. Its units have
+                // already gone to its siblings, so the collection's share
+                // is unaffected.
+                continue;
+            }
             let numerator = u64::try_from(numerator).map_err(|_| TradeupError::InvalidWeights)?;
             result.push(WeightedOutcome {
-                sku_id: survivor.outcome.sku_id.clone(),
-                collection_id: survivor.outcome.collection_id.clone(),
+                sku_id: member.sku_id.clone(),
+                collection_id: member.collection_id.clone(),
                 weight_numerator: numerator,
                 weight_denominator: final_denominator,
             });
@@ -344,20 +380,6 @@ pub fn apply_outcome_scarcity(
         return Err(TradeupError::InvalidWeights);
     }
     Ok(result)
-}
-
-fn checked_lcm_u128(a: u128, b: u128) -> Option<u128> {
-    if a == 0 || b == 0 {
-        return None;
-    }
-    let mut x = a;
-    let mut y = b;
-    while y != 0 {
-        let next = x % y;
-        x = y;
-        y = next;
-    }
-    (a / x).checked_mul(b)
 }
 
 pub fn calculate_output_float(
