@@ -12,6 +12,7 @@ use axum::{
 };
 use db::{Database, DatabaseConfig};
 use serde_json::{Value, json};
+use std::time::Duration;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -645,7 +646,8 @@ async fn an_internal_database_failure_returns_a_sanitized_500() {
     // where a production outage would put it.
     let config =
         DatabaseConfig::new("postgresql://contracter:contracter@127.0.0.1:1/contracter".to_owned())
-            .expect("valid database URL");
+            .expect("valid database URL")
+            .with_acquire_timeout(Duration::from_millis(100));
     let state = AppState::new(Database::connect_lazy(&config), AuthConfig::default());
 
     let response = router(&state)

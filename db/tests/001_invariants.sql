@@ -599,6 +599,118 @@ SELECT pg_temp.assert_true(
     )
 );
 
+-- Reporting must not become a credential-exfiltration role. The role may
+-- inspect safe catalog data, but it must never read authentication hashes,
+-- administrator TOTP material, or unrevealed randomness.
+SELECT pg_temp.assert_true(
+    'contracter_readonly is provisioned for privilege verification',
+    EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_readonly')
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly has exactly the reporting allowlist',
+    NOT EXISTS (
+        (
+            SELECT relation_name
+            FROM (
+                SELECT relation_name
+                FROM unnest(ARRAY[
+                    'catalog_items',
+                    'collection_scarcity_snapshot_items',
+                    'collection_scarcity_snapshots',
+                    'collections',
+                    'current_collection_scarcity',
+                    'current_valuations',
+                    'price_halts',
+                    'price_sources',
+                    'quote_signing_keys',
+                    'rarities',
+                    'risk_policy_versions',
+                    'risk_state',
+                    'seed_commitments',
+                    'seed_daily_roots',
+                    'skus',
+                    'stock_policy_bands',
+                    'stock_policy_versions',
+                    'valuation_snapshot_items',
+                    'valuation_snapshots',
+                    'warehouse_stock',
+                    'wear_bands'
+                ]::text[]) AS expected(relation_name)
+                EXCEPT
+                SELECT class.relname
+                FROM pg_class AS class
+                JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
+                WHERE namespace.nspname = 'public'
+                  AND class.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND has_any_column_privilege('contracter_readonly', class.oid, 'SELECT')
+            ) AS missing_allowlist_relation
+
+            UNION ALL
+
+            SELECT relation_name
+            FROM (
+                SELECT class.relname AS relation_name
+                FROM pg_class AS class
+                JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
+                WHERE namespace.nspname = 'public'
+                  AND class.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND has_any_column_privilege('contracter_readonly', class.oid, 'SELECT')
+                EXCEPT
+                SELECT relation_name
+                FROM unnest(ARRAY[
+                    'catalog_items',
+                    'collection_scarcity_snapshot_items',
+                    'collection_scarcity_snapshots',
+                    'collections',
+                    'current_collection_scarcity',
+                    'current_valuations',
+                    'price_halts',
+                    'price_sources',
+                    'quote_signing_keys',
+                    'rarities',
+                    'risk_policy_versions',
+                    'risk_state',
+                    'seed_commitments',
+                    'seed_daily_roots',
+                    'skus',
+                    'stock_policy_bands',
+                    'stock_policy_versions',
+                    'valuation_snapshot_items',
+                    'valuation_snapshots',
+                    'warehouse_stock',
+                    'wear_bands'
+                ]::text[]) AS expected(relation_name)
+            ) AS unexpected_allowlist_relation
+        )
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read password hashes',
+    NOT has_column_privilege('contracter_readonly', 'users', 'password_hash', 'SELECT')
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read session token hashes',
+    NOT has_column_privilege(
+        'contracter_readonly', 'user_sessions', 'session_token_hash', 'SELECT'
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read recovery token hashes',
+    NOT has_column_privilege('contracter_readonly', 'recovery_codes', 'token_hash', 'SELECT')
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read administrator TOTP hashes',
+    NOT has_column_privilege(
+        'contracter_readonly', 'administrators', 'totp_secret_hash', 'SELECT'
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read revealed server seeds',
+    NOT has_column_privilege(
+        'contracter_readonly', 'seed_revelation_events', 'server_seed', 'SELECT'
+    )
+);
+
 -- Exactly one durable acceptance event may exist per quote.  A retry with the
 -- same idempotency key is served from that result rather than appending again;
 -- a second acceptance with a different key is therefore blocked by quote_id.

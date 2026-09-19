@@ -1,6 +1,7 @@
 use db::{
-    Database, DatabaseConfig, InventoryItemId, PublicId, SkuId, UserId, find_inventory_item,
-    list_available_user_inventory, list_available_warehouse_inventory,
+    Database, DatabaseConfig, InventoryItemId, PublicId, SkuId, UserId,
+    chrono::{DateTime, Utc},
+    find_inventory_item, list_available_user_inventory, list_available_warehouse_inventory,
 };
 use rust_decimal::Decimal;
 use sqlx::{Executor, Postgres, Transaction};
@@ -595,5 +596,351 @@ async fn runtime_role_can_query_availability_without_guard_table_access() {
     list_available_warehouse_inventory(transaction.as_mut())
         .await
         .expect("runtime role lists warehouse inventory");
+
+    // The owner's own reads must work under the same role, and for the
+    // same reason: they report a `locked` flag derived from
+    // `inventory_item_locks`, which this role cannot read. Only the
+    // `owned_inventory` view (0017) runs with its owner's rights -- an
+    // `EXISTS` subquery written inline here would be evaluated with this
+    // role's privileges and fail. Asserted under the role rather than as
+    // the migration superuser, because as the superuser it passes either
+    // way; that is exactly how the inline version shipped once already.
+    db::list_owned_inventory(transaction.as_mut(), UserId::new(-1), None, None, None, 10)
+        .await
+        .expect("runtime role lists the owner's inventory");
+    db::find_owned_inventory_item(
+        transaction.as_mut(),
+        UserId::new(-1),
+        PublicId::new(Uuid::new_v4()),
+    )
+    .await
+    .expect("runtime role reads one owned item");
+
     transaction.rollback().await.expect("rollback role check");
+}
+
+/// The owner's own view of their inventory, which is not the same as the
+/// *available* view the contract engine uses.
+///
+/// `available_user_inventory` hides a locked item, which is right for
+/// "what can be spent" and wrong for "what do I own": an item silently
+/// vanishing while it is reserved in a quote reads as theft. The owner's
+/// listing shows it with a flag instead. Retired items stay hidden --
+/// those are gone, not reserved.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn owner_inventory_shows_locked_items_as_locked_and_hides_retired_ones() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    let (_, unlocked_public_id, sku_id, user_id) = seed_inventory_item(&mut transaction).await;
+
+    let (locked_id, locked_public_id) = insert_inventory_item(
+        &mut transaction,
+        sku_id,
+        Decimal::new(30_000_000, 8),
+        Some(user_id),
+        false,
+        false,
+    )
+    .await;
+    let (_, retired_public_id) = insert_inventory_item(
+        &mut transaction,
+        sku_id,
+        Decimal::new(40_000_000, 8),
+        Some(user_id),
+        false,
+        true,
+    )
+    .await;
+    let (quote_id, _) = seed_quote(&mut transaction, user_id).await;
+    sqlx::query(
+        "INSERT INTO inventory_item_locks (inventory_item_id, quote_id, expires_at) \
+         VALUES ($1, $2, clock_timestamp() + interval '30 seconds')",
+    )
+    .bind(locked_id)
+    .bind(quote_id)
+    .execute(transaction.as_mut())
+    .await
+    .expect("lock inventory item");
+
+    let items = db::list_owned_inventory(transaction.as_mut(), user_id, None, None, None, 200)
+        .await
+        .expect("list owned inventory");
+
+    let locked = items
+        .iter()
+        .find(|row| row.public_id == locked_public_id)
+        .expect("a reserved item is still owned, so the owner still sees it");
+    assert!(
+        locked.locked,
+        "and it is shown as reserved rather than hidden"
+    );
+
+    let unlocked = items
+        .iter()
+        .find(|row| row.public_id == unlocked_public_id)
+        .expect("the free item is listed");
+    assert!(!unlocked.locked);
+
+    assert!(
+        !items.iter().any(|row| row.public_id == retired_public_id),
+        "a retired item is gone, not reserved"
+    );
+
+    // Public context travels with the row, and no internal id does.
+    assert_eq!(unlocked.wear_band_code, "inventory_test");
+    assert_eq!(unlocked.rarity_code, "inventory_test");
+    assert_eq!(unlocked.canonical_float, Decimal::new(12_345_678, 8));
+
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+/// Ownership is a SQL predicate, not a check the caller is trusted to
+/// perform. Both the listing and the single-item read are scoped by owner
+/// in the query itself, so there is no path where a caller who knows
+/// another account's item UUID can read it.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn one_owner_can_never_read_another_owners_item() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    let (_, alice_item_public_id, sku_id, alice) = seed_inventory_item(&mut transaction).await;
+
+    let bob: UserId = sqlx::query_scalar(
+        "INSERT INTO users (login, password_hash) VALUES ($1, 'argon2id-test-hash') RETURNING id",
+    )
+    .bind(format!("inventory_bob_{}", Uuid::new_v4().simple()))
+    .fetch_one(transaction.as_mut())
+    .await
+    .expect("insert second user");
+    let (_, bob_item_public_id) = insert_inventory_item(
+        &mut transaction,
+        sku_id,
+        Decimal::new(50_000_000, 8),
+        Some(bob),
+        false,
+        false,
+    )
+    .await;
+
+    let bobs_items = db::list_owned_inventory(transaction.as_mut(), bob, None, None, None, 200)
+        .await
+        .expect("list bob's inventory");
+    assert!(
+        bobs_items
+            .iter()
+            .all(|row| row.public_id != alice_item_public_id),
+        "another account's item never appears in this account's listing"
+    );
+
+    // Knowing the UUID is not authorization: the owner is part of the
+    // predicate, so the row simply does not exist for the wrong caller.
+    assert!(
+        db::find_owned_inventory_item(transaction.as_mut(), bob, alice_item_public_id)
+            .await
+            .expect("query")
+            .is_none(),
+        "reading another account's item by its public id must find nothing"
+    );
+    assert!(
+        db::find_owned_inventory_item(transaction.as_mut(), alice, alice_item_public_id)
+            .await
+            .expect("query")
+            .is_some(),
+        "the real owner still reads their own item"
+    );
+    assert!(
+        db::find_owned_inventory_item(transaction.as_mut(), bob, bob_item_public_id)
+            .await
+            .expect("query")
+            .is_some()
+    );
+
+    // A UUID that belongs to nobody is the same answer as one that
+    // belongs to someone else: absent.
+    assert!(
+        db::find_owned_inventory_item(transaction.as_mut(), bob, PublicId::new(Uuid::new_v4()))
+            .await
+            .expect("query")
+            .is_none()
+    );
+
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+/// Paging walks the owner's inventory without skipping or repeating a
+/// row, keyed on `(created_at, public_id)` so the order is total even
+/// when several items were created in the same transaction.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn owner_inventory_pages_without_skipping_or_repeating() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    let (_, first_public_id, sku_id, user_id) = seed_inventory_item(&mut transaction).await;
+
+    let mut expected = vec![first_public_id];
+    for index in 1..6_i64 {
+        let (_, public_id) = insert_inventory_item(
+            &mut transaction,
+            sku_id,
+            Decimal::new(index * 1_000_000, 8),
+            Some(user_id),
+            false,
+            false,
+        )
+        .await;
+        expected.push(public_id);
+    }
+    expected.sort();
+
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = db::list_owned_inventory(transaction.as_mut(), user_id, None, None, cursor, 2)
+            .await
+            .expect("page");
+        assert!(page.len() <= 2, "a page never exceeds its limit");
+        let Some(last) = page.last() else { break };
+        cursor = Some((last.created_at, last.public_id));
+        seen.extend(page.into_iter().map(|row| row.public_id));
+    }
+
+    let mut sorted = seen.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        seen.len(),
+        "no row is returned twice across pages"
+    );
+    assert_eq!(sorted, expected, "and no row is skipped");
+
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+/// Ordering is part of the contract, and sorting the result before
+/// comparing it -- which the paging test above does, deliberately, to
+/// check for gaps and duplicates -- cannot see a reversed `ORDER BY`.
+/// This asserts the direction itself.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn owner_inventory_is_ordered_newest_first() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    let (_, oldest, sku_id, user_id) = seed_inventory_item(&mut transaction).await;
+
+    let mut in_creation_order = vec![oldest];
+    for index in 1..4_i64 {
+        let (_, public_id) = insert_inventory_item(
+            &mut transaction,
+            sku_id,
+            Decimal::new(index * 1_000_000, 8),
+            Some(user_id),
+            false,
+            false,
+        )
+        .await;
+        in_creation_order.push(public_id);
+    }
+
+    let items = db::list_owned_inventory(transaction.as_mut(), user_id, None, None, None, 200)
+        .await
+        .expect("list owned inventory");
+    let returned: Vec<_> = items.iter().map(|row| row.public_id).collect();
+
+    let mut newest_first = in_creation_order.clone();
+    newest_first.reverse();
+    assert_eq!(
+        returned, newest_first,
+        "the most recently acquired item comes first"
+    );
+
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+/// The composite cursor exists for exactly one reason: `created_at` is
+/// not unique. Every other test in this file lets the column default to
+/// `clock_timestamp()`, which is volatile and hands each statement its
+/// own instant, so none of them ever reproduces the tie the cursor was
+/// built for. This one forces it.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn paging_is_total_when_every_item_shares_one_timestamp() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    let (_, first, sku_id, user_id) = seed_inventory_item(&mut transaction).await;
+
+    // One instant, six rows: without the public id in the sort key and
+    // in the cursor comparison, a page boundary inside this group would
+    // skip or repeat.
+    let shared_instant: DateTime<Utc> =
+        sqlx::query_scalar("SELECT clock_timestamp() + interval '1 second'")
+            .fetch_one(transaction.as_mut())
+            .await
+            .expect("read one instant");
+
+    let mut expected = vec![first];
+    for index in 1..6_i64 {
+        let (item_id, public_id) = insert_inventory_item(
+            &mut transaction,
+            sku_id,
+            Decimal::new(index * 1_000_000, 8),
+            Some(user_id),
+            false,
+            false,
+        )
+        .await;
+        sqlx::query("UPDATE inventory_items SET created_at = $1 WHERE id = $2")
+            .bind(shared_instant)
+            .bind(item_id)
+            .execute(transaction.as_mut())
+            .await
+            .expect("force an identical creation timestamp");
+        expected.push(public_id);
+    }
+    // The seeded row keeps its own earlier timestamp; the other five now
+    // tie exactly.
+    let tied: Vec<_> = expected[1..].to_vec();
+
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = db::list_owned_inventory(transaction.as_mut(), user_id, None, None, cursor, 2)
+            .await
+            .expect("page");
+        let Some(last) = page.last() else { break };
+        cursor = Some((last.created_at, last.public_id));
+        seen.extend(page.into_iter().map(|row| row.public_id));
+    }
+
+    let mut deduplicated = seen.clone();
+    deduplicated.sort();
+    deduplicated.dedup();
+    assert_eq!(
+        deduplicated.len(),
+        seen.len(),
+        "a tie must not cause a row to be returned twice"
+    );
+
+    let mut sorted_expected = expected.clone();
+    sorted_expected.sort();
+    assert_eq!(deduplicated, sorted_expected, "and none may be skipped");
+
+    // Within the tie the order is by public id descending, which is what
+    // makes the cursor's row comparison total.
+    let mut tied_returned: Vec<_> = seen
+        .iter()
+        .copied()
+        .filter(|id| tied.contains(id))
+        .collect();
+    let mut tied_expected = tied.clone();
+    tied_expected.sort();
+    tied_expected.reverse();
+    assert_eq!(
+        tied_returned, tied_expected,
+        "equal timestamps are broken by public id, descending"
+    );
+    tied_returned.clear();
+
+    transaction.rollback().await.expect("rollback fixture");
 }

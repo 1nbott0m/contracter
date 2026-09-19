@@ -137,3 +137,35 @@ impl From<application::auth::AuthError> for ApiError {
         }
     }
 }
+
+impl From<application::catalog::CatalogError> for ApiError {
+    fn from(error: application::catalog::CatalogError) -> Self {
+        use application::catalog::CatalogError;
+
+        match error {
+            // A bad cursor or filter is the caller's to fix, and saying so
+            // costs nothing: neither reveals anything about stored data.
+            CatalogError::InvalidCursor | CatalogError::InvalidFilter => {
+                Self::BadRequest(error.to_string())
+            }
+            CatalogError::Database(ref cause) => internal(cause, "a catalog query failed"),
+        }
+    }
+}
+
+impl From<application::inventory::InventoryError> for ApiError {
+    fn from(error: application::inventory::InventoryError) -> Self {
+        use application::inventory::InventoryError;
+
+        match error {
+            InventoryError::InvalidCursor | InventoryError::InvalidFilter => {
+                Self::BadRequest(error.to_string())
+            }
+            // An item owned by someone else and one that never existed are
+            // the same answer on purpose: distinguishing them would make
+            // this endpoint an oracle for which UUIDs are real.
+            InventoryError::NotFound => Self::NotFound("The item does not exist".to_owned()),
+            InventoryError::Database(ref cause) => internal(cause, "an inventory query failed"),
+        }
+    }
+}

@@ -20,7 +20,7 @@ use tower_http::{
 use crate::{
     error::ApiError,
     request_id::request_id_middleware,
-    routes::{account, auth, health},
+    routes::{account, auth, catalog, health, inventory},
     state::AppState,
 };
 
@@ -61,7 +61,15 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/auth/logout-all", post(auth::logout_all))
         .route("/me", get(account::me))
         .route("/me/balance", get(account::balance))
-        .layer(axum::middleware::from_fn(private_response_headers));
+        .route("/me/inventory", get(inventory::list))
+        .route("/me/inventory/{item_id}", get(inventory::detail))
+        .layer(axum::middleware::from_fn(private_response_headers))
+        // The catalog is the same for everyone and carries no session, so
+        // it is deliberately outside that layer: marking it `no-store`
+        // would forbid every CDN and proxy from caching the one part of
+        // this API that is safe to cache.
+        .route("/catalog/collections", get(catalog::collections))
+        .route("/catalog/skus", get(catalog::skus));
 
     let mut router = Router::new()
         .merge(health_routes)
