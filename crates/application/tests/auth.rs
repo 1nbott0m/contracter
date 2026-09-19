@@ -13,6 +13,12 @@ use uuid::Uuid;
 const PASSWORD: &str = "a-sufficiently-long-password";
 
 async fn test_database() -> Database {
+    // See the note in the api suites: `cargo test` asks for far more
+    // simultaneous Argon2id hashes than any rate-limited service would,
+    // which trips a shed threshold tuned for real traffic. The permit
+    // count, which is what bounds memory, is untouched.
+    let _ = application::auth::set_hashing_queue_timeout(std::time::Duration::from_secs(120));
+
     let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let database = Database::connect(&DatabaseConfig::new(url).expect("valid database URL"))
         .await

@@ -699,6 +699,60 @@ SELECT pg_temp.assert_true(
         )
     )
 );
+-- No SECURITY DEFINER function may run as a superuser.
+--
+-- A definer executes with its owner's rights, so a superuser-owned one
+-- turns any bug in its body into full database and filesystem access, and
+-- silently defeats every column- and table-level REVOKE elsewhere in this
+-- schema. Migration 0021 reassigns them to contracter_definer when that
+-- role exists; this asserts the result, and also catches a function added
+-- later that quietly inherits superuser ownership again.
+DO $$
+DECLARE
+    superuser_owned integer;
+BEGIN
+    SELECT count(*) INTO superuser_owned
+    FROM pg_proc AS p
+    JOIN pg_roles AS r ON r.oid = p.proowner
+    JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef AND (r.rolsuper OR r.rolbypassrls);
+
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_definer') THEN
+        RAISE WARNING 'SKIPPED (not verified): definer ownership. Role contracter_definer does not exist, so % SECURITY DEFINER function(s) still run as their original owner.', superuser_owned;
+    ELSE
+        PERFORM pg_temp.assert_true(
+            'no SECURITY DEFINER function is owned by a superuser',
+            superuser_owned = 0
+        );
+    END IF;
+END;
+$$;
+
+-- Every definer function names pg_temp explicitly and last. PostgreSQL
+-- searches an unlisted pg_temp first, so leaving it out is the unsafe
+-- spelling even where no hijack is currently reachable.
+SELECT pg_temp.assert_true(
+    'every SECURITY DEFINER function pins pg_temp in its search_path',
+    NOT EXISTS (
+        SELECT 1
+        FROM pg_proc AS p
+        JOIN pg_namespace AS n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.prosecdef
+          AND NOT ('search_path=pg_catalog, pg_temp' = ANY (p.proconfig))
+    )
+);
+
+-- The owner inventory view must not carry an internal sequential id.
+SELECT pg_temp.assert_true(
+    'owned_inventory exposes no internal inventory id',
+    NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'public.owned_inventory'::regclass
+          AND attnum > 0 AND NOT attisdropped AND attname = 'id'
+    )
+);
+
 -- The runtime role must not be able to enumerate logins.
 --
 -- It cannot read password_hash directly, but it can execute

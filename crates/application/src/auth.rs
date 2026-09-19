@@ -27,7 +27,11 @@ const TOKEN_BYTES: usize = 32;
 /// server admits it is saturated. Short on purpose: a caller waiting
 /// longer than this is already past the point where a useful response is
 /// coming, and holding them open only deepens the queue.
-const HASHING_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// At the default permit count this only fires under genuine saturation:
+/// with one permit per core and roughly 60 ms per hash, a five-second
+/// queue means a backlog in the thousands.
+const DEFAULT_HASHING_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A bearer secret (session or invitation token) in its raw, client-facing
 /// form. `Debug` is redacted so it cannot reach a log line by accident,
@@ -322,6 +326,32 @@ fn hashing_permits() -> &'static Semaphore {
     PERMITS.get_or_init(|| Semaphore::new(hashing_concurrency()))
 }
 
+static HASHING_QUEUE_TIMEOUT: OnceLock<Duration> = OnceLock::new();
+
+fn hashing_queue_timeout() -> Duration {
+    *HASHING_QUEUE_TIMEOUT.get_or_init(|| DEFAULT_HASHING_QUEUE_TIMEOUT)
+}
+
+/// Widens the shed threshold for environments that legitimately queue far
+/// more concurrent hashes than a served request pattern would.
+///
+/// The limiter is process-wide, so its timeout is too. This exists for a
+/// specific, narrow reason: `cargo test` runs many test binaries in
+/// parallel and many tests within each, so an integration suite can ask
+/// for hundreds of simultaneous hashes -- a load no rate-limited service
+/// would see, but one that trips a threshold tuned for real traffic and
+/// turns a correct production behaviour into a flaky test.
+///
+/// It does not change the permit count, so the memory ceiling that
+/// bounds the denial-of-service is untouched. Returns `Err` with the
+/// value already in force if hashing has begun, because changing it
+/// mid-flight would apply to some waiters and not others.
+pub fn set_hashing_queue_timeout(timeout: Duration) -> Result<(), Duration> {
+    HASHING_QUEUE_TIMEOUT
+        .set(timeout)
+        .map_err(|_| hashing_queue_timeout())
+}
+
 /// Runs one Argon2id operation, holding a permit for its whole duration.
 ///
 /// The permit is taken before `spawn_blocking` and released only when the
@@ -343,7 +373,7 @@ where
     F: FnOnce() -> Result<T, AuthError> + Send + 'static,
     T: Send + 'static,
 {
-    let permit = tokio::time::timeout(HASHING_QUEUE_TIMEOUT, permits.acquire())
+    let permit = tokio::time::timeout(hashing_queue_timeout(), permits.acquire())
         .await
         .map_err(|_| AuthError::Overloaded)?
         .map_err(|_| AuthError::PasswordHashing)?;

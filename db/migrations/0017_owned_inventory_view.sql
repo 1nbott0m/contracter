@@ -17,7 +17,15 @@
 --
 -- security_barrier so the planner cannot push a caller-supplied predicate
 -- underneath the join and use its evaluation as a side channel.
-CREATE OR REPLACE VIEW owned_inventory
+-- Dropped first rather than replaced. `db/verify.sh` applies every
+-- migration with psql and then SQLx applies them all again from zero
+-- against the same database, so a migration has to be re-runnable. CREATE
+-- OR REPLACE VIEW cannot change a column list, so once a later migration
+-- reshapes this view, re-running this one would fail with "cannot change
+-- name of view column".
+DROP VIEW IF EXISTS owned_inventory;
+
+CREATE VIEW owned_inventory
 WITH (security_barrier = true)
 AS
 SELECT item.id,
