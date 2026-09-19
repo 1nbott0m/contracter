@@ -532,6 +532,22 @@ SELECT pg_temp.assert_sqlstate(
     $sql$
 );
 
+-- Every role-privilege assertion below is guarded by "the role exists",
+-- because the runtime roles are provisioned outside the migrations and a
+-- bare schema dump has none.  That guard is also a trap: without the role,
+-- each of those assertions passes for the wrong reason and the run looks
+-- exactly like one that verified them.  Say so, loudly, once.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    THEN
+        RAISE WARNING 'SKIPPED (not verified): every contracter_runtime privilege assertion in this suite. The role does not exist in this database, so the least-privilege boundary is UNVERIFIED here. Create the runtime roles before treating this run as evidence.';
+    ELSE
+        RAISE NOTICE 'contracter_runtime exists: privilege assertions below are live.';
+    END IF;
+END;
+$$;
+
 -- contracter_runtime and contracter_admin_runtime must never receive
 -- column-level access to password_hash: a bare GRANT SELECT ON users
 -- covers every column unless explicitly restricted (finding from an
@@ -583,6 +599,118 @@ SELECT pg_temp.assert_true(
     )
 );
 
+-- Reporting must not become a credential-exfiltration role. The role may
+-- inspect safe catalog data, but it must never read authentication hashes,
+-- administrator TOTP material, or unrevealed randomness.
+SELECT pg_temp.assert_true(
+    'contracter_readonly is provisioned for privilege verification',
+    EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_readonly')
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly has exactly the reporting allowlist',
+    NOT EXISTS (
+        (
+            SELECT relation_name
+            FROM (
+                SELECT relation_name
+                FROM unnest(ARRAY[
+                    'catalog_items',
+                    'collection_scarcity_snapshot_items',
+                    'collection_scarcity_snapshots',
+                    'collections',
+                    'current_collection_scarcity',
+                    'current_valuations',
+                    'price_halts',
+                    'price_sources',
+                    'quote_signing_keys',
+                    'rarities',
+                    'risk_policy_versions',
+                    'risk_state',
+                    'seed_commitments',
+                    'seed_daily_roots',
+                    'skus',
+                    'stock_policy_bands',
+                    'stock_policy_versions',
+                    'valuation_snapshot_items',
+                    'valuation_snapshots',
+                    'warehouse_stock',
+                    'wear_bands'
+                ]::text[]) AS expected(relation_name)
+                EXCEPT
+                SELECT class.relname
+                FROM pg_class AS class
+                JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
+                WHERE namespace.nspname = 'public'
+                  AND class.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND has_any_column_privilege('contracter_readonly', class.oid, 'SELECT')
+            ) AS missing_allowlist_relation
+
+            UNION ALL
+
+            SELECT relation_name
+            FROM (
+                SELECT class.relname AS relation_name
+                FROM pg_class AS class
+                JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
+                WHERE namespace.nspname = 'public'
+                  AND class.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND has_any_column_privilege('contracter_readonly', class.oid, 'SELECT')
+                EXCEPT
+                SELECT relation_name
+                FROM unnest(ARRAY[
+                    'catalog_items',
+                    'collection_scarcity_snapshot_items',
+                    'collection_scarcity_snapshots',
+                    'collections',
+                    'current_collection_scarcity',
+                    'current_valuations',
+                    'price_halts',
+                    'price_sources',
+                    'quote_signing_keys',
+                    'rarities',
+                    'risk_policy_versions',
+                    'risk_state',
+                    'seed_commitments',
+                    'seed_daily_roots',
+                    'skus',
+                    'stock_policy_bands',
+                    'stock_policy_versions',
+                    'valuation_snapshot_items',
+                    'valuation_snapshots',
+                    'warehouse_stock',
+                    'wear_bands'
+                ]::text[]) AS expected(relation_name)
+            ) AS unexpected_allowlist_relation
+        )
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read password hashes',
+    NOT has_column_privilege('contracter_readonly', 'users', 'password_hash', 'SELECT')
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read session token hashes',
+    NOT has_column_privilege(
+        'contracter_readonly', 'user_sessions', 'session_token_hash', 'SELECT'
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read recovery token hashes',
+    NOT has_column_privilege('contracter_readonly', 'recovery_codes', 'token_hash', 'SELECT')
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read administrator TOTP hashes',
+    NOT has_column_privilege(
+        'contracter_readonly', 'administrators', 'totp_secret_hash', 'SELECT'
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_readonly cannot read revealed server seeds',
+    NOT has_column_privilege(
+        'contracter_readonly', 'seed_revelation_events', 'server_seed', 'SELECT'
+    )
+);
+
 -- Exactly one durable acceptance event may exist per quote.  A retry with the
 -- same idempotency key is served from that result rather than appending again;
 -- a second acceptance with a different key is therefore blocked by quote_id.
@@ -604,6 +732,69 @@ SELECT pg_temp.assert_append_only('contract_outcomes'::regclass);
 SELECT pg_temp.assert_append_only('critical_action_approval_events'::regclass);
 SELECT pg_temp.assert_append_only('quote_acceptance_events'::regclass);
 SELECT pg_temp.assert_append_only('sale_evidence'::regclass);
+
+-- Auth access boundary (db/migrations/0015_auth_session_access.sql): the
+-- HTTP runtime role reaches credentials and sessions only through the
+-- narrow SECURITY DEFINER functions, never by reading the tables. In
+-- particular the password_hash column restriction from 0013 must survive
+-- the addition of a login flow that needs the hash.
+SELECT pg_temp.assert_true(
+    'contracter_runtime can execute the auth functions it needs',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR (
+        has_function_privilege(
+            'contracter_runtime', 'find_user_credential_by_login(text)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'register_invited_user(bytea, text, text)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'create_user_session(bigint, bytea, interval)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'find_active_user_session(bytea)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'revoke_user_session(bytea)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'revoke_all_user_sessions(bigint)', 'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_runtime', 'find_account_by_public_id(uuid)', 'EXECUTE'
+        )
+    )
+);
+SELECT pg_temp.assert_true(
+    'contracter_runtime still cannot read password_hash directly after the login flow exists',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_column_privilege('contracter_runtime', 'users', 'password_hash', 'SELECT')
+);
+SELECT pg_temp.assert_true(
+    'contracter_runtime has no direct table access to sessions, invitations, or recovery codes',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR (
+        SELECT bool_and(
+            NOT has_table_privilege('contracter_runtime', protected.name, action.name)
+        )
+        FROM (VALUES
+            ('public.user_sessions'),
+            ('public.invitations'),
+            ('public.invitation_redemptions'),
+            ('public.recovery_codes')
+        ) AS protected(name)
+        CROSS JOIN (VALUES
+            ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')
+        ) AS action(name)
+    )
+);
+
+-- An invitation is single-use: the redemption table enforces it
+-- structurally, independently of register_invited_user's own check.
+SELECT pg_temp.assert_true(
+    'an invitation can be redeemed at most once',
+    pg_temp.has_unique_single_column('invitation_redemptions'::regclass, 'invitation_id')
+);
 
 SELECT '001_invariants: ok' AS result;
 
