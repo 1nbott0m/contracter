@@ -8,7 +8,28 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::ApiError, extract::CurrentUser, state::AppState};
+use crate::{
+    error::ApiError,
+    extract::{CurrentUser, PeerAddress},
+    rate_limit::RateLimitKey,
+    state::AppState,
+};
+
+/// The bucket this request spends from.
+///
+/// `ConnectInfo` is the transport peer, never a client-supplied header.
+/// `X-Forwarded-For` is deliberately not consulted: anyone may set it, so
+/// honouring it would hand an attacker a fresh budget per request and make
+/// the limiter worse than none at all. Behind a reverse proxy every caller
+/// shares the proxy's bucket, which is why a proxied deployment needs a
+/// limiter at the edge as well -- stated here rather than assumed away.
+///
+/// With no peer address -- which is how tests drive the router -- one
+/// shared bucket still bounds total work; it simply cannot tell callers
+/// apart.
+fn peer_key(PeerAddress(address): PeerAddress) -> RateLimitKey {
+    address.map_or(RateLimitKey::Anonymous, RateLimitKey::Peer)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -47,8 +68,14 @@ pub struct LogoutAllResponse {
 /// normal login path, so a registration response never carries a session.
 pub async fn register(
     State(state): State<AppState>,
+    peer: PeerAddress,
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Before any work at all, including the invitation lookup.
+    if let Err(retry) = state.auth_rate_limiter().check(&peer_key(peer)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+
     let invitation = SecretToken::new(request.invitation_token);
     let user_id = auth::register(
         state.database(),
@@ -71,8 +98,21 @@ pub async fn register(
 /// the client cannot read from JavaScript, and never appears in the body.
 pub async fn login(
     State(state): State<AppState>,
+    peer: PeerAddress,
     Json(request): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Two budgets, because either alone leaves a hole: by address only,
+    // one host spreads guesses across every account; by account only, a
+    // botnet hammers one account freely. The address is charged first so a
+    // flood is refused before it can touch any account's budget.
+    let limiter = state.auth_rate_limiter();
+    if let Err(retry) = limiter.check(&peer_key(peer)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+    if let Err(retry) = limiter.check(&RateLimitKey::login(&request.login)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+
     let session = auth::login(
         state.database(),
         state.auth_config(),

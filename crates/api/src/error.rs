@@ -46,6 +46,16 @@ impl ApiError {
         Self::ServiceUnavailable(message.into())
     }
 
+    /// The caller is over budget. `retry_after` reaches the response as a
+    /// `Retry-After` header, because a 429 that does not say when to come
+    /// back invites an immediate retry and so costs more than it saves.
+    pub fn too_many_requests(retry_after: std::time::Duration) -> Self {
+        Self::TooManyRequests(format!(
+            "Too many requests; retry in {} seconds",
+            retry_after.as_secs().max(1)
+        ))
+    }
+
     /// `(status, stable code, safe message)`. `Internal`'s real cause is
     /// never in this tuple -- callers that have one must log it via
     /// `tracing` themselves before returning `ApiError::Internal`.

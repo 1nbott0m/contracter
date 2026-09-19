@@ -3,7 +3,7 @@
 //! no mocked middleware, so the cookie handling, extractor, and error
 //! envelope under test are exactly the ones that ship.
 
-use api::{AppState, RouterConfig, SECURE_SESSION_COOKIE, build_router};
+use api::{AppState, RateLimitConfig, RouterConfig, SECURE_SESSION_COOKIE, build_router};
 use application::auth::{AuthConfig, SecretToken};
 use axum::{
     Router,
@@ -732,5 +732,110 @@ async fn authenticated_responses_are_not_cacheable_and_vary_on_the_cookie() {
             .get(header::CACHE_CONTROL)
             .and_then(|value| value.to_str().ok()),
         Some("no-store")
+    );
+}
+
+/// `/auth/register` and `/auth/login` cost an Argon2id hash each, which is
+/// what makes them worth flooding. The limiter must refuse before that
+/// work happens, and must say when to come back.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn the_auth_endpoints_refuse_a_flood_with_a_retry_hint() {
+    // A budget of two, so the limit is reachable without sending a
+    // production-sized flood at a test database.
+    let state = require_database!().with_auth_rate_limit(RateLimitConfig {
+        burst: 2,
+        refill_interval: std::time::Duration::from_secs(60),
+    });
+
+    let attempt = || {
+        router(&state).oneshot(post(
+            "/api/v1/auth/login",
+            json!({ "login": "nobody_at_all", "password": PASSWORD }),
+        ))
+    };
+
+    // Within budget: refused for the real reason, not the limiter.
+    for _ in 0..2 {
+        let response = attempt().await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "an in-budget attempt must reach the credential check"
+        );
+    }
+
+    // Over budget: refused by the limiter instead.
+    let response = attempt().await.unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let body = body_json(response).await;
+    assert_eq!(body["error"]["code"], "TOO_MANY_REQUESTS");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("a message")
+            .contains("retry in"),
+        "a 429 that does not say when to come back invites an immediate retry"
+    );
+
+    // Registration shares the address budget, so it is refused too: a
+    // flood must not simply move to the other expensive endpoint.
+    let response = router(&state)
+        .oneshot(post(
+            "/api/v1/auth/register",
+            json!({
+                "invitation_token": SecretToken::generate().reveal(),
+                "login": unique_login("flood"),
+                "password": PASSWORD,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// The address budget is spent before any account's, so a flood is
+/// stopped before it can exhaust one victim's allowance and lock them out.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn the_address_budget_is_charged_before_any_accounts() {
+    // Registering and logging in the victim costs two from the address
+    // budget before the test proper begins -- the limiter does not know
+    // the difference between setup and attack, which is the point. Four
+    // leaves exactly two, so the third guess is the one that runs out.
+    let state = require_database!().with_auth_rate_limit(RateLimitConfig {
+        burst: 4,
+        refill_interval: std::time::Duration::from_secs(60),
+    });
+    let (victim, _) = registered_session(&state).await;
+
+    let guess = |login: String| {
+        router(&state).oneshot(post(
+            "/api/v1/auth/login",
+            json!({ "login": login, "password": "wrong-but-long-enough" }),
+        ))
+    };
+
+    // Two guesses remain within the address budget and are answered on
+    // their merits, indistinguishably from any other wrong password.
+    for _ in 0..2 {
+        let response = guess(victim.clone()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // The third exhausts the address budget. Note what is *not* happening:
+    // the victim's own per-login budget has seen one fewer request (it was
+    // not charged for the registration), so it still has room. This
+    // refusal is the flooder being stopped, not the account being locked.
+    let response = guess(victim.clone()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // A different login from the same address is refused too, for the same
+    // reason -- the address is what ran out, not the account.
+    let response = guess(unique_login("bystander")).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the exhausted budget is the address's, so it applies to every login from it"
     );
 }

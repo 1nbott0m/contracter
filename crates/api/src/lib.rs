@@ -7,6 +7,7 @@
 
 mod error;
 mod extract;
+mod rate_limit;
 mod request_id;
 mod router;
 mod routes;
@@ -14,7 +15,8 @@ mod session_cookie;
 mod state;
 
 pub use error::{ApiError, ErrorBody, ErrorEnvelope};
-pub use extract::CurrentUser;
+pub use extract::{CurrentUser, PeerAddress};
+pub use rate_limit::{RateLimitConfig, RateLimitKey, RateLimiter};
 pub use request_id::{REQUEST_ID_HEADER, RequestId};
 pub use router::{RouterConfig, build_router};
 pub use session_cookie::{INSECURE_SESSION_COOKIE, SECURE_SESSION_COOKIE, SessionCookiePolicy};

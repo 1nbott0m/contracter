@@ -37,9 +37,15 @@ async fn run() -> Result<(), StartupError> {
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;
     tracing::info!(addr = %config.bind_addr(), "contracter-server listening");
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown::shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        // Carries the transport peer address into handlers, which the
+        // rate limiter keys on. Without this every caller shares one
+        // bucket and the limiter cannot tell them apart.
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown::shutdown_signal())
+    .await?;
 
     Ok(())
 }
