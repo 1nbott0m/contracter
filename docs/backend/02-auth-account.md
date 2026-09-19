@@ -149,11 +149,28 @@ listed origins are trusted by the operator. No separate CSRF token is
 introduced; if a future milestone adds cookie-authenticated `GET` side
 effects, this decision needs revisiting.
 
-**Caching.** Every `/api/v1` response carries `Cache-Control: no-store`
-and `Vary: Cookie`, applied as a layer so a route added later cannot
-forget it. Without `Vary: Cookie` a shared cache in front of this
-service is entitled to serve one account's `/me` to the next caller,
-because the requests differ only in a header it was never told mattered.
+**Caching.** Every *authenticated* `/api/v1` route carries
+`Cache-Control: no-store` and `Vary: Cookie`. Without `Vary: Cookie` a
+shared cache in front of this service is entitled to serve one account's
+`/me` to the next caller, because the requests differ only in a header it
+was never told mattered.
+
+Two exclusions, both deliberate and both worth knowing before you rely on
+the rule:
+
+- `/api/v1/catalog/*` is outside it. The catalog is identical for every
+  caller and carries no session, so `no-store` would forbid the one part
+  of this API that is safe to cache.
+- The error paths do not carry it either. The timeout, body-limit and
+  panic layers sit outside the route tree, so a 503 on timeout, a 500 on
+  panic, a 413 and a 405 come back without either header. These are error
+  responses that no cache stores by default, which is why the ordering has
+  not been changed; it is stated here rather than left to be discovered.
+
+An earlier version of this section claimed the headers were on *every*
+`/api/v1` response, "applied as a layer so a route added later cannot
+forget it". Both halves were false, and the second is the more dangerous:
+a route added after the layer does not get it.
 
 **`Secure`.** On by default. `INSECURE_COOKIES=true` (exact value, any
 other value leaves it on) turns it off for local HTTP development —

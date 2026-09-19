@@ -6,8 +6,13 @@ use economy_core::tradeup::{
 };
 use rust_decimal_macros::dec;
 
+/// A distinct item each time it is called, because a contract spends
+/// specific instances and the same one may not be spent twice.
 fn input(sku: &str, collection: &str, rarity: u8, value: rust_decimal::Decimal) -> InputItem {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     InputItem {
+        item_id: format!("item-{}", NEXT.fetch_add(1, Ordering::Relaxed)),
         sku_id: sku.into(),
         collection_id: collection.into(),
         rarity,
@@ -31,7 +36,9 @@ fn output(sku: &str, collection: &str, rarity: u8, available: bool) -> OutputIte
 #[test]
 fn rejects_an_input_count_outside_four_to_ten() {
     for count in [0_usize, 1, 2, 3, 11, 20] {
-        let inputs = vec![input("in", "a", 2, dec!(0.20)); count];
+        let inputs = (0..count)
+            .map(|_| input("in", "a", 2, dec!(0.20)))
+            .collect::<Vec<_>>();
         let error = build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err();
         assert_eq!(
             error,
@@ -44,7 +51,9 @@ fn rejects_an_input_count_outside_four_to_ten() {
 #[test]
 fn accepts_every_input_count_from_four_to_ten() {
     for count in 4_usize..=10 {
-        let inputs = vec![input("in", "a", 2, dec!(0.20)); count];
+        let inputs = (0..count)
+            .map(|_| input("in", "a", 2, dec!(0.20)))
+            .collect::<Vec<_>>();
         let outcomes = build_outcomes(
             &inputs,
             &[output("out-a", "a", 3, true), output("out-b", "a", 3, true)],
@@ -77,7 +86,9 @@ fn accepts_every_input_count_from_four_to_ten() {
 /// at any accepted count, not only at ten.
 #[test]
 fn collection_probability_follows_input_composition_at_any_count() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 3];
+    let mut inputs = (0..3)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     inputs.push(input("b-in", "b", 2, dec!(0.20)));
 
     let outcomes = build_outcomes(
@@ -116,7 +127,9 @@ fn collection_probability_follows_input_composition_at_any_count() {
 fn output_float_averages_over_the_actual_input_count() {
     // Four inputs, all at the very top of their catalog range: the
     // normalized average is 1, so the output must sit at its own maximum.
-    let inputs = vec![input("in", "a", 2, dec!(0.50)); 4];
+    let inputs = (0..4)
+        .map(|_| input("in", "a", 2, dec!(0.50)))
+        .collect::<Vec<_>>();
     let float = calculate_output_float(&inputs, dec!(0.00), dec!(1.00))
         .expect("four inputs produce a float");
     assert_eq!(
@@ -126,7 +139,9 @@ fn output_float_averages_over_the_actual_input_count() {
     );
 
     // And at the bottom of the range, the output sits at its minimum.
-    let inputs = vec![input("in", "a", 2, dec!(0.10)); 5];
+    let inputs = (0..5)
+        .map(|_| input("in", "a", 2, dec!(0.10)))
+        .collect::<Vec<_>>();
     let float = calculate_output_float(&inputs, dec!(0.20), dec!(0.80))
         .expect("five inputs produce a float");
     assert_eq!(float, dec!(0.20000000));
@@ -134,7 +149,9 @@ fn output_float_averages_over_the_actual_input_count() {
 
 #[test]
 fn rejects_mixed_input_rarities() {
-    let mut inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
+    let mut inputs = (0..10)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     inputs[9].rarity = 3;
     let error = build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err();
     assert_eq!(error, TradeupError::MixedInputRarities);
@@ -142,15 +159,23 @@ fn rejects_mixed_input_rarities() {
 
 #[test]
 fn rejects_covert_inputs() {
-    let inputs = vec![input("in", "a", 5, dec!(0.20)); 10];
+    let inputs = (0..10)
+        .map(|_| input("in", "a", 5, dec!(0.20)))
+        .collect::<Vec<_>>();
     let error = build_outcomes(&inputs, &[output("out", "a", 6, true)]).unwrap_err();
     assert_eq!(error, TradeupError::CovertInput);
 }
 
 #[test]
 fn assigns_collection_then_uniform_output_weights_exactly() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 7];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 3]);
+    let mut inputs = (0..7)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    inputs.extend(
+        (0..3)
+            .map(|_| input("b-in", "b", 2, dec!(0.20)))
+            .collect::<Vec<_>>(),
+    );
     let outcomes = build_outcomes(
         &inputs,
         &[
@@ -183,8 +208,14 @@ fn assigns_collection_then_uniform_output_weights_exactly() {
 
 #[test]
 fn normalized_input_floats_determine_output_float() {
-    let mut inputs = vec![input("low", "a", 2, dec!(0.10)); 5];
-    inputs.extend(vec![input("high", "a", 2, dec!(0.50)); 5]);
+    let mut inputs = (0..5)
+        .map(|_| input("low", "a", 2, dec!(0.10)))
+        .collect::<Vec<_>>();
+    inputs.extend(
+        (0..5)
+            .map(|_| input("high", "a", 2, dec!(0.50)))
+            .collect::<Vec<_>>(),
+    );
     assert_eq!(
         calculate_output_float(&inputs, dec!(0.20), dec!(0.80)).unwrap(),
         dec!(0.50)
@@ -197,7 +228,9 @@ fn a_zero_stock_outcome_is_excluded_and_the_rest_renormalised() {
     // Оставшиеся вероятности нормализуются." Refusing the whole contract
     // instead -- which is what this did before -- means one out-of-stock
     // candidate makes every contract touching that collection impossible.
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
+    let inputs = (0..10)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     let outcomes = build_outcomes(
         &inputs,
         &[
@@ -220,7 +253,9 @@ fn a_zero_stock_outcome_is_excluded_and_the_rest_renormalised() {
 /// outcome for those inputs and the contract must still be refused.
 #[test]
 fn a_collection_with_no_stock_left_is_still_refused() {
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
+    let inputs = (0..10)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     let error = build_outcomes(&inputs, &[output("out", "a", 3, false)]).unwrap_err();
     assert_eq!(
         error,
@@ -235,7 +270,9 @@ fn a_collection_with_no_stock_left_is_still_refused() {
 /// 75/25 even when one of A's candidates is out of stock.
 #[test]
 fn exclusion_renormalises_within_a_collection_without_moving_collection_odds() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 3];
+    let mut inputs = (0..3)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     inputs.push(input("b-in", "b", 2, dec!(0.20)));
 
     let outcomes = build_outcomes(
@@ -278,7 +315,9 @@ fn commitment_hides_the_server_seed_and_selection_replays() {
     let seed = [7_u8; 32];
     assert_ne!(server_seed_commitment(&seed), seed);
 
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
+    let inputs = (0..10)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     let outcomes = build_outcomes(
         &inputs,
         &[output("a-2", "a", 3, true), output("a-1", "a", 3, true)],
@@ -291,7 +330,9 @@ fn commitment_hides_the_server_seed_and_selection_replays() {
 
 #[test]
 fn rejects_rarity_that_cannot_have_a_next_tier_without_panicking() {
-    let inputs = vec![input("in", "a", u8::MAX, dec!(0.20)); 10];
+    let inputs = (0..10)
+        .map(|_| input("in", "a", u8::MAX, dec!(0.20)))
+        .collect::<Vec<_>>();
     assert_eq!(
         build_outcomes(&inputs, &[]).unwrap_err(),
         TradeupError::InvalidRarity { rarity: u8::MAX }
@@ -327,7 +368,9 @@ fn scarcity_redistributes_within_a_collection_without_moving_collection_odds() {
     // scarcity changes the weights of eligible outcomes *inside* the
     // chosen collection. Together those mean a scarcity multiplier must
     // never move probability between collections.
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 3];
+    let mut inputs = (0..3)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     inputs.push(input("b-in", "b", 2, dec!(0.20)));
 
     let outcomes = build_outcomes(
@@ -392,8 +435,14 @@ fn scarcity_redistributes_within_a_collection_without_moving_collection_odds() {
 
 #[test]
 fn an_unmultiplied_outcome_set_keeps_every_share_exactly() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 6];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 4]);
+    let mut inputs = (0..6)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    inputs.extend(
+        (0..4)
+            .map(|_| input("b-in", "b", 2, dec!(0.20)))
+            .collect::<Vec<_>>(),
+    );
     let outcomes = build_outcomes(
         &inputs,
         &[output("a-1", "a", 3, true), output("b-1", "b", 3, true)],
@@ -421,8 +470,14 @@ fn an_unmultiplied_outcome_set_keeps_every_share_exactly() {
 
 #[test]
 fn an_outcome_damped_to_nothing_is_dropped_and_its_collection_renormalised() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 5];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 5]);
+    let mut inputs = (0..5)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    inputs.extend(
+        (0..5)
+            .map(|_| input("b-in", "b", 2, dec!(0.20)))
+            .collect::<Vec<_>>(),
+    );
     let outcomes = build_outcomes(
         &inputs,
         &[
@@ -467,8 +522,14 @@ fn an_outcome_damped_to_nothing_is_dropped_and_its_collection_renormalised() {
 
 #[test]
 fn a_collection_damped_to_nothing_is_an_error_rather_than_a_silent_shift() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 5];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 5]);
+    let mut inputs = (0..5)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    inputs.extend(
+        (0..5)
+            .map(|_| input("b-in", "b", 2, dec!(0.20)))
+            .collect::<Vec<_>>(),
+    );
     let outcomes = build_outcomes(
         &inputs,
         &[output("a-1", "a", 3, true), output("b-1", "b", 3, true)],
@@ -497,7 +558,9 @@ fn a_collection_damped_to_nothing_is_an_error_rather_than_a_silent_shift() {
 
 #[test]
 fn scarcity_rejects_an_invalid_multiplier_or_a_malformed_outcome_set() {
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 10];
+    let inputs = (0..10)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
     let outcomes = build_outcomes(
         &inputs,
         &[output("a-1", "a", 3, true), output("a-2", "a", 3, true)],
@@ -550,8 +613,14 @@ fn scarcity_rejects_an_invalid_multiplier_or_a_malformed_outcome_set() {
 /// one shared denominator the numerators sum to, and no zero weight.
 #[test]
 fn a_damped_distribution_is_still_selectable() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 7];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 3]);
+    let mut inputs = (0..7)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    inputs.extend(
+        (0..3)
+            .map(|_| input("b-in", "b", 2, dec!(0.20)))
+            .collect::<Vec<_>>(),
+    );
     let outcomes = build_outcomes(
         &inputs,
         &[
@@ -606,7 +675,11 @@ fn a_multi_collection_contract_with_awkward_denominators_still_prices() {
     let mut outputs = Vec::new();
     for collection in 0..5 {
         let id = format!("c{collection}");
-        inputs.extend(vec![input("in", &id, 2, dec!(0.20)); 2]);
+        inputs.extend(
+            (0..2)
+                .map(|_| input("in", &id, 2, dec!(0.20)))
+                .collect::<Vec<_>>(),
+        );
         for candidate in 0..2 {
             outputs.push(output(&format!("c{collection}-{candidate}"), &id, 3, true));
         }
@@ -657,8 +730,14 @@ fn a_multi_collection_contract_with_awkward_denominators_still_prices() {
 /// quote is not reproducible.
 #[test]
 fn apportioning_leftovers_is_deterministic() {
-    let mut inputs = vec![input("a-in", "a", 2, dec!(0.20)); 7];
-    inputs.extend(vec![input("b-in", "b", 2, dec!(0.20)); 3]);
+    let mut inputs = (0..7)
+        .map(|_| input("a-in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    inputs.extend(
+        (0..3)
+            .map(|_| input("b-in", "b", 2, dec!(0.20)))
+            .collect::<Vec<_>>(),
+    );
     let outputs = [
         output("a-1", "a", 3, true),
         output("a-2", "a", 3, true),
@@ -686,4 +765,27 @@ fn apportioning_leftovers_is_deterministic() {
     let first = apply_outcome_scarcity(&outcomes, &multipliers).expect("first run");
     let second = apply_outcome_scarcity(&outcomes, &multipliers).expect("second run");
     assert_eq!(first, second, "the same inputs must give the same weights");
+}
+
+/// The same physical item cannot be spent twice.
+///
+/// Enforced here as well as in `finalize_contract`, because this is the
+/// layer that would otherwise compute a distribution and an output float
+/// from a set of inputs that cannot exist.
+#[test]
+fn the_same_item_cannot_be_used_twice() {
+    let mut inputs: Vec<_> = (0..4).map(|_| input("in", "a", 2, dec!(0.20))).collect();
+    inputs[3] = inputs[0].clone();
+
+    let error = build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err();
+    assert_eq!(
+        error,
+        TradeupError::DuplicateInput {
+            item_id: inputs[0].item_id.clone()
+        }
+    );
+
+    // The float average is computed from the same validated set, so it
+    // refuses too rather than averaging a duplicate.
+    assert!(calculate_output_float(&inputs, dec!(0.00), dec!(1.00)).is_err());
 }

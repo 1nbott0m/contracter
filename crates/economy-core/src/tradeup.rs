@@ -28,6 +28,17 @@ const COMMITMENT_DOMAIN: &[u8] = b"contracter/server-seed/v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputItem {
+    /// Which physical item this is, distinct from which *kind* of item it
+    /// is (`sku_id`).
+    ///
+    /// A contract spends ten specific instances, and the same instance may
+    /// not be spent twice. Without an identity here the rule was
+    /// unrepresentable in the layer that computes the probabilities:
+    /// passing one item four times produced weights and an output float as
+    /// though four items had been spent, and only `finalize_contract`
+    /// caught it, at the very end. A probability calculation that can be
+    /// fed a lie is one whose result means nothing.
+    pub item_id: String,
     pub sku_id: String,
     pub collection_id: String,
     pub rarity: u8,
@@ -64,6 +75,8 @@ pub enum TradeupError {
     InputCount { actual: usize },
     #[error("input rarities must match")]
     MixedInputRarities,
+    #[error("the same item cannot be used twice: {item_id}")]
+    DuplicateInput { item_id: String },
     #[error("Covert inputs are not eligible")]
     CovertInput,
     #[error("rarity {rarity} cannot have a next tier")]
@@ -460,6 +473,18 @@ fn validate_inputs(inputs: &[InputItem]) -> Result<(), TradeupError> {
             actual: inputs.len(),
         });
     }
+    // Distinctness, checked here rather than trusted from the caller. The
+    // database enforces it too, at finalisation; this is the layer that
+    // would otherwise compute a distribution from a set that cannot exist.
+    let mut seen = BTreeSet::new();
+    for item in inputs {
+        if !seen.insert(item.item_id.as_str()) {
+            return Err(TradeupError::DuplicateInput {
+                item_id: item.item_id.clone(),
+            });
+        }
+    }
+
     let rarity = inputs[0].rarity;
     if inputs.iter().any(|item| item.rarity != rarity) {
         return Err(TradeupError::MixedInputRarities);
