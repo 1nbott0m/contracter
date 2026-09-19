@@ -1,3 +1,8 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 use application::auth::AuthConfig;
 use db::Database;
 
@@ -15,6 +20,7 @@ pub struct AppState {
     auth_config: AuthConfig,
     secure_cookies: bool,
     auth_rate_limiter: RateLimiter,
+    draining: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -27,6 +33,7 @@ impl AppState {
             auth_config,
             secure_cookies: true,
             auth_rate_limiter: RateLimiter::new(RateLimitConfig::default()),
+            draining: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -44,6 +51,25 @@ impl AppState {
 
     pub(crate) const fn auth_rate_limiter(&self) -> &RateLimiter {
         &self.auth_rate_limiter
+    }
+
+    /// A handle that makes this process report itself unready.
+    ///
+    /// Shared with every clone of this state, so the shutdown path can set
+    /// it once and every router sees it.
+    #[must_use]
+    pub fn draining_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.draining)
+    }
+
+    /// Whether this process has begun shutting down.
+    ///
+    /// `Acquire`/`Release` rather than `Relaxed`: the flag is a signal
+    /// between the shutdown task and every request handler, and a handler
+    /// that saw a stale `false` would keep the load balancer sending
+    /// traffic for exactly as long as the staleness lasted.
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::Acquire)
     }
 
     #[must_use]

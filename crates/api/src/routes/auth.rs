@@ -28,7 +28,27 @@ use crate::{
 /// shared bucket still bounds total work; it simply cannot tell callers
 /// apart.
 fn peer_key(PeerAddress(address): PeerAddress) -> RateLimitKey {
-    address.map_or(RateLimitKey::Anonymous, RateLimitKey::Peer)
+    match address {
+        Some(address) => RateLimitKey::Peer(address),
+        None => {
+            // Loud, and once. A server built with
+            // `into_make_service_with_connect_info` always supplies an
+            // address, so reaching this in production means a refactor or
+            // a different serve path silently dropped it -- and the
+            // consequence is severe: every caller then shares one bucket,
+            // so a single client locks `/auth/*` for everyone. That is
+            // itself an outage, and it is invisible unless something says
+            // so. Tests drive the router directly and hit this by design,
+            // which is why it is logged rather than fatal.
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                tracing::error!(
+                    "no peer address on an auth request: rate limiting has degraded to a single                      shared budget, so one client can lock out every other. Serve the router with                      into_make_service_with_connect_info."
+                );
+            });
+            RateLimitKey::Anonymous
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

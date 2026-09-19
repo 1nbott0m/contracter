@@ -32,6 +32,7 @@ async fn run() -> Result<(), StartupError> {
         );
         state = state.with_insecure_cookies();
     }
+    let draining = state.draining_handle();
     let router = build_router(state, &config.router_config());
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;
@@ -44,7 +45,10 @@ async fn run() -> Result<(), StartupError> {
         // bucket and the limiter cannot tell them apart.
         router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown::shutdown_signal())
+    .with_graceful_shutdown(shutdown::drain_then_shutdown(
+        draining,
+        config.shutdown_drain(),
+    ))
     .await?;
 
     Ok(())

@@ -262,3 +262,64 @@ async fn readiness_returns_200_against_a_real_postgresql_instance() {
     let body = body_json(response).await;
     assert_eq!(body["status"], "ready");
 }
+
+/// A draining process must report itself unready before its socket closes.
+///
+/// `with_graceful_shutdown` stops accepting the instant the signal
+/// arrives. A load balancer only learns an instance is gone from its next
+/// readiness probe, so without this every rolling deploy produced a burst
+/// of connection-refused for callers routed in between.
+#[tokio::test]
+async fn a_draining_process_reports_itself_unready() {
+    let state = unreachable_db_state();
+    let draining = state.draining_handle();
+    let router = router_with(state);
+
+    // Before draining, readiness reflects the database -- here unreachable,
+    // so 503 for that reason. Liveness is unaffected either way.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health/live")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    draining.store(true, std::sync::atomic::Ordering::Release);
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body_json(response).await;
+    assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
+
+    // Liveness stays up while draining: the process is still serving
+    // in-flight work, and an orchestrator that kills it now would cut
+    // those requests off.
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/health/live")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "draining is not the same as dead"
+    );
+}

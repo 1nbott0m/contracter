@@ -14,6 +14,7 @@ pub struct ServerConfig {
     cors_allowed_origins: Vec<String>,
     request_timeout: Duration,
     max_body_bytes: usize,
+    shutdown_drain: Duration,
 }
 
 impl ServerConfig {
@@ -51,6 +52,11 @@ impl ServerConfig {
         let request_timeout =
             optional_duration_secs("REQUEST_TIMEOUT_SECS")?.unwrap_or(defaults.request_timeout);
         let max_body_bytes = optional_usize("MAX_BODY_BYTES")?.unwrap_or(defaults.max_body_bytes);
+        // Five seconds covers a one- or two-second readiness interval with
+        // room for one missed probe. It is not a guess about how long
+        // in-flight work takes -- that is what the request timeout is for.
+        let shutdown_drain =
+            optional_duration_secs("SHUTDOWN_DRAIN_SECS")?.unwrap_or(Duration::from_secs(5));
 
         Ok(Self {
             database_url,
@@ -60,6 +66,7 @@ impl ServerConfig {
             cors_allowed_origins,
             request_timeout,
             max_body_bytes,
+            shutdown_drain,
         })
     }
 
@@ -77,6 +84,11 @@ impl ServerConfig {
 
     pub const fn insecure_cookies(&self) -> bool {
         self.insecure_cookies
+    }
+
+    /// How long to report unready before closing the listening socket.
+    pub const fn shutdown_drain(&self) -> Duration {
+        self.shutdown_drain
     }
 
     /// The router knobs this environment asks for.
@@ -188,6 +200,7 @@ mod tests {
             cors_allowed_origins: vec!["https://app.example".to_owned()],
             request_timeout: Duration::from_secs(3),
             max_body_bytes: 4_096,
+            shutdown_drain: Duration::from_secs(5),
         };
 
         let router = config.router_config();

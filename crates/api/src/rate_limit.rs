@@ -32,11 +32,23 @@ const DEFAULT_REFILL_INTERVAL: Duration = Duration::from_secs(6);
 /// Upper bound on tracked keys.
 ///
 /// The table is itself an attack surface: without a ceiling, one request
-/// per forged key would grow it without limit. When it is full, idle
-/// buckets are dropped first; if every bucket is active the least
-/// recently used one goes, which costs that key its history rather than
-/// costing the service its memory.
+/// per forged key would grow it without limit.
 const MAX_TRACKED_KEYS: usize = 100_000;
+/// How many entries one eviction pass may look at.
+///
+/// Eviction runs under the lock that every `/auth/*` request contends on,
+/// so its cost has to be constant, not proportional to the table. Scanning
+/// all 100_000 entries on every request with an untracked key -- which is
+/// exactly what a forged-key flood produces -- would turn the component
+/// built to stop amplification into the amplifier: each cheap request
+/// buying a full scan plus up to that many key clones, with every other
+/// auth request blocked behind it.
+///
+/// A sample rather than a true LRU. Choosing the best of a handful of
+/// candidates keeps the table bounded, which is the actual requirement;
+/// evicting the theoretically ideal entry is not worth an intrusive list
+/// and its invariants.
+const EVICTION_SAMPLE: usize = 16;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RateLimitConfig {
@@ -181,29 +193,30 @@ impl RateLimiter {
     }
 }
 
-/// Drops the bucket that would be missed least: one carrying no debt
-/// first, since it holds no information, and otherwise the one furthest
-/// from the present.
+/// Drops one bucket, looking at a bounded number of candidates.
+///
+/// A settled bucket -- one whose schedule has caught up with the present
+/// -- carries no information and is dropped on sight. Otherwise the
+/// candidate closest to settling goes, since it is the one whose history
+/// is worth least. Both decisions are made over at most
+/// `EVICTION_SAMPLE` entries, so the work per call does not grow with the
+/// table.
 fn evict(buckets: &mut HashMap<RateLimitKey, Bucket>, now: Instant) {
-    let settled: Vec<RateLimitKey> = buckets
-        .iter()
-        .filter(|(_, bucket)| bucket.tat <= now)
-        .map(|(key, _)| key.clone())
-        .collect();
+    let mut best: Option<(RateLimitKey, Instant)> = None;
 
-    if !settled.is_empty() {
-        for key in settled {
-            buckets.remove(&key);
+    for (key, bucket) in buckets.iter().take(EVICTION_SAMPLE) {
+        if bucket.tat <= now {
+            // Settled: nothing to weigh, take it.
+            best = Some((key.clone(), bucket.tat));
+            break;
         }
-        return;
+        if best.as_ref().is_none_or(|(_, tat)| bucket.tat < *tat) {
+            best = Some((key.clone(), bucket.tat));
+        }
     }
 
-    if let Some(stalest) = buckets
-        .iter()
-        .min_by_key(|(_, bucket)| bucket.tat)
-        .map(|(key, _)| key.clone())
-    {
-        buckets.remove(&stalest);
+    if let Some((key, _)) = best {
+        buckets.remove(&key);
     }
 }
 
@@ -331,13 +344,40 @@ mod tests {
         );
     }
 
+    /// Eviction runs under the lock every auth request contends on, so
+    /// its cost must not grow with the table. A full scan per request was
+    /// amplification inside the anti-amplification component.
+    #[test]
+    fn eviction_looks_at_a_bounded_number_of_entries() {
+        let mut buckets = HashMap::new();
+        let now = Instant::now();
+        for index in 0..10_000 {
+            buckets.insert(
+                RateLimitKey::login(&format!("key-{index}")),
+                Bucket {
+                    // All unsettled, so the cheap "drop a settled one"
+                    // path cannot be what keeps this bounded.
+                    tat: now + Duration::from_secs(60 + index as u64 % 97),
+                },
+            );
+        }
+
+        let before = buckets.len();
+        evict(&mut buckets, now);
+        assert_eq!(
+            buckets.len(),
+            before - 1,
+            "one eviction removes exactly one entry"
+        );
+    }
+
     #[test]
     fn the_table_stays_bounded_under_forged_keys() {
         let limiter = limiter(1, 60);
         let start = Instant::now();
         // Each key is used once and immediately carries debt, so no
-        // bucket can be evicted as settled -- this exercises the
-        // furthest-from-now path rather than the cheap one.
+        // bucket is settled -- this exercises the sampled least-settled
+        // path rather than the cheap one.
         for index in 0..(MAX_TRACKED_KEYS + 500) {
             let key = RateLimitKey::login(&format!("forged-{index}"));
             let _ = limiter.check_at(&key, start);
