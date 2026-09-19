@@ -449,6 +449,14 @@ fn decoy_password_hash() -> &'static str {
         let mut unguessable = [0_u8; TOKEN_BYTES];
         OsRng.fill_bytes(&mut unguessable);
         let salt = SaltString::generate(&mut OsRng);
+        // Built with the same `Argon2::default()` that verification uses,
+        // so the decoy costs what a real hash costs. Verification honours
+        // the parameters embedded in whatever PHC string it is given, so
+        // the moment stored hashes move to stronger parameters -- a bump,
+        // or an import -- a decoy pinned to the old ones would verify
+        // faster than a real credential and quietly reopen the timing
+        // oracle this exists to close. `the_decoy_costs_what_a_real_hash_costs`
+        // asserts they still agree.
         Argon2::default()
             .hash_password(&unguessable, &salt)
             .expect("hashing a fixed-width value with default parameters cannot fail")
@@ -559,6 +567,33 @@ mod tests {
             !verify_password("decoy-credential-never-matches".to_owned(), Some(decoy))
                 .await
                 .expect("verify")
+        );
+    }
+
+    /// The decoy only equalises timing while it costs what a real hash
+    /// costs. Verification uses the parameters embedded in the stored
+    /// string, so if those ever diverge from the decoy's, an unknown login
+    /// becomes measurably cheaper than a known one.
+    #[test]
+    fn the_decoy_costs_what_a_real_hash_costs() {
+        let decoy = decoy_password_hash();
+        let parsed = PasswordHash::new(decoy).expect("the decoy is a valid PHC string");
+        let decoy_params = argon2::Params::try_from(&parsed).expect("decoy parameters");
+        let current = Argon2::default();
+
+        assert_eq!(parsed.algorithm.as_str(), "argon2id");
+        assert_eq!(
+            (
+                decoy_params.m_cost(),
+                decoy_params.t_cost(),
+                decoy_params.p_cost()
+            ),
+            (
+                current.params().m_cost(),
+                current.params().t_cost(),
+                current.params().p_cost()
+            ),
+            "the decoy must be built with the parameters verification uses"
         );
     }
 

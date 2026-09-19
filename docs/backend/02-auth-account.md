@@ -115,6 +115,30 @@ Duplicates are not something a well-behaved client produces; they are
 what shadowing looks like in flight, and any "first wins" or "last wins"
 rule only changes which half of the attack succeeds.
 
+## Rate limiting
+
+`/auth/register` and `/auth/login` each derive an Argon2id hash, which is
+what makes them worth flooding. Both are limited before that work starts.
+
+Two budgets, because either alone leaves a hole: by address only, one host
+spreads guesses across every account; by account only, a botnet hammers
+one account freely. The address is charged first, so a flood is refused
+before it can exhaust a victim's own allowance — a limiter that lets one
+caller lock out another is a denial-of-service tool rather than a defence.
+
+Registration also spends from a budget keyed on the invitation's hash.
+It answers "that login is taken" with `409`, which an invitation holder
+could otherwise use as an unlimited login-existence oracle, since a failed
+probe does not consume the invitation. Collapsing that response into the
+`403` would hide the one thing an honest user needs to be told, so the
+probe is bounded instead.
+
+The algorithm is virtual scheduling rather than a token count. A counter
+adding a fractional refill per call accumulates floating-point error, so a
+bucket can sit permanently a hair below the threshold and refuse a caller
+who is owed a request; counting a rate in floating point is the same
+mistake as counting money in it.
+
 **CSRF.** All four state-changing endpoints are POST, and `SameSite=Lax`
 means a cross-site POST never carries the cookie. `register` and `login`
 additionally require a JSON body; `logout` and `logout-all` do not, so
@@ -233,16 +257,17 @@ would fail on the singleton treasury account.
 
 ## Residual risks
 
-Known and accepted for this milestone, each with the reason it is not
-fixed here rather than a claim that it does not matter:
+Known and accepted, each with the reason it is not closed rather than a
+claim that it does not matter.
 
 | Risk | Why it is still open |
 |---|---|
-| No per-IP or per-account rate limiting on `/auth/*` | Rate limiting is its own milestone with its own storage question (in-process vs. shared). The hashing bound above caps the damage to `503`s rather than memory exhaustion, but it does not stop password guessing. |
-| Registration reveals a taken login (`409`) without consuming the invitation | Enumeration is gated behind possessing a valid unused invitation, and a user has to be told why their chosen login failed. Consuming the invitation on a name clash would punish the honest case. |
-| `x-request-id` is accepted from the client | Convenient for tracing through a trusted proxy; a hostile client can forge or collide ids. It is used for correlation only, never for authorization. |
-| Database functions are owned by the superuser | `SECURITY DEFINER` functions run as their owner. A dedicated lower-privileged owner role is a deployment change, not a code change, and belongs with the provisioning work. |
-| Password material is not zeroized in memory | Rust moves `String`s freely, so zeroizing is only meaningful with a type that owns the buffer end to end. Worth doing; not worth doing halfway. |
+| A reverse-proxy deployment shares one rate-limit bucket | The limiter keys on the transport peer and deliberately ignores `X-Forwarded-For`, which anyone may set. Behind a proxy that means one bucket for everyone, so such a deployment needs a limiter at the edge as well. Trusting the header instead would hand an attacker a fresh budget per request, which is worse than the shared bucket. |
+| Rate limiting is per process | In-memory and in-process, so a fleet of N instances admits N times the configured rate. A shared store would be a network round trip in front of the cheapest requests and one more thing to be down; the right answer at that scale is an edge limiter. |
+| `owned_inventory` is readable across owners by the runtime role | The view is not a scoping mechanism and was never meant to be one; ownership is a bound predicate in the query, tested at both the `db` and HTTP layers. The role could already read `inventory_items` and `inventory_positions` directly, so the only thing the view adds is lock state. Wrapping every read in a `SECURITY DEFINER` function would be real complexity for that margin. |
+| `revoke_all_user_sessions` takes a user id and trusts it | Unlike `finalize_contract_for_user`, there is no independent fact to check the caller against: the calling account and the target are the same account, so a wrapper comparing them would be satisfied by passing the id twice. Bounded by what a leaked runtime credential can do in general, and by session creation now being bound to a credential (0022). |
+| Password material is not zeroized in memory | Rust moves `String`s freely, so zeroizing only means something with a type that owns the buffer end to end. Worth doing; not worth doing halfway. |
+| Sessions have a fixed 14-day TTL with no idle timeout or rotation | Expiry and revocation are enforced in SQL and a disabled account loses access immediately, both tested. Rotation belongs with the credential-change flow, which does not exist yet; `revoke_all_user_sessions` is the building block it will call. |
 
 ## Deferred
 
