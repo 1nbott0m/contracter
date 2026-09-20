@@ -532,6 +532,126 @@ SELECT pg_temp.assert_sqlstate(
     $sql$
 );
 
+-- Publishing a snapshot with no valuation rows would invalidate active quotes
+-- and replace the risk state's snapshot pointer without any usable prices.
+-- It must fail before publication and leave the snapshot unpublished.
+INSERT INTO valuation_snapshots (public_id, formula_version, snapshot_at)
+VALUES (
+    '80000000-0000-0000-0000-000000000001',
+    'empty-snapshot-guard-test',
+    clock_timestamp()
+);
+
+SELECT pg_temp.assert_sqlstate(
+    'an empty valuation snapshot cannot be published',
+    '23514',
+    $sql$
+        SELECT publish_valuation_snapshot(
+            (SELECT id
+             FROM valuation_snapshots
+             WHERE public_id = '80000000-0000-0000-0000-000000000001')
+        )
+    $sql$
+);
+
+SELECT pg_temp.assert_true(
+    'a rejected empty valuation snapshot remains unpublished',
+    (SELECT published_at IS NULL
+     FROM valuation_snapshots
+     WHERE public_id = '80000000-0000-0000-0000-000000000001')
+);
+SELECT pg_temp.assert_true(
+    'a rejected empty valuation snapshot never becomes the current risk snapshot',
+    NOT EXISTS (
+        SELECT 1
+        FROM risk_state AS risk
+        JOIN valuation_snapshots AS snapshot ON snapshot.id = risk.valuation_snapshot_id
+        WHERE snapshot.public_id = '80000000-0000-0000-0000-000000000001'
+    )
+);
+
+-- A snapshot with a valid valuation item continues through the existing
+-- publication path and becomes the risk state's current valuation snapshot.
+INSERT INTO catalog_items (
+    public_id,
+    collection_id,
+    rarity_code,
+    stable_name,
+    min_float,
+    max_float
+)
+SELECT
+    '80000000-0000-0000-0000-000000000002',
+    collection.id,
+    'mil-spec',
+    'Snapshot Guard Test Item',
+    0,
+    1
+FROM collections AS collection
+WHERE collection.slug = 'control';
+
+INSERT INTO skus (public_id, catalog_item_id, wear_band_id)
+SELECT
+    '80000000-0000-0000-0000-000000000003',
+    catalog_item.id,
+    wear_band.id
+FROM catalog_items AS catalog_item
+JOIN wear_bands AS wear_band ON wear_band.code = 'factory_new'
+WHERE catalog_item.public_id = '80000000-0000-0000-0000-000000000002';
+
+INSERT INTO valuation_snapshots (public_id, formula_version, snapshot_at)
+VALUES (
+    '80000000-0000-0000-0000-000000000004',
+    'nonempty-snapshot-guard-test',
+    clock_timestamp()
+);
+
+INSERT INTO valuation_snapshot_items (
+    snapshot_id,
+    sku_id,
+    verified_price_microcredits,
+    source_code,
+    window_days,
+    valid_sale_count,
+    evidence_cutoff_at,
+    evidence_digest
+)
+SELECT
+    snapshot.id,
+    sku.id,
+    100000,
+    'market_csgo',
+    7,
+    20,
+    clock_timestamp(),
+    decode(repeat('80', 32), 'hex')
+FROM valuation_snapshots AS snapshot
+JOIN skus AS sku
+  ON sku.public_id = '80000000-0000-0000-0000-000000000003'
+WHERE snapshot.public_id = '80000000-0000-0000-0000-000000000004';
+
+SELECT pg_temp.assert_ok(
+    'a nonempty valuation snapshot can be published',
+    $sql$
+        SELECT publish_valuation_snapshot(
+            (SELECT id
+             FROM valuation_snapshots
+             WHERE public_id = '80000000-0000-0000-0000-000000000004')
+        )
+    $sql$
+);
+
+SELECT pg_temp.assert_true(
+    'a published nonempty snapshot becomes the current risk snapshot',
+    EXISTS (
+        SELECT 1
+        FROM risk_state AS risk
+        JOIN valuation_snapshots AS snapshot ON snapshot.id = risk.valuation_snapshot_id
+        WHERE snapshot.public_id = '80000000-0000-0000-0000-000000000004'
+          AND snapshot.published_at IS NOT NULL
+    )
+);
+
 -- Every role-privilege assertion below is guarded by "the role exists",
 -- because the runtime roles are provisioned outside the migrations and a
 -- bare schema dump has none.  That guard is also a trap: without the role,
