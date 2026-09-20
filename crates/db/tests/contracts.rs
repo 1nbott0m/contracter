@@ -136,8 +136,8 @@ async fn seed_contract(transaction: &mut Transaction<'_, Postgres>) -> ContractF
     .await
     .expect("insert seed allocation");
     let snapshot_id: i64 = sqlx::query_scalar(
-        "INSERT INTO valuation_snapshots (formula_version, snapshot_at, published_at) \
-         VALUES ('contract-test-v1', clock_timestamp(), clock_timestamp()) RETURNING id",
+        "INSERT INTO valuation_snapshots (formula_version, snapshot_at) \
+         VALUES ('contract-test-v1', clock_timestamp()) RETURNING id",
     )
     .fetch_one(transaction.as_mut())
     .await
@@ -154,6 +154,11 @@ async fn seed_contract(transaction: &mut Transaction<'_, Postgres>) -> ContractF
     .fetch_one(transaction.as_mut())
     .await
     .expect("insert snapshot item");
+    sqlx::query("UPDATE valuation_snapshots SET published_at = clock_timestamp() WHERE id = $1")
+        .bind(snapshot_id)
+        .execute(transaction.as_mut())
+        .await
+        .expect("publish nonempty valuation snapshot");
     let stock_policy_id: i64 = sqlx::query_scalar(
         "INSERT INTO stock_policy_versions (version, activated_at) \
          VALUES ($1, clock_timestamp()) RETURNING id",

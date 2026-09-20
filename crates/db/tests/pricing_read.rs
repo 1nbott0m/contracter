@@ -84,30 +84,35 @@ async fn insert_sku(
 
 async fn insert_snapshot(
     transaction: &mut Transaction<'_, Postgres>,
-    published: bool,
 ) -> (ValuationSnapshotId, PublicId) {
     let public_id = PublicId::new(Uuid::new_v4());
-    // A single `snapshot_clock` reading feeds created_at/snapshot_at/
-    // published_at: this table's CHECK (published_at IS NULL OR
-    // published_at >= created_at) is otherwise a tight, zero-margin race
-    // between the explicit clock_timestamp() calls here and the separate
-    // one `created_at`'s column DEFAULT would otherwise evaluate (same
-    // clock-drift hazard fixed for seed_allocations in inventory.rs).
+    // A single `snapshot_clock` reading feeds created_at/snapshot_at. The
+    // fixture publishes only after its valuation rows exist, matching the
+    // database's empty-snapshot guard.
     let id = sqlx::query_scalar(
         "WITH snapshot_clock AS (SELECT clock_timestamp() AS now) \
          INSERT INTO valuation_snapshots \
-            (public_id, formula_version, snapshot_at, created_at, published_at) \
-         SELECT $1, 'pricing-test-v1', snapshot_clock.now, snapshot_clock.now, \
-                CASE WHEN $2 THEN snapshot_clock.now ELSE NULL END \
+            (public_id, formula_version, snapshot_at, created_at) \
+         SELECT $1, 'pricing-test-v1', snapshot_clock.now, snapshot_clock.now \
            FROM snapshot_clock \
          RETURNING id",
     )
     .bind(public_id)
-    .bind(published)
     .fetch_one(transaction.as_mut())
     .await
     .expect("insert valuation snapshot");
     (id, public_id)
+}
+
+async fn publish_snapshot(
+    transaction: &mut Transaction<'_, Postgres>,
+    snapshot_id: ValuationSnapshotId,
+) {
+    sqlx::query("UPDATE valuation_snapshots SET published_at = clock_timestamp() WHERE id = $1")
+        .bind(snapshot_id)
+        .execute(transaction.as_mut())
+        .await
+        .expect("publish nonempty valuation snapshot");
 }
 
 async fn insert_valuation(
@@ -175,7 +180,7 @@ async fn snapshot_and_current_valuation_are_found_and_unknown_ids_return_none() 
     let mut transaction = isolated_transaction(&database).await;
     seed_lookups(&mut transaction).await;
     let sku_id = insert_sku(&mut transaction, true, true, true).await;
-    let (snapshot_id, public_id) = insert_snapshot(&mut transaction, true).await;
+    let (snapshot_id, public_id) = insert_snapshot(&mut transaction).await;
     insert_valuation(
         &mut transaction,
         snapshot_id,
@@ -184,6 +189,7 @@ async fn snapshot_and_current_valuation_are_found_and_unknown_ids_return_none() 
         1_234_567,
     )
     .await;
+    publish_snapshot(&mut transaction, snapshot_id).await;
 
     let snapshot = find_valuation_snapshot(transaction.as_mut(), public_id)
         .await
@@ -223,7 +229,7 @@ async fn snapshot_valuations_are_returned_in_stable_sku_order() {
     seed_lookups(&mut transaction).await;
     let first_sku = insert_sku(&mut transaction, true, true, true).await;
     let second_sku = insert_sku(&mut transaction, true, true, true).await;
-    let (snapshot_id, _) = insert_snapshot(&mut transaction, true).await;
+    let (snapshot_id, _) = insert_snapshot(&mut transaction).await;
     insert_valuation(
         &mut transaction,
         snapshot_id,
@@ -240,6 +246,7 @@ async fn snapshot_valuations_are_returned_in_stable_sku_order() {
         1_000_000,
     )
     .await;
+    publish_snapshot(&mut transaction, snapshot_id).await;
 
     let items = list_snapshot_valuations(transaction.as_mut(), snapshot_id)
         .await
@@ -267,7 +274,7 @@ async fn tradeable_valuations_exclude_disabled_catalog_source_and_active_halts()
     let disabled_source_sku = insert_sku(&mut transaction, true, true, true).await;
     let halted_sku = insert_sku(&mut transaction, true, true, true).await;
     let lifted_halt_sku = insert_sku(&mut transaction, true, true, true).await;
-    let (snapshot_id, _) = insert_snapshot(&mut transaction, true).await;
+    let (snapshot_id, _) = insert_snapshot(&mut transaction).await;
     for (sku_id, source_code, price) in [
         (second_sku, "pricing_enabled", 2_000_000),
         (first_sku, "pricing_enabled", 1_000_000),
@@ -280,6 +287,7 @@ async fn tradeable_valuations_exclude_disabled_catalog_source_and_active_halts()
     ] {
         insert_valuation(&mut transaction, snapshot_id, sku_id, source_code, price).await;
     }
+    publish_snapshot(&mut transaction, snapshot_id).await;
     insert_halt(&mut transaction, halted_sku, "0.25000000", true).await;
     insert_halt(&mut transaction, lifted_halt_sku, "0.20000000", false).await;
 

@@ -570,6 +570,27 @@ SELECT pg_temp.assert_true(
     )
 );
 
+-- The same invariant applies when a future write path tries to create an
+-- already-published snapshot directly instead of using the publication
+-- function. There is no way to attach valuation items before its row exists.
+SELECT pg_temp.assert_sqlstate(
+    'a directly inserted empty valuation snapshot cannot start published',
+    '23514',
+    $sql$
+        INSERT INTO valuation_snapshots (
+            public_id,
+            formula_version,
+            snapshot_at,
+            published_at
+        ) VALUES (
+            '80000000-0000-0000-0000-000000000005',
+            'direct-published-snapshot-guard-test',
+            clock_timestamp(),
+            clock_timestamp()
+        )
+    $sql$
+);
+
 -- A snapshot with a valid valuation item continues through the existing
 -- publication path and becomes the risk state's current valuation snapshot.
 INSERT INTO catalog_items (
