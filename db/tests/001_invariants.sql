@@ -739,6 +739,54 @@ SELECT pg_temp.assert_true(
         )
     )
 );
+SELECT pg_temp.assert_true(
+    'only contracter_admin_runtime can execute valuation reconciliation diagnostics',
+    NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'contracter_admin_runtime'
+    )
+    OR (
+        has_function_privilege(
+            'contracter_admin_runtime',
+            'reconcile_published_valuation_snapshots()',
+            'EXECUTE'
+        )
+        AND has_function_privilege(
+            'contracter_admin_runtime',
+            'reconcile_current_valuations()',
+            'EXECUTE'
+        )
+        AND (
+            NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+            OR (
+                NOT has_function_privilege(
+                    'contracter_runtime',
+                    'reconcile_published_valuation_snapshots()',
+                    'EXECUTE'
+                )
+                AND NOT has_function_privilege(
+                    'contracter_runtime',
+                    'reconcile_current_valuations()',
+                    'EXECUTE'
+                )
+            )
+        )
+        AND (
+            NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_readonly')
+            OR (
+                NOT has_function_privilege(
+                    'contracter_readonly',
+                    'reconcile_published_valuation_snapshots()',
+                    'EXECUTE'
+                )
+                AND NOT has_function_privilege(
+                    'contracter_readonly',
+                    'reconcile_current_valuations()',
+                    'EXECUTE'
+                )
+            )
+        )
+    )
+);
 
 -- Reporting must not become a credential-exfiltration role. The role may
 -- inspect safe catalog data, but it must never read authentication hashes,

@@ -42,6 +42,23 @@ pub struct CurrentValuation {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::FromRow)]
+pub struct PublishedValuationSnapshotDrift {
+    pub snapshot_id: ValuationSnapshotId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct CurrentValuationDrift {
+    pub sku_id: SkuId,
+    pub current_snapshot_id: ValuationSnapshotId,
+    pub current_snapshot_item_id: ValuationSnapshotItemId,
+    pub source_snapshot_id: ValuationSnapshotId,
+    pub source_sku_id: SkuId,
+    pub cached_price_microcredits: i64,
+    pub source_price_microcredits: i64,
+    pub issue_code: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct PriceHalt {
     pub id: PriceHaltId,
@@ -85,6 +102,36 @@ where
     .bind(sku_id)
     .fetch_optional(executor)
     .await?)
+}
+
+/// Diagnostic-only: published valuation snapshots that contain no valuation
+/// items. An empty result is healthy; reported rows need operator review.
+pub async fn reconcile_published_valuation_snapshots<'e, E>(
+    executor: E,
+) -> Result<Vec<PublishedValuationSnapshotDrift>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_as("SELECT * FROM reconcile_published_valuation_snapshots()")
+            .fetch_all(executor)
+            .await?,
+    )
+}
+
+/// Diagnostic-only: cached current valuations that disagree with their
+/// originating valuation snapshot item. An empty result is healthy.
+pub async fn reconcile_current_valuations<'e, E>(
+    executor: E,
+) -> Result<Vec<CurrentValuationDrift>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_as("SELECT * FROM reconcile_current_valuations()")
+            .fetch_all(executor)
+            .await?,
+    )
 }
 
 pub async fn list_snapshot_valuations<'e, E>(
