@@ -18,8 +18,9 @@ pub use catalog::{
 };
 pub use config::{DatabaseConfig, DatabaseConfigError};
 pub use contracts::{
-    Contract, ContractInput, ContractOutcome, find_contract_by_public_id,
-    find_contract_by_quote_id, find_contract_outcome, list_contract_inputs,
+    Contract, ContractInput, ContractOutcome, finalize_contract_for_user,
+    find_contract_by_public_id, find_contract_by_quote_id, find_contract_outcome,
+    list_contract_inputs,
 };
 pub use database::{Database, DatabaseError, MIGRATOR};
 pub use identity::{

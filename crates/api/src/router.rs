@@ -71,6 +71,7 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/me/inventory", get(inventory::list))
         .route("/me/inventory/{item_id}", get(inventory::detail))
         .route("/me/quote", get(quote::active))
+        .route("/me/quote/{quote_id}/accept", post(quote::accept))
         .layer(axum::middleware::from_fn(private_response_headers))
         // The catalog is the same for everyone and carries no session, so
         // it is deliberately outside that layer: marking it `no-store`

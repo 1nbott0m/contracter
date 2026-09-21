@@ -311,6 +311,28 @@ async fn quote_read_requires_an_authenticated_session_before_touching_the_databa
 }
 
 #[tokio::test]
+async fn quote_acceptance_requires_an_authenticated_session_before_touching_the_database() {
+    let response = build_router(unreachable_db_state(), &RouterConfig::default())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/me/quote/{}/accept", Uuid::new_v4()))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{\"idempotency_key\":\"11111111-1111-1111-1111-111111111111\"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+}
+
+#[tokio::test]
 #[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
 async fn owner_reads_exact_active_quote_without_internal_or_secret_fields() {
     let state = test_state().await;
