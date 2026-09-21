@@ -153,6 +153,17 @@ impl From<application::catalog::CatalogError> for ApiError {
     }
 }
 
+impl From<application::market::MarketError> for ApiError {
+    fn from(error: application::market::MarketError) -> Self {
+        use application::market::MarketError;
+
+        match error {
+            MarketError::InvalidCursor => Self::BadRequest(error.to_string()),
+            MarketError::Database(ref cause) => internal(cause, "a market database call failed"),
+        }
+    }
+}
+
 impl From<application::inventory::InventoryError> for ApiError {
     fn from(error: application::inventory::InventoryError) -> Self {
         use application::inventory::InventoryError;

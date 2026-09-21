@@ -71,6 +71,24 @@ pub struct PriceHalt {
     pub lifted_by_critical_action_id: Option<CriticalActionId>,
 }
 
+/// A public market listing. Stock is deliberately reduced to a boolean:
+/// quantities and reservations are internal risk inputs, not client data.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct MarketValuation {
+    pub sku_public_id: PublicId,
+    pub verified_price_microcredits: i64,
+    pub updated_at: DateTime<Utc>,
+    pub available: bool,
+}
+
+/// An active halt as the public market may report it. The halt reason and
+/// anomaly ratio remain operator-only data.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct MarketPriceHalt {
+    pub sku_public_id: PublicId,
+    pub halted_at: DateTime<Utc>,
+}
+
 pub async fn find_valuation_snapshot<'e, E>(
     executor: E,
     public_id: PublicId,
@@ -185,6 +203,56 @@ where
     .await?)
 }
 
+/// One stable, public-id-ordered page of current market valuations.
+///
+/// Only enabled catalog/source rows backed by a published snapshot appear.
+/// Active price halts suppress the price entirely. Stock quantities are
+/// never selected: callers receive only whether at least one unreserved unit
+/// is currently available.
+pub async fn list_market_valuations_after<'e, E>(
+    executor: E,
+    after: Option<PublicId>,
+    limit: i64,
+) -> Result<Vec<MarketValuation>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as(
+        "SELECT sku.public_id AS sku_public_id, \
+                snapshot_item.verified_price_microcredits, \
+                valuation.updated_at, \
+                COALESCE(stock.available_units > stock.reserved_units, false) AS available \
+         FROM current_valuations AS valuation \
+         JOIN valuation_snapshot_items AS snapshot_item \
+           ON snapshot_item.id = valuation.snapshot_item_id \
+          AND snapshot_item.snapshot_id = valuation.snapshot_id \
+          AND snapshot_item.sku_id = valuation.sku_id \
+         JOIN valuation_snapshots AS snapshot \
+           ON snapshot.id = snapshot_item.snapshot_id \
+          AND snapshot.published_at IS NOT NULL \
+         JOIN price_sources AS source ON source.code = snapshot_item.source_code \
+         JOIN skus AS sku ON sku.id = valuation.sku_id \
+         JOIN catalog_items AS item ON item.id = sku.catalog_item_id \
+         JOIN collections AS collection ON collection.id = item.collection_id \
+         LEFT JOIN warehouse_stock AS stock ON stock.sku_id = valuation.sku_id \
+         WHERE source.enabled \
+           AND sku.enabled \
+           AND item.enabled \
+           AND collection.enabled \
+           AND ($1::uuid IS NULL OR sku.public_id > $1) \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM price_halts AS halt \
+               WHERE halt.sku_id = valuation.sku_id AND halt.lifted_at IS NULL \
+           ) \
+         ORDER BY sku.public_id \
+         LIMIT $2",
+    )
+    .bind(after)
+    .bind(limit)
+    .fetch_all(executor)
+    .await?)
+}
+
 pub async fn list_active_price_halts<'e, E>(executor: E) -> Result<Vec<PriceHalt>, DatabaseError>
 where
     E: Executor<'e, Database = Postgres>,
@@ -196,6 +264,32 @@ where
          WHERE lifted_at IS NULL \
          ORDER BY sku_id, id",
     )
+    .fetch_all(executor)
+    .await?)
+}
+
+/// One stable, public-id-ordered page of current halts for the public market.
+/// The projection intentionally omits the halt reason, ratio, and internal
+/// identifiers because they reveal operational risk signals.
+pub async fn list_market_price_halts_after<'e, E>(
+    executor: E,
+    after: Option<PublicId>,
+    limit: i64,
+) -> Result<Vec<MarketPriceHalt>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as(
+        "SELECT sku.public_id AS sku_public_id, halt.halted_at \
+         FROM price_halts AS halt \
+         JOIN skus AS sku ON sku.id = halt.sku_id \
+         WHERE halt.lifted_at IS NULL \
+           AND ($1::uuid IS NULL OR sku.public_id > $1) \
+         ORDER BY sku.public_id \
+         LIMIT $2",
+    )
+    .bind(after)
+    .bind(limit)
     .fetch_all(executor)
     .await?)
 }

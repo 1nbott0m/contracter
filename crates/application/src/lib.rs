@@ -8,6 +8,7 @@ pub mod auth;
 pub mod catalog;
 mod health;
 pub mod inventory;
+pub mod market;
 pub mod pagination;
 
 pub use health::{ReadinessError, check_readiness};
