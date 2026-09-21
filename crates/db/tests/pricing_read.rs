@@ -1,7 +1,8 @@
 use db::{
     Database, DatabaseConfig, PriceHaltId, PublicId, SkuId, ValuationSnapshotId,
     find_current_valuation, find_valuation_snapshot, list_active_price_halts,
-    list_snapshot_valuations, list_tradeable_current_valuations,
+    list_market_price_halts_after, list_market_valuations_after, list_snapshot_valuations,
+    list_tradeable_current_valuations,
 };
 use rust_decimal::Decimal;
 use sqlx::{Executor, Postgres, Transaction};
@@ -383,8 +384,14 @@ async fn runtime_role_can_execute_every_pricing_read_api() {
     list_tradeable_current_valuations(transaction.as_mut())
         .await
         .expect("runtime role lists tradeable valuations");
+    list_market_valuations_after(transaction.as_mut(), None, 1)
+        .await
+        .expect("runtime role lists public market valuations");
     list_active_price_halts(transaction.as_mut())
         .await
         .expect("runtime role lists active halts");
+    list_market_price_halts_after(transaction.as_mut(), None, 1)
+        .await
+        .expect("runtime role lists public market halts");
     transaction.rollback().await.expect("rollback role check");
 }

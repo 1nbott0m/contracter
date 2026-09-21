@@ -20,7 +20,7 @@ use tower_http::{
 use crate::{
     error::ApiError,
     request_id::request_id_middleware,
-    routes::{account, auth, catalog, health, inventory},
+    routes::{account, auth, catalog, health, inventory, market},
     state::AppState,
 };
 
@@ -52,6 +52,13 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready));
 
+    let market_routes = Router::new()
+        .route("/market/valuations", get(market::valuations))
+        .route("/market/price-halts", get(market::price_halts))
+        // Market data can change immediately when a price halt begins.
+        // Do not let a browser or intermediary keep serving an older price.
+        .layer(axum::middleware::from_fn(market_response_headers));
+
     // Everything a client calls lives under /api/v1; /health stays
     // outside it so orchestrators never depend on an API version.
     let api_v1 = Router::new()
@@ -69,7 +76,8 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         // would forbid every CDN and proxy from caching the one part of
         // this API that is safe to cache.
         .route("/catalog/collections", get(catalog::collections))
-        .route("/catalog/skus", get(catalog::skus));
+        .route("/catalog/skus", get(catalog::skus))
+        .merge(market_routes);
 
     let mut router = Router::new()
         .merge(health_routes)
@@ -110,6 +118,16 @@ async fn private_response_headers(request: Request, next: Next) -> Response {
     let headers = response.headers_mut();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(VARY, HeaderValue::from_static("Cookie"));
+    response
+}
+
+/// Market values are public but volatile: a fresh price halt must take effect
+/// for every client immediately, so these responses are never cacheable.
+async fn market_response_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 

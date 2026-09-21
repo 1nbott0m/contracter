@@ -38,9 +38,10 @@ pub use ledger::{
     reconcile_ledger_balances,
 };
 pub use pricing::{
-    CurrentValuation, CurrentValuationDrift, PriceHalt, PublishedValuationSnapshotDrift,
-    SnapshotValuation, ValuationSnapshot, find_current_valuation, find_valuation_snapshot,
-    list_active_price_halts, list_snapshot_valuations, list_tradeable_current_valuations,
+    CurrentValuation, CurrentValuationDrift, MarketPriceHalt, MarketValuation, PriceHalt,
+    PublishedValuationSnapshotDrift, SnapshotValuation, ValuationSnapshot, find_current_valuation,
+    find_valuation_snapshot, list_active_price_halts, list_market_price_halts_after,
+    list_market_valuations_after, list_snapshot_valuations, list_tradeable_current_valuations,
     reconcile_current_valuations, reconcile_published_valuation_snapshots,
 };
 pub use quotes::{
