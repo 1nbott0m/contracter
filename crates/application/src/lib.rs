@@ -10,5 +10,6 @@ mod health;
 pub mod inventory;
 pub mod market;
 pub mod pagination;
+pub mod quote;
 
 pub use health::{ReadinessError, check_readiness};
