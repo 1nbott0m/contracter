@@ -19,11 +19,11 @@ Application/API/UI work is intentionally deferred until these contracts are stab
 
 ## Trade-up rules
 
-An ordinary contract consumes exactly ten eligible normal items of one rarity and produces one normal item at the next rarity. Covert inputs are rejected. Every input collection must expose at least one enabled next-rarity output.
+An ordinary contract consumes from four through ten eligible normal items of one rarity and produces one normal item at the next rarity. Covert inputs are rejected because knives and gloves are out of MVP scope. Every input collection must expose at least one enabled next-rarity output.
 
 Collection weight is the count of inputs from that collection divided by ten. Within a collection, enabled outputs are equiprobable. Therefore output probability is:
 
-`P(output) = input_count(collection) / 10 / output_count(collection)`.
+`P(output) = input_count(collection) / total_input_count / output_count(collection)`.
 
 If any quoted output is unavailable at acceptance time, the whole operation is rejected. Outcomes are never silently removed or rerolled.
 

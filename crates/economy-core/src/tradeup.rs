@@ -3,7 +3,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-const INPUT_COUNT: usize = 10;
+pub const MIN_INPUT_COUNT: usize = 4;
+pub const MAX_INPUT_COUNT: usize = 10;
 const COVERT_RARITY: u8 = 5;
 const MIN_WEIGHT_DENOMINATOR: u64 = 100;
 const HASH_DOMAIN: &[u8] = b"contracter/outcome/v1";
@@ -43,7 +44,7 @@ pub struct Selection {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TradeupError {
-    #[error("exactly ten inputs are required, got {actual}")]
+    #[error("between {MIN_INPUT_COUNT} and {MAX_INPUT_COUNT} inputs are required, got {actual}")]
     InputCount { actual: usize },
     #[error("input rarities must match")]
     MixedInputRarities,
@@ -70,6 +71,7 @@ pub fn build_outcomes(
     outputs: &[OutputItem],
 ) -> Result<Vec<WeightedOutcome>, TradeupError> {
     validate_inputs(inputs)?;
+    let total_input_count = inputs.len() as u64;
     let input_rarity = inputs[0].rarity;
     let output_rarity = input_rarity
         .checked_add(1)
@@ -111,19 +113,24 @@ pub fn build_outcomes(
                 collection_id: (*collection).to_owned(),
             })?
             .len() as u64;
-        common =
-            checked_lcm(common, INPUT_COUNT as u64 * count).ok_or(TradeupError::InvalidWeights)?;
+        let denominator = total_input_count
+            .checked_mul(count)
+            .ok_or(TradeupError::InvalidWeights)?;
+        common = checked_lcm(common, denominator).ok_or(TradeupError::InvalidWeights)?;
     }
     if common < MIN_WEIGHT_DENOMINATOR {
         common *= MIN_WEIGHT_DENOMINATOR.div_ceil(common);
     }
 
     let mut result = Vec::new();
-    for (collection, input_count) in counts {
+    for (collection, collection_input_count) in counts {
         let collection_outputs = &grouped[collection];
-        let each = input_count
+        let denominator = total_input_count
+            .checked_mul(collection_outputs.len() as u64)
+            .ok_or(TradeupError::InvalidWeights)?;
+        let each = collection_input_count
             .checked_mul(common)
-            .and_then(|v| v.checked_div(INPUT_COUNT as u64 * collection_outputs.len() as u64))
+            .and_then(|value| value.checked_div(denominator))
             .ok_or(TradeupError::InvalidWeights)?;
         for output in collection_outputs {
             result.push(WeightedOutcome {
@@ -248,7 +255,7 @@ pub fn calculate_output_float(
             .checked_add(normalized)
             .ok_or(TradeupError::InvalidWeights)
     })?;
-    let average = sum / Decimal::from(INPUT_COUNT);
+    let average = sum / Decimal::from(inputs.len());
     let value = output_min + average * (output_max - output_min);
     Ok(value.round_dp_with_strategy(8, RoundingStrategy::MidpointNearestEven))
 }
@@ -304,7 +311,7 @@ pub fn select_outcome(
 }
 
 fn validate_inputs(inputs: &[InputItem]) -> Result<(), TradeupError> {
-    if inputs.len() != INPUT_COUNT {
+    if !(MIN_INPUT_COUNT..=MAX_INPUT_COUNT).contains(&inputs.len()) {
         return Err(TradeupError::InputCount {
             actual: inputs.len(),
         });
