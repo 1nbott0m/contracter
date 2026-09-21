@@ -3,6 +3,7 @@ mod shutdown;
 
 use api::{AppState, RouterConfig, build_router};
 use application::auth::AuthConfig;
+use application::quote_signing::QuoteSigner;
 use config::ServerConfig;
 use db::{Database, DatabaseConfig};
 
@@ -17,6 +18,7 @@ async fn main() {
 async fn run() -> Result<(), StartupError> {
     let config = ServerConfig::from_env()?;
     init_tracing(config.log_filter());
+    tracing::info!(public_key = ?config.quote_signer().public_key(), "quote signer configured");
 
     let database_config = DatabaseConfig::new(config.database_url())?;
     let database = Database::connect(&database_config).await?;
