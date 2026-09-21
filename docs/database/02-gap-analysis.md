@@ -120,20 +120,12 @@ rejection, append-only rejection, exact-10-input rejection).
    comment or refactor when this code is next touched, not urgent on its
    own.
 
-7. **Unchecked multiplication in `build_outcomes`.**
-   `tradeup.rs:126` — `INPUT_COUNT as u64 * collection_outputs.len() as u64`
-   is the one raw (non-`checked_`) multiplication amid an otherwise
-   strictly checked-arithmetic function. Not realistically triggerable
-   (`collection_outputs.len()` would need to approach `u64::MAX/10`, far
-   beyond any possible allocation), but inconsistent with the rest of the
-   file's defensive style.
-
-8. **No genuine multi-connection concurrency test exists even for the
+7. **No genuine multi-connection concurrency test exists even for the
    already-shipped `finalize_contract`/`post_credit_adjustment` paths on
    `main`** — same root cause as finding 5, called out separately here
    because those two functions are already live (merged), not proposed.
 
-10. **(Found only by running for real, not by review.)** The redesigned
+8. **(Found only by running for real, not by review.)** The redesigned
     `publish_collection_scarcity_snapshot` had two further bugs invisible to
     compile-time checking: it INSERTed computed rows under the caller's own
     role with no `INSERT` grant on the underlying tables (unusable by any
@@ -147,7 +139,7 @@ rejection, append-only rejection, exact-10-input rejection).
     fixture (two competing "active" stock policy versions where only the
     most recent was ever picked up).
 
-11. **`warehouse_stock.reserved_units` is only ever decremented, never
+9. **`warehouse_stock.reserved_units` is only ever decremented, never
     incremented, anywhere in the schema.** `finalize_contract` releases a
     reservation (`db/migrations/0004_...sql:958-963`) on the assumption that
     quote creation already reserved it, but no migration contains any

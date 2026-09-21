@@ -473,17 +473,29 @@ SELECT pg_temp.assert_sqlstate(
     $sql$
 );
 
--- Input cardinality is validated before quote lookup or mutation.  This keeps
--- malformed requests cheap and makes exact-ten enforcement independently
+-- Input cardinality is validated before quote lookup or mutation. This keeps
+-- malformed requests cheap and makes the 4-to-10 range independently
 -- observable even though quote/stock fixtures are introduced by later tests.
 SELECT pg_temp.assert_sqlstate(
-    'nine locked contract inputs cannot be finalized',
+    'three locked contract inputs cannot be finalized',
     '23514',
     $sql$
         SELECT finalize_contract(
             0,
-            ARRAY[1,2,3,4,5,6,7,8,9]::bigint[],
+            ARRAY[1,2,3]::bigint[],
             '70000000-0000-0000-0000-000000000001'
+        )
+    $sql$
+);
+
+SELECT pg_temp.assert_sqlstate(
+    'four locked contract inputs pass cardinality validation before quote lookup',
+    '23503',
+    $sql$
+        SELECT finalize_contract(
+            0,
+            ARRAY[1,2,3,4]::bigint[],
+            '70000000-0000-0000-0000-000000000002'
         )
     $sql$
 );
@@ -495,7 +507,7 @@ SELECT pg_temp.assert_sqlstate(
         SELECT finalize_contract(
             0,
             ARRAY[1,2,3,4,5,6,7,8,9,10,11]::bigint[],
-            '70000000-0000-0000-0000-000000000002'
+            '70000000-0000-0000-0000-000000000003'
         )
     $sql$
 );

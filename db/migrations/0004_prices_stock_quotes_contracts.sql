@@ -644,12 +644,13 @@ DECLARE
     user_account_id bigint;
     previous_write_setting text;
 BEGIN
-    -- Validate cardinality before any lookup or lock. This is the public error
-    -- contract exercised by the RED test for nine and eleven inputs.
-    IF p_locked_input_ids IS NULL OR cardinality(p_locked_input_ids) <> 10 OR
+    -- Validate cardinality before any lookup or lock. Contracts have from
+    -- four through ten distinct inputs; the range is enforced again by the
+    -- quote's own immutable input set below.
+    IF p_locked_input_ids IS NULL OR cardinality(p_locked_input_ids) NOT BETWEEN 4 AND 10 OR
        (SELECT count(DISTINCT requested_input.input_id)
-          FROM unnest(p_locked_input_ids) AS requested_input(input_id)) <> 10 THEN
-        RAISE EXCEPTION 'contract finalization requires exactly ten unique inputs'
+          FROM unnest(p_locked_input_ids) AS requested_input(input_id)) NOT BETWEEN 4 AND 10 THEN
+        RAISE EXCEPTION 'contract finalization requires between 4 and 10 unique inputs'
             USING ERRCODE = '23514';
     END IF;
 

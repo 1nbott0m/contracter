@@ -27,10 +27,32 @@ fn output(sku: &str, collection: &str, rarity: u8, available: bool) -> OutputIte
 }
 
 #[test]
-fn rejects_any_input_count_other_than_ten() {
-    let inputs = vec![input("in", "a", 2, dec!(0.20)); 9];
+fn accepts_the_minimum_of_four_inputs_and_normalizes_weights_by_the_actual_count() {
+    let inputs = vec![input("in", "a", 2, dec!(0.20)); 4];
+    let outcomes = build_outcomes(
+        &inputs,
+        &[output("a-1", "a", 3, true), output("a-2", "a", 3, true)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| (outcome.weight_numerator, outcome.weight_denominator))
+            .collect::<Vec<_>>(),
+        vec![(52, 104), (52, 104)]
+    );
+}
+
+#[test]
+fn rejects_input_counts_outside_the_four_to_ten_range() {
+    let inputs = vec![input("in", "a", 2, dec!(0.20)); 3];
     let error = build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err();
-    assert_eq!(error, TradeupError::InputCount { actual: 9 });
+    assert_eq!(error, TradeupError::InputCount { actual: 3 });
+
+    let inputs = vec![input("in", "a", 2, dec!(0.20)); 11];
+    let error = build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err();
+    assert_eq!(error, TradeupError::InputCount { actual: 11 });
 }
 
 #[test]
@@ -89,6 +111,17 @@ fn normalized_input_floats_determine_output_float() {
     assert_eq!(
         calculate_output_float(&inputs, dec!(0.20), dec!(0.80)).unwrap(),
         dec!(0.50)
+    );
+}
+
+#[test]
+fn output_float_averages_over_the_actual_four_input_count() {
+    let mut inputs = vec![input("low", "a", 2, dec!(0.10)); 3];
+    inputs.push(input("high", "a", 2, dec!(0.50)));
+
+    assert_eq!(
+        calculate_output_float(&inputs, dec!(0.20), dec!(0.80)).unwrap(),
+        dec!(0.35)
     );
 }
 
