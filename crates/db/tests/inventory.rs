@@ -615,7 +615,6 @@ async fn runtime_role_can_query_availability_without_guard_table_access() {
     )
     .await
     .expect("runtime role reads one owned item");
-
     transaction.rollback().await.expect("rollback role check");
 }
 

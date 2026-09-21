@@ -37,7 +37,7 @@ pub struct TradeupQuote {
     pub expires_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct QuoteInput {
     pub id: QuoteInputId,
     pub quote_id: QuoteId,
@@ -45,6 +45,8 @@ pub struct QuoteInput {
     pub inventory_item_id: InventoryItemId,
     pub valuation_snapshot_item_id: ValuationSnapshotItemId,
     pub locked_position_version: i64,
+    pub inventory_item_public_id: PublicId,
+    pub canonical_float: Decimal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -60,6 +62,7 @@ pub struct QuoteOutcome {
     pub output_float: Decimal,
     pub buyback_microcredits: i64,
     pub is_selected: bool,
+    pub candidate_inventory_item_public_id: PublicId,
 }
 
 pub async fn find_tradeup_quote<'e, E>(
@@ -114,9 +117,12 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     Ok(sqlx::query_as(
-        "SELECT id, quote_id, position, inventory_item_id, valuation_snapshot_item_id, \
-                locked_position_version \
-         FROM quote_inputs WHERE quote_id = $1 ORDER BY position, id",
+        "SELECT input.id, input.quote_id, input.position, input.inventory_item_id, \
+                input.valuation_snapshot_item_id, input.locked_position_version, \
+                item.public_id AS inventory_item_public_id, item.canonical_float \
+         FROM quote_inputs AS input \
+         JOIN inventory_items AS item ON item.id = input.inventory_item_id \
+         WHERE input.quote_id = $1 ORDER BY input.position, input.id",
     )
     .bind(quote_id)
     .fetch_all(executor)
@@ -131,10 +137,14 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     Ok(sqlx::query_as(
-        "SELECT id, quote_id, position, sku_id, candidate_inventory_item_id, \
-                valuation_snapshot_item_id, probability_numerator, probability_denominator, \
-                output_float, buyback_microcredits, is_selected \
-         FROM quote_outcomes WHERE quote_id = $1 ORDER BY position, id",
+        "SELECT outcome.id, outcome.quote_id, outcome.position, outcome.sku_id, \
+                outcome.candidate_inventory_item_id, outcome.valuation_snapshot_item_id, \
+                outcome.probability_numerator, outcome.probability_denominator, \
+                outcome.output_float, outcome.buyback_microcredits, outcome.is_selected, \
+                item.public_id AS candidate_inventory_item_public_id \
+         FROM quote_outcomes AS outcome \
+         JOIN inventory_items AS item ON item.id = outcome.candidate_inventory_item_id \
+         WHERE outcome.quote_id = $1 ORDER BY outcome.position, outcome.id",
     )
     .bind(quote_id)
     .fetch_all(executor)

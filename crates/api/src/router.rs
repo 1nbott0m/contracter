@@ -20,7 +20,7 @@ use tower_http::{
 use crate::{
     error::ApiError,
     request_id::request_id_middleware,
-    routes::{account, auth, catalog, health, inventory, market},
+    routes::{account, auth, catalog, health, inventory, market, quote},
     state::AppState,
 };
 
@@ -70,6 +70,7 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/me/balance", get(account::balance))
         .route("/me/inventory", get(inventory::list))
         .route("/me/inventory/{item_id}", get(inventory::detail))
+        .route("/me/quote", get(quote::active))
         .layer(axum::middleware::from_fn(private_response_headers))
         // The catalog is the same for everyone and carries no session, so
         // it is deliberately outside that layer: marking it `no-store`

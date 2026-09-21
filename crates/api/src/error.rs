@@ -164,6 +164,20 @@ impl From<application::market::MarketError> for ApiError {
     }
 }
 
+impl From<application::quote::QuoteError> for ApiError {
+    fn from(error: application::quote::QuoteError) -> Self {
+        match error {
+            application::quote::QuoteError::NotFound => Self::not_found(error.to_string()),
+            application::quote::QuoteError::Inconsistent => {
+                internal(&error, "inconsistent quote data")
+            }
+            application::quote::QuoteError::Database(ref cause) => {
+                internal(cause, "a quote database call failed")
+            }
+        }
+    }
+}
+
 impl From<application::inventory::InventoryError> for ApiError {
     fn from(error: application::inventory::InventoryError) -> Self {
         use application::inventory::InventoryError;
