@@ -82,6 +82,34 @@ where
     .await?)
 }
 
+/// Atomically accepts an active quote for its owner. The database function is
+/// the authority for ownership, quote state, locked inputs, output reservation,
+/// risk exposure, inventory movement, and idempotency; callers never assemble
+/// those writes themselves.
+pub async fn finalize_contract_for_user<'e, E>(
+    executor: E,
+    calling_user_id: UserId,
+    quote_id: QuoteId,
+    locked_input_ids: &[InventoryItemId],
+    idempotency_key: uuid::Uuid,
+) -> Result<ContractId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let locked_input_ids = locked_input_ids
+        .iter()
+        .map(|item_id| item_id.get())
+        .collect::<Vec<_>>();
+    let contract_id: i64 = sqlx::query_scalar("SELECT finalize_contract_for_user($1, $2, $3, $4)")
+        .bind(calling_user_id)
+        .bind(quote_id)
+        .bind(locked_input_ids)
+        .bind(idempotency_key)
+        .fetch_one(executor)
+        .await?;
+    Ok(ContractId::new(contract_id))
+}
+
 /// Contract inputs, stably ordered by `position` then `id`.
 pub async fn list_contract_inputs<'e, E>(
     executor: E,

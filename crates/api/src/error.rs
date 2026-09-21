@@ -171,6 +171,7 @@ impl From<application::quote::QuoteError> for ApiError {
             application::quote::QuoteError::Inconsistent => {
                 internal(&error, "inconsistent quote data")
             }
+            application::quote::QuoteError::NotAcceptable => Self::Conflict(error.to_string()),
             application::quote::QuoteError::Database(ref cause) => {
                 internal(cause, "a quote database call failed")
             }

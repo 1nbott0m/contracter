@@ -7,8 +7,59 @@ pub enum QuoteError {
     NotFound,
     #[error("quote data is inconsistent")]
     Inconsistent,
+    #[error("quote cannot be accepted")]
+    NotAcceptable,
     #[error(transparent)]
     Database(#[from] DatabaseError),
+}
+
+pub struct AcceptedQuote {
+    pub contract_public_id: PublicId,
+}
+
+/// Accepts a quote through the database's owner-bound finalization function.
+/// The client supplies only an idempotency key: the locked input set is
+/// recovered from the immutable quote, never trusted from an HTTP body.
+pub async fn accept(
+    database: &Database,
+    owner: UserId,
+    quote_public_id: PublicId,
+    idempotency_key: uuid::Uuid,
+) -> Result<AcceptedQuote, QuoteError> {
+    let quote = db::find_tradeup_quote(database.pool(), quote_public_id)
+        .await?
+        .ok_or(QuoteError::NotFound)?;
+    let input_ids = db::list_quote_inputs(database.pool(), quote.id)
+        .await?
+        .into_iter()
+        .map(|input| input.inventory_item_id)
+        .collect::<Vec<_>>();
+
+    let contract_id = db::finalize_contract_for_user(
+        database.pool(),
+        owner,
+        quote.id,
+        &input_ids,
+        idempotency_key,
+    )
+    .await
+    .map_err(map_acceptance_error)?;
+    let contract = db::find_contract_by_quote_id(database.pool(), quote.id)
+        .await?
+        .filter(|contract| contract.id == contract_id)
+        .ok_or(QuoteError::Inconsistent)?;
+
+    Ok(AcceptedQuote {
+        contract_public_id: contract.public_id,
+    })
+}
+
+fn map_acceptance_error(error: DatabaseError) -> QuoteError {
+    match error.database_code().as_deref() {
+        Some("42501") => QuoteError::NotFound,
+        Some("23514") | Some("23505") => QuoteError::NotAcceptable,
+        _ => QuoteError::Database(error),
+    }
 }
 
 pub struct ActiveQuote {

@@ -1,6 +1,10 @@
 use application::quote;
-use axum::{Json, extract::State};
-use serde::Serialize;
+use axum::{
+    Json,
+    extract::{Path, State},
+};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{error::ApiError, extract::CurrentUser, state::AppState};
 
@@ -29,6 +33,17 @@ pub struct QuoteOutcomeResponse {
     pub probability_numerator: i64,
     pub probability_denominator: i64,
     pub buyback_microcredits: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptQuoteRequest {
+    pub idempotency_key: Uuid,
+}
+
+#[derive(Serialize)]
+pub struct AcceptQuoteResponse {
+    pub contract_id: Uuid,
 }
 
 pub async fn active(
@@ -64,5 +79,26 @@ pub async fn active(
                 buyback_microcredits: outcome.buyback_microcredits,
             })
             .collect(),
+    }))
+}
+
+/// `POST /api/v1/me/quote/{quote_id}/accept` -- finalizes the caller's
+/// already-signed quote. The database validates all mutable conditions in one
+/// transaction; this route deliberately accepts no client-provided item IDs.
+pub async fn accept(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+    Path(quote_id): Path<Uuid>,
+    Json(request): Json<AcceptQuoteRequest>,
+) -> Result<Json<AcceptQuoteResponse>, ApiError> {
+    let contract = quote::accept(
+        state.database(),
+        caller.user_id,
+        db::PublicId::new(quote_id),
+        request.idempotency_key,
+    )
+    .await?;
+    Ok(Json(AcceptQuoteResponse {
+        contract_id: contract.contract_public_id.get(),
     }))
 }
