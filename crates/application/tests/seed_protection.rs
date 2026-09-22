@@ -7,10 +7,14 @@ fn protector_round_trips_a_server_seed_without_exposing_its_key_in_debug_output(
     let protector = EnvironmentSeedProtector::from_base64url(TEST_KEY).unwrap();
     let seed = [0x5A; 32];
 
-    let protected = protector.encrypt(&seed).unwrap();
+    let protected = protector.encrypt(&seed, b"commitment-v1").unwrap();
 
     assert_ne!(protected.ciphertext, seed);
-    assert_eq!(protector.decrypt(&protected).unwrap(), seed);
+    assert_eq!(
+        protector.decrypt(&protected, b"commitment-v1").unwrap(),
+        seed
+    );
+    assert!(protector.decrypt(&protected, b"other-commitment").is_err());
     assert!(!format!("{protector:?}").contains(TEST_KEY));
 }
 

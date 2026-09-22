@@ -14,8 +14,16 @@ pub struct ProtectedSeed {
 }
 
 pub trait SeedProtector: Send + Sync {
-    fn encrypt(&self, seed: &[u8; 32]) -> Result<ProtectedSeed, SeedProtectionError>;
-    fn decrypt(&self, protected: &ProtectedSeed) -> Result<[u8; 32], SeedProtectionError>;
+    fn encrypt(
+        &self,
+        seed: &[u8; 32],
+        associated_data: &[u8],
+    ) -> Result<ProtectedSeed, SeedProtectionError>;
+    fn decrypt(
+        &self,
+        protected: &ProtectedSeed,
+        associated_data: &[u8],
+    ) -> Result<[u8; 32], SeedProtectionError>;
 }
 
 #[derive(Clone)]
@@ -38,22 +46,39 @@ impl EnvironmentSeedProtector {
 }
 
 impl SeedProtector for EnvironmentSeedProtector {
-    fn encrypt(&self, seed: &[u8; 32]) -> Result<ProtectedSeed, SeedProtectionError> {
+    fn encrypt(
+        &self,
+        seed: &[u8; 32],
+        associated_data: &[u8],
+    ) -> Result<ProtectedSeed, SeedProtectionError> {
         let mut nonce = [0_u8; 24];
         rand::rngs::OsRng.fill_bytes(&mut nonce);
         let ciphertext = self
             .cipher
-            .encrypt(XNonce::from_slice(&nonce), seed.as_slice())
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                chacha20poly1305::aead::Payload {
+                    msg: seed,
+                    aad: associated_data,
+                },
+            )
             .map_err(|_| SeedProtectionError::Encryption)?;
         Ok(ProtectedSeed { nonce, ciphertext })
     }
 
-    fn decrypt(&self, protected: &ProtectedSeed) -> Result<[u8; 32], SeedProtectionError> {
+    fn decrypt(
+        &self,
+        protected: &ProtectedSeed,
+        associated_data: &[u8],
+    ) -> Result<[u8; 32], SeedProtectionError> {
         let plaintext = self
             .cipher
             .decrypt(
                 XNonce::from_slice(&protected.nonce),
-                protected.ciphertext.as_ref(),
+                chacha20poly1305::aead::Payload {
+                    msg: protected.ciphertext.as_ref(),
+                    aad: associated_data,
+                },
             )
             .map_err(|_| SeedProtectionError::Decryption)?;
         plaintext
