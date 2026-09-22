@@ -171,7 +171,7 @@ impl RateLimiter {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if buckets.len() >= MAX_TRACKED_KEYS && !buckets.contains_key(key) {
-            evict(&mut buckets, now);
+            let _ = evict(&mut buckets, now);
         }
 
         let bucket = buckets.entry(key.clone()).or_insert(Bucket { tat: now });
@@ -201,10 +201,16 @@ impl RateLimiter {
 /// is worth least. Both decisions are made over at most
 /// `EVICTION_SAMPLE` entries, so the work per call does not grow with the
 /// table.
-fn evict(buckets: &mut HashMap<RateLimitKey, Bucket>, now: Instant) {
+///
+/// Returns how many entries it examined, which is the property that
+/// matters: a test counting only what was *removed* passed with the bound
+/// deleted, because a full scan still removes exactly one entry.
+fn evict(buckets: &mut HashMap<RateLimitKey, Bucket>, now: Instant) -> usize {
     let mut best: Option<(RateLimitKey, Instant)> = None;
+    let mut examined = 0;
 
     for (key, bucket) in buckets.iter().take(EVICTION_SAMPLE) {
+        examined += 1;
         if bucket.tat <= now {
             // Settled: nothing to weigh, take it.
             best = Some((key.clone(), bucket.tat));
@@ -218,6 +224,7 @@ fn evict(buckets: &mut HashMap<RateLimitKey, Bucket>, now: Instant) {
     if let Some((key, _)) = best {
         buckets.remove(&key);
     }
+    examined
 }
 
 #[cfg(test)]
@@ -363,11 +370,17 @@ mod tests {
         }
 
         let before = buckets.len();
-        evict(&mut buckets, now);
+        let examined = evict(&mut buckets, now);
         assert_eq!(
             buckets.len(),
             before - 1,
             "one eviction removes exactly one entry"
+        );
+        // The bound itself. Counting removals alone could not see a full
+        // scan, because a full scan also removes exactly one entry.
+        assert!(
+            examined <= EVICTION_SAMPLE,
+            "eviction examined {examined} of {before} entries; it must look at no more than {EVICTION_SAMPLE}"
         );
     }
 

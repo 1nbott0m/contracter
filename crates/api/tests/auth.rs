@@ -651,9 +651,19 @@ async fn an_internal_database_failure_returns_a_sanitized_500() {
     // Port 1 on the loopback: nothing listens there, and `connect_lazy`
     // means the failure happens at query time, inside the handler, exactly
     // where a production outage would put it.
+    //
+    // `with_acquire_timeout` is set well below the router's own request
+    // timeout (10s, both defaults) and deliberately short. Without it this
+    // test raced three unrelated clocks against each other -- how long the
+    // OS takes to refuse a TCP connect to an unused port, the pool's
+    // acquire timeout, and the router's request timeout -- and on a loaded
+    // machine the router timeout could win, turning a 500 into a 503. The
+    // test must prove the database-error path specifically, not whichever
+    // of two 10-second timeouts happens to fire first.
     let config =
         DatabaseConfig::new("postgresql://contracter:contracter@127.0.0.1:1/contracter".to_owned())
-            .expect("valid database URL");
+            .expect("valid database URL")
+            .with_acquire_timeout(std::time::Duration::from_millis(500));
     let state = AppState::new(Database::connect_lazy(&config), AuthConfig::default());
 
     let response = router(&state)
@@ -850,5 +860,57 @@ async fn the_address_budget_is_charged_before_any_accounts() {
         response.status(),
         StatusCode::TOO_MANY_REQUESTS,
         "the exhausted budget is the address's, so it applies to every login from it"
+    );
+}
+
+/// Per-address budgets, exercised through the real router.
+///
+/// `oneshot` never populates `ConnectInfo`, so every other rate-limit test
+/// in this file runs through the fallback that puts all callers in one
+/// bucket. That means the one piece of wiring that decides whether callers
+/// are told apart -- the peer address reaching the limiter -- was covered
+/// nowhere: replacing the per-address key with a constant left every HTTP
+/// test green. This supplies the address the way the server does, and
+/// checks two addresses really do get independent budgets.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn distinct_addresses_get_independent_budgets() {
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    let state = require_database!().with_auth_rate_limit(RateLimitConfig {
+        burst: 2,
+        refill_interval: std::time::Duration::from_secs(60),
+    });
+
+    let attempt_from = |address: &str| {
+        let mut request = post(
+            "/api/v1/auth/login",
+            json!({ "login": unique_login("peer"), "password": PASSWORD }),
+        );
+        let peer: SocketAddr = address.parse().expect("a socket address");
+        request.extensions_mut().insert(ConnectInfo(peer));
+        router(&state).oneshot(request)
+    };
+
+    // One address spends its whole budget and is then refused.
+    for _ in 0..2 {
+        assert_eq!(
+            attempt_from("198.51.100.1:40000").await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        attempt_from("198.51.100.1:40001").await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the port differs but the address does not, so it is the same caller"
+    );
+
+    // A different address is untouched by the first one's exhaustion. If
+    // the limiter could not tell them apart, this would be 429 as well.
+    assert_eq!(
+        attempt_from("198.51.100.2:40000").await.unwrap().status(),
+        StatusCode::UNAUTHORIZED,
+        "one address exhausting its budget must not lock out another"
     );
 }

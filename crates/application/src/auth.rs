@@ -620,52 +620,65 @@ mod tests {
     /// was dropped, a client that fires requests and closes the socket
     /// would hold unbounded memory while the semaphore reported room --
     /// the exact denial of service the semaphore exists to stop.
+    ///
+    /// Ordered by channels, not by sleeping. An earlier version slept for
+    /// fixed durations and asserted in the gaps, which on a machine running
+    /// Argon2 on every worker -- as this binary does -- is a test that
+    /// eventually fails for reasons unrelated to the behaviour it checks.
+    /// Here the blocking work cannot finish until the test says so, so
+    /// every assertion is ordered by a happens-before rather than a guess.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_abandoned_request_keeps_its_permit_until_its_hash_finishes() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
 
         let permits = Arc::new(Semaphore::new(1));
-        let started = Arc::new(AtomicBool::new(false));
-        let finished = Arc::new(AtomicBool::new(false));
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (finished_tx, finished_rx) = mpsc::channel::<()>();
 
-        let work = {
-            let started = Arc::clone(&started);
-            let finished = Arc::clone(&finished);
-            move || {
-                started.store(true, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(400));
-                finished.store(true, Ordering::SeqCst);
-                Ok::<_, AuthError>(())
-            }
+        let work = move || {
+            started_tx.send(()).expect("the test is listening");
+            // Held here until the test has made its assertions.
+            release_rx.recv().expect("the test releases the work");
+            finished_tx.send(()).expect("the test is listening");
+            Ok::<_, AuthError>(())
         };
 
         let handle = tokio::spawn(run_permitted(Arc::clone(&permits), work));
 
-        // Wait until the blocking work is genuinely under way, so the
-        // permit has been taken and the task spawned.
-        while !started.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        // The permit is taken and the blocking work is genuinely under way.
+        tokio::task::spawn_blocking(move || started_rx.recv().expect("work started"))
+            .await
+            .expect("join");
 
-        // Abandon the request, exactly as a closed connection does.
+        // Abandon the request, exactly as a closed connection does, and
+        // wait until the abort has actually taken effect.
         handle.abort();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
         assert!(
-            !finished.load(Ordering::SeqCst),
-            "the blocking work must still be running for this test to mean anything"
+            handle.await.expect_err("aborted").is_cancelled(),
+            "the request future is gone"
         );
+
         assert_eq!(
             permits.available_permits(),
             0,
             "an abandoned request must not release its permit while its hash is still running"
         );
 
-        // And once the work really finishes, the permit does come back.
-        while !finished.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        // Only now let the work finish; its permit must come back with it.
+        release_tx.send(()).expect("the work is waiting");
+        tokio::task::spawn_blocking(move || finished_rx.recv().expect("work finished"))
+            .await
+            .expect("join");
+
+        // The permit is released as the closure returns, which is a moment
+        // after it sends; yield until the runtime has run that drop.
+        for _ in 0..1_000 {
+            if permits.available_permits() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
             permits.available_permits(),
             1,

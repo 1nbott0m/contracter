@@ -10,14 +10,27 @@ BEGIN
         RAISE EXCEPTION 'reference test failed: rarity rows are missing';
     END IF;
 
-    IF (SELECT count(*) FROM wear_bands) <> 5 OR
-       NOT EXISTS (
-           SELECT 1 FROM wear_bands
-           WHERE code = 'battle_scarred'
-             AND lower_bound = 0.45000000
-             AND upper_bound = 1.00000000
-             AND includes_upper_bound
-       ) THEN
+    -- The five approved bands, checked by code and exact shape rather
+    -- than by table cardinality.
+    --
+    -- This used to require `count(*) = 5`. The integration suites commit
+    -- fixture wear bands of their own, because the HTTP router reads
+    -- through its own pooled connections and cannot see an uncommitted
+    -- row. So scripts/verify.sh passed on a fresh database and failed on
+    -- the next run against the same one -- with an error blaming the
+    -- reference data rather than the previous run's fixtures. The same
+    -- style as the collection check below: assert that what must exist
+    -- does, not that nothing else does.
+    IF (
+        SELECT count(*) FROM wear_bands
+        WHERE (code, lower_bound, upper_bound, includes_upper_bound) IN (
+            ('factory_new',    0.00000000, 0.07000000, false),
+            ('minimal_wear',   0.07000000, 0.15000000, false),
+            ('field_tested',   0.15000000, 0.38000000, false),
+            ('well_worn',      0.38000000, 0.45000000, false),
+            ('battle_scarred', 0.45000000, 1.00000000, true)
+        )
+    ) <> 5 THEN
         RAISE EXCEPTION 'reference test failed: wear bands do not cover the approved model';
     END IF;
 

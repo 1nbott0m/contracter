@@ -789,3 +789,108 @@ fn the_same_item_cannot_be_used_twice() {
     // refuses too rather than averaging a duplicate.
     assert!(calculate_output_float(&inputs, dec!(0.00), dec!(1.00)).is_err());
 }
+
+/// Selection must depend on the outcome set, never on the order it was
+/// passed in.
+///
+/// The only replay test used the same slice in the same order twice, so it
+/// could not see this. Without the sort, the same seeds and nonce would
+/// pick a different item -- and publish a different digest -- depending on
+/// whether the caller used database order or sorted order, and a player
+/// verifying the commitment would correctly conclude the house cheated.
+#[test]
+fn selection_does_not_depend_on_the_order_outcomes_are_given_in() {
+    let inputs = (0..10)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    let outcomes = build_outcomes(
+        &inputs,
+        &[
+            output("a-1", "a", 3, true),
+            output("a-2", "a", 3, true),
+            output("a-3", "a", 3, true),
+            output("a-4", "a", 3, true),
+            output("a-5", "a", 3, true),
+        ],
+    )
+    .expect("build outcomes");
+
+    let seed = [42_u8; 32];
+    let mut reversed = outcomes.clone();
+    reversed.reverse();
+    let mut rotated = outcomes.clone();
+    rotated.rotate_left(2);
+
+    for nonce in 0..50 {
+        let forward = select_outcome(&outcomes, &seed, b"client", nonce).expect("forward");
+        for other in [&reversed, &rotated] {
+            let permuted = select_outcome(other, &seed, b"client", nonce).expect("permuted");
+            assert_eq!(forward.sku_id, permuted.sku_id, "nonce {nonce}: same item");
+            assert_eq!(
+                forward.digest, permuted.digest,
+                "nonce {nonce}: the published digest must not depend on input order either"
+            );
+        }
+    }
+}
+
+/// These three guards are what stop a corrupt catalog row from becoming a
+/// signed quote. Each was mutation-confirmed untested: deleting it left the
+/// whole suite green.
+#[test]
+fn an_input_float_outside_its_catalog_range_is_refused() {
+    let mut inputs = (0..4)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    // The helper's range is 0.10..=0.50, so 0.60 cannot be this item.
+    inputs[0].float = dec!(0.60);
+    let expected = TradeupError::FloatOutOfRange {
+        sku_id: inputs[0].sku_id.clone(),
+    };
+    assert_eq!(
+        build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        calculate_output_float(&inputs, dec!(0.00), dec!(1.00)).unwrap_err(),
+        expected,
+        "the float calculation must refuse it too, not average an impossible value"
+    );
+}
+
+#[test]
+fn a_degenerate_catalog_float_range_is_refused() {
+    // min == max would make the normalisation divide by zero; min > max
+    // would invert it. Neither is a real item.
+    for (min, max) in [(dec!(0.30), dec!(0.30)), (dec!(0.40), dec!(0.20))] {
+        let mut inputs = (0..4)
+            .map(|_| input("in", "a", 2, dec!(0.20)))
+            .collect::<Vec<_>>();
+        inputs[1].min_float = min;
+        inputs[1].max_float = max;
+        assert_eq!(
+            build_outcomes(&inputs, &[output("out", "a", 3, true)]).unwrap_err(),
+            TradeupError::InvalidFloatRange {
+                sku_id: inputs[1].sku_id.clone()
+            },
+            "a range of {min}..{max} must be refused"
+        );
+    }
+}
+
+#[test]
+fn a_candidate_of_the_wrong_rarity_tier_is_refused() {
+    // Inputs are rarity 2, so the only valid tier for a result is 3.
+    let inputs = (0..4)
+        .map(|_| input("in", "a", 2, dec!(0.20)))
+        .collect::<Vec<_>>();
+    for wrong_tier in [2_u8, 4] {
+        assert_eq!(
+            build_outcomes(&inputs, &[output("skip-a-tier", "a", wrong_tier, true)]).unwrap_err(),
+            TradeupError::WrongOutputRarity {
+                sku_id: "skip-a-tier".into()
+            },
+            "a tier-{wrong_tier} candidate must not be awarded for tier-2 inputs"
+        );
+    }
+}

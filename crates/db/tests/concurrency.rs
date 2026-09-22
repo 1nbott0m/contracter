@@ -272,9 +272,23 @@ async fn concurrent_credit_adjustments_with_different_keys_both_settle_independe
     );
 }
 
+/// Serialises the tests in this binary that publish a scarcity snapshot.
+///
+/// A publish is global: it snapshots every covered collection and moves
+/// every collection's current pointer. Two such tests running in parallel
+/// -- which they do, since a binary's tests run concurrently -- therefore
+/// see each other's snapshots, and a test asserting that its collection
+/// points at "the latest of my snapshots" fails whenever the other test
+/// publishes last. That happened: it passed twice by timing and failed on
+/// the third consecutive run. Each test still exercises real concurrency
+/// between its own connections; this only stops the two tests racing each
+/// other, which neither is about.
+static SCARCITY_PUBLISHES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 #[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
 async fn concurrent_scarcity_publishes_leave_current_pointing_at_the_latest_snapshot() {
+    let _serial = SCARCITY_PUBLISHES.lock().await;
     let database = test_database().await;
 
     // Relies on the seed data's `stock_policy_versions` version 1 (see
@@ -362,6 +376,76 @@ async fn concurrent_scarcity_publishes_leave_current_pointing_at_the_latest_snap
         latest_snapshot_id,
         "current_collection_scarcity must point at the most recently created snapshot, \
          not whichever concurrent publish happened to commit last"
+    );
+}
+
+/// The lock itself, observed directly rather than inferred from an outcome.
+///
+/// The test above races two publishes and checks who won. That is a real
+/// race -- both statements reach PostgreSQL on separate connections -- but
+/// its verdict is probabilistic: without the lock the wrong answer appears
+/// only when the earlier snapshot happens to commit last, so on most runs
+/// it would pass anyway. A test that usually passes when the thing it
+/// guards is missing is not guarding it.
+///
+/// This holds the first publish open inside a transaction, so its advisory
+/// lock stays held, and then checks from a third connection that the second
+/// publish is *waiting on a lock* rather than proceeding. That cannot pass
+/// by luck: with the lock removed, the second publish never waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn a_scarcity_publish_waits_on_the_lock_held_by_another() {
+    let _serial = SCARCITY_PUBLISHES.lock().await;
+    let database = test_database().await;
+
+    let mut first = database.begin().await.expect("begin the first publish");
+    let first_snapshot = publish_collection_scarcity_snapshot(&mut *first, "lock-probe-first")
+        .await
+        .expect("the first publish runs and now holds the advisory lock");
+
+    // The second publish, on its own connection, in its own task, so it can
+    // block without blocking this test.
+    let pool = database.pool().clone();
+    let second = tokio::spawn(async move {
+        let mut connection = pool.acquire().await.expect("acquire the second connection");
+        let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *connection)
+            .await
+            .expect("read the second backend pid");
+        let started = tokio::time::Instant::now();
+        let snapshot = publish_collection_scarcity_snapshot(&mut *connection, "lock-probe-second")
+            .await
+            .expect("the second publish completes once the lock is free");
+        (backend, snapshot, started.elapsed())
+    });
+
+    // Wait until the second backend is observably blocked on a lock.
+    let observer = database.pool().clone();
+    let mut blocked = false;
+    for _ in 0..200 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity              WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'                AND query LIKE '%publish_collection_scarcity_snapshot%'                AND pid <> pg_backend_pid()",
+        )
+        .fetch_one(&observer)
+        .await
+        .expect("inspect pg_stat_activity");
+        if waiting > 0 {
+            blocked = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(
+        blocked,
+        "the second publish must wait on the advisory lock the first one holds;          if it never waits, the lock that serialises publishes is missing"
+    );
+
+    first.commit().await.expect("release the lock");
+    let (_, second_snapshot, _) = second.await.expect("join the second publish");
+
+    assert!(
+        second_snapshot.get() > first_snapshot.get(),
+        "the publish that waited ran second and so created the later snapshot"
     );
 }
 

@@ -424,6 +424,22 @@ pub fn server_seed_commitment(server_seed: &[u8; 32]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// The smallest 128-bit draw that can be used without bias.
+///
+/// A draw is reduced modulo `denominator`. If `2^128` is not a multiple of
+/// the denominator, the values above the last whole multiple would make the
+/// low residues slightly more likely than the high ones. Discarding draws
+/// below `2^128 mod denominator` leaves a range whose length is an exact
+/// multiple, so every residue is equally likely.
+///
+/// Separate so it can be tested. The bias it removes is at most
+/// `denominator / 2^128`, far too small for any distribution test to
+/// detect, so the only honest check is on the value itself: a regression
+/// here would otherwise pass every sampling test there could ever be.
+fn rejection_threshold(denominator: u64) -> u128 {
+    (u128::from(denominator)).wrapping_neg() % u128::from(denominator)
+}
+
 pub fn select_outcome(
     outcomes: &[WeightedOutcome],
     server_seed: &[u8; 32],
@@ -442,9 +458,17 @@ pub fn select_outcome(
         return Err(TradeupError::InvalidWeights);
     }
 
+    // Sorted before hashing, so the result depends only on the outcome
+    // set, never on the order a caller happened to pass it in. Without
+    // this the same server seed, client seed and nonce would select a
+    // different item -- and publish a different digest -- depending on
+    // whether the caller used database order or sorted order. A player
+    // replaying the commitment against the documented outcome set would
+    // then compute a different result and correctly conclude the house
+    // had cheated.
     let mut ordered = outcomes.to_vec();
     ordered.sort_by(|a, b| a.sku_id.cmp(&b.sku_id));
-    let threshold = (denominator as u128).wrapping_neg() % denominator as u128;
+    let threshold = rejection_threshold(denominator);
     let mut counter = 0_u64;
     loop {
         let digest = selection_digest(&ordered, server_seed, client_seed, nonce, counter);
@@ -549,4 +573,35 @@ fn checked_weight_sum(outcomes: &[WeightedOutcome]) -> Result<u64, TradeupError>
         sum.checked_add(outcome.weight_numerator)
             .ok_or(TradeupError::InvalidWeights)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The threshold is exactly `2^128 mod d`, computed here independently
+    /// of the implementation's wrapping trick.
+    ///
+    /// Replacing it with zero leaves every behavioural test green, because
+    /// the bias it removes is at most `d / 2^128`. This is the only test
+    /// that can see that regression.
+    #[test]
+    fn the_rejection_threshold_is_two_to_the_128_modulo_the_denominator() {
+        for denominator in [1_u64, 2, 3, 7, 10, 100, 120, 192, 1_000_003, u64::MAX] {
+            let d = u128::from(denominator);
+            // (2^128 - 1) mod d, plus one, mod d: 2^128 mod d without ever
+            // representing 2^128.
+            let expected = (u128::MAX % d + 1) % d;
+            assert_eq!(
+                rejection_threshold(denominator),
+                expected,
+                "denominator {denominator}"
+            );
+            assert!(rejection_threshold(denominator) < d);
+        }
+        // Powers of two divide 2^128, so nothing is ever discarded.
+        assert_eq!(rejection_threshold(64), 0);
+        // And a case that is not: 2^128 mod 3 is 1.
+        assert_eq!(rejection_threshold(3), 1);
+    }
 }

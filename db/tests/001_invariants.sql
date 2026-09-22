@@ -1,6 +1,21 @@
 \set ON_ERROR_STOP on
 
+-- Whether a missing runtime role is a failure or merely a warning.
+--
+-- `db/verify.sh` passes TEST_RUNTIME_ROLE_REQUIRED through as this psql
+-- variable. The Rust integration tests already honoured it; this suite did
+-- not, so the variable that was meant to make a skipped privilege check
+-- loud made the SQL half of the checks no louder at all. A psql variable
+-- cannot be read inside a dollar-quoted DO block, so it is copied into a
+-- session setting the blocks can consult.
+\if :{?runtime_role_required}
+\else
+\set runtime_role_required ''
+\endif
+
 BEGIN;
+
+SELECT set_config('contracter.runtime_role_required', :'runtime_role_required', true);
 
 -- Force allocation of this session's temporary schema before defining
 -- transaction-scoped assertion helpers in pg_temp.
@@ -198,12 +213,21 @@ WHERE public_id IN (
     '10000000-0000-0000-0000-000000000002'
 );
 
+-- The treasury is a singleton, enforced by a partial unique index on the
+-- system kind. This suite rolls back at the end, but the Rust integration
+-- suites commit a treasury of their own, so on any database they have
+-- already run against one exists and inserting a second fails -- which
+-- made scripts/verify.sh pass on a fresh database and fail on the very next
+-- run against the same one. What the assertions below need is that a
+-- treasury exists, not that this suite created it, so an existing one is
+-- used as-is.
 INSERT INTO ledger_accounts (public_id, kind_code, owner_user_id)
 VALUES (
     '30000000-0000-0000-0000-000000000001',
     'system_treasury',
     NULL
-);
+)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO ledger_accounts (public_id, kind_code, owner_user_id)
 SELECT
@@ -587,9 +611,24 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
     THEN
+        -- A psql WARNING does not change the exit status, so on its own
+        -- this was a message a green run could print and still be green.
+        -- When the caller says the role is required, its absence fails.
+        IF current_setting('contracter.runtime_role_required', true) <> '' THEN
+            RAISE EXCEPTION 'contracter_runtime is required (TEST_RUNTIME_ROLE_REQUIRED) but does not exist: every privilege assertion below would pass vacuously';
+        END IF;
         RAISE WARNING 'SKIPPED (not verified): every contracter_runtime privilege assertion in this suite. The role does not exist in this database, so the least-privilege boundary is UNVERIFIED here. Create the runtime roles before treating this run as evidence.';
     ELSE
         RAISE NOTICE 'contracter_runtime exists: privilege assertions below are live.';
+    END IF;
+
+    -- The admin role's assertions carried the same vacuous guard with no
+    -- warning at all, not even the weak one.
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_admin_runtime') THEN
+        IF current_setting('contracter.runtime_role_required', true) <> '' THEN
+            RAISE EXCEPTION 'contracter_admin_runtime is required (TEST_RUNTIME_ROLE_REQUIRED) but does not exist';
+        END IF;
+        RAISE WARNING 'SKIPPED (not verified): contracter_admin_runtime privilege assertions. The role does not exist in this database.';
     END IF;
 END;
 $$;
@@ -720,6 +759,11 @@ BEGIN
     WHERE n.nspname = 'public' AND p.prosecdef AND (r.rolsuper OR r.rolbypassrls);
 
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_definer') THEN
+        -- The most load-bearing assertion in the file, and it self-disabled
+        -- silently whenever the role was absent.
+        IF current_setting('contracter.runtime_role_required', true) <> '' THEN
+            RAISE EXCEPTION 'contracter_definer is required (TEST_RUNTIME_ROLE_REQUIRED) but does not exist: % SECURITY DEFINER function(s) run as their original owner', superuser_owned;
+        END IF;
         RAISE WARNING 'SKIPPED (not verified): definer ownership. Role contracter_definer does not exist, so % SECURITY DEFINER function(s) still run as their original owner.', superuser_owned;
     ELSE
         PERFORM pg_temp.assert_true(

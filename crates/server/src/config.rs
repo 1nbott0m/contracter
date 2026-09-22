@@ -207,6 +207,79 @@ mod tests {
         assert_eq!(router.cors_allowed_origins, vec!["https://app.example"]);
         assert_eq!(router.request_timeout, Duration::from_secs(3));
         assert_eq!(router.max_body_bytes, 4_096);
+
+        // The two settings that do not go through `RouterConfig`, asserted
+        // here too, because they are the same class of setting -- declared,
+        // documented, and easy to leave unread -- and one of them decides
+        // whether the session cookie carries `Secure`.
+        assert!(!config.insecure_cookies());
+        assert_eq!(config.shutdown_drain(), Duration::from_secs(5));
+    }
+
+    /// The parser, end to end, rather than a struct built by hand.
+    ///
+    /// Environment variables are process-global, so everything that sets
+    /// them lives in this one test and restores what it touched; splitting
+    /// it would let two tests race on the same variable.
+    #[test]
+    fn from_env_reads_every_setting() {
+        let names = [
+            "DATABASE_URL",
+            "HOST",
+            "PORT",
+            "INSECURE_COOKIES",
+            "CORS_ALLOWED_ORIGINS",
+            "REQUEST_TIMEOUT_SECS",
+            "MAX_BODY_BYTES",
+            "SHUTDOWN_DRAIN_SECS",
+        ];
+        let saved: Vec<_> = names
+            .iter()
+            .map(|name| (*name, std::env::var(name).ok()))
+            .collect();
+
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgresql://from-env");
+            std::env::set_var("HOST", "127.0.0.1");
+            std::env::set_var("PORT", "9090");
+            std::env::set_var("INSECURE_COOKIES", "TRUE");
+            // A trailing comma and a blank entry are not malformed origins.
+            std::env::set_var(
+                "CORS_ALLOWED_ORIGINS",
+                " https://a.example , ,https://b.example,",
+            );
+            std::env::set_var("REQUEST_TIMEOUT_SECS", "7");
+            std::env::set_var("MAX_BODY_BYTES", "8192");
+            std::env::set_var("SHUTDOWN_DRAIN_SECS", "11");
+        }
+
+        let config = ServerConfig::from_env();
+
+        for (name, value) in saved {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+
+        let config = config.expect("a valid environment parses");
+        assert_eq!(config.database_url(), "postgresql://from-env");
+        assert_eq!(config.bind_addr().port(), 9090);
+        assert!(
+            config.insecure_cookies(),
+            "the opt-out is case-insensitive on its exact value"
+        );
+        assert_eq!(config.shutdown_drain(), Duration::from_secs(11));
+
+        let router = config.router_config();
+        assert_eq!(
+            router.cors_allowed_origins,
+            vec!["https://a.example", "https://b.example"]
+        );
+        assert_eq!(router.request_timeout, Duration::from_secs(7));
+        assert_eq!(router.max_body_bytes, 8_192);
     }
 
     /// A numeric setting that is present and unusable is a mistake worth
