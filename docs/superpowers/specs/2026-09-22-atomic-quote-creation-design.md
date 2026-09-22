@@ -18,20 +18,22 @@ encrypted seed, or runtime key.
 ## Seed lifecycle
 
 1. The application generates a fresh 32-byte server seed and derives its
-   commitment before the database call.
+   commitment before it receives item IDs or a client seed.
 2. `EnvironmentSeedProtector` encrypts the seed with the runtime-only
    `QUOTE_SEED_KEY`, producing a unique XChaCha20-Poly1305 nonce and
    ciphertext.
-3. The creation transaction stores the commitment plus the nonce and
-   ciphertext in a table keyed one-to-one to the commitment.
+3. The allocation transaction stores the commitment plus the nonce and
+   ciphertext in a table keyed one-to-one to the commitment, then returns an
+   owner-bound public allocation ID that expires after fifteen seconds.
 4. A later controlled reveal decrypts the ciphertext and inserts the existing
    append-only revelation event. Plaintext seed is never persisted before that
    event.
 
 ## Atomic creation transaction
 
-A new security-definer PostgreSQL function accepts server-derived immutable
-fields and performs the following in one transaction:
+A new security-definer PostgreSQL function consumes a previously allocated,
+unexpired commitment and accepts server-derived immutable fields in one
+transaction:
 
 1. validates exactly one owner and four through ten distinct owned input IDs;
 2. locks eligible inventory rows and rejects retired, locked, or foreign items;
@@ -39,8 +41,8 @@ fields and performs the following in one transaction:
    possible outcome only when stock is available;
 4. locks and increases global, SKU, and collection risk exposure only if the
    active risk policy still permits the proposal;
-5. inserts the commitment, encrypted seed envelope, allocation, quote, inputs,
-   outcomes, candidate reservations, and exposure records;
+5. inserts the quote, inputs, outcomes, candidate reservations, and exposure
+   records; it never creates or replaces a commitment;
 6. returns the new quote ID.
 
 Any rejected check raises an error and rolls back every preceding insert or
@@ -56,10 +58,13 @@ aligned so it never decrements a reservation that was not created.
 
 ## API and application
 
-`POST /api/v1/me/quotes` accepts only ordered public inventory IDs and a
-client seed. The server computes the result; clients cannot provide prices,
-probabilities, candidates, commitments, signatures, or reserve values. The
-existing active-quote read and accept endpoints remain owner-bound.
+`POST /api/v1/me/quote-allocations` creates a commitment before receiving
+request details. `POST /api/v1/me/quotes` accepts that allocation ID plus only
+ordered public inventory IDs and a client seed. The server computes the
+result; clients cannot provide prices, probabilities, candidates, commitments,
+signatures, or reserve values. Candidate inventory must have exactly the
+computed canonical float; otherwise quote creation fails closed. The existing
+active-quote read and accept endpoints remain owner-bound.
 
 ## Error handling
 
