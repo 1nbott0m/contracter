@@ -14,6 +14,10 @@ cardinality(p_locked_input_ids) <> 10 OR
 cardinality(p_locked_input_ids) NOT BETWEEN 4 AND 10 OR
        (SELECT count(DISTINCT requested_input.input_id)
           FROM unnest(p_locked_input_ids) AS requested_input(input_id)) NOT BETWEEN 4 AND 10$text$;
+    old_quote_count constant text :=
+        '(SELECT count(*) FROM public.quote_inputs WHERE quote_id = p_quote_id) <> 10 OR';
+    new_quote_count constant text :=
+        '(SELECT count(*) FROM public.quote_inputs WHERE quote_id = p_quote_id) NOT BETWEEN 4 AND 10 OR';
 BEGIN
     SELECT pg_get_functiondef(
         'public.finalize_contract(bigint, bigint[], uuid)'::regprocedure
@@ -30,6 +34,7 @@ BEGIN
     END IF;
 
     definition := replace(definition, old_predicate, new_predicate);
+    definition := replace(definition, old_quote_count, new_quote_count);
     definition := replace(
         definition,
         'contract finalization requires exactly ten unique inputs',
