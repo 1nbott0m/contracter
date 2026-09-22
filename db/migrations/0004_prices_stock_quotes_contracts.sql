@@ -693,7 +693,7 @@ BEGIN
         RAISE EXCEPTION 'quote uses a stale risk snapshot' USING ERRCODE = '23514';
     END IF;
 
-    IF (SELECT count(*) FROM public.quote_inputs WHERE quote_id = p_quote_id) NOT BETWEEN 4 AND 10 OR
+    IF (SELECT count(*) FROM public.quote_inputs WHERE quote_id = p_quote_id) <> 10 OR
        EXISTS (
            SELECT 1 FROM public.quote_inputs AS quote_input
             WHERE quote_input.quote_id = p_quote_id
