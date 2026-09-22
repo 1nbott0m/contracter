@@ -29,7 +29,8 @@ async fn run() -> Result<(), StartupError> {
     database.health_check().await?;
 
     let mut state = AppState::new(database, AuthConfig::default())
-        .with_seed_protector(Arc::new(config.seed_protector().clone()));
+        .with_seed_protector(Arc::new(config.seed_protector().clone()))
+        .with_quote_signer(Arc::new(config.quote_signer().clone()));
     if config.insecure_cookies() {
         tracing::warn!(
             "INSECURE_COOKIES is set: session cookies omit the Secure attribute,              which is only safe for local HTTP development"
