@@ -46,8 +46,8 @@ pub use pricing::{
     reconcile_current_valuations, reconcile_published_valuation_snapshots,
 };
 pub use quotes::{
-    QuoteInput, QuoteOutcome, TradeupQuote, find_active_quote_for_user, find_tradeup_quote,
-    list_quote_inputs, list_quote_outcomes,
+    QuoteInput, QuoteOutcome, SeedAllocationRequest, TradeupQuote, allocate_seed_for_user,
+    find_active_quote_for_user, find_tradeup_quote, list_quote_inputs, list_quote_outcomes,
 };
 pub use scarcity::{
     CollectionScarcity, CollectionScarcityDrift, CollectionScarcitySnapshotItem,

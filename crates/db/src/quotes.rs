@@ -65,6 +65,36 @@ pub struct QuoteOutcome {
     pub candidate_inventory_item_public_id: PublicId,
 }
 
+/// Server-produced payload for the first phase of a provably-fair quote.
+/// All byte fields are validated again by PostgreSQL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeedAllocationRequest {
+    pub user_id: UserId,
+    pub commitment_hash: [u8; 32],
+    pub encoding_version: String,
+    pub nonce: [u8; 24],
+    pub ciphertext: [u8; 48],
+}
+
+pub async fn allocate_seed_for_user<'e, E>(
+    executor: E,
+    request: &SeedAllocationRequest,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_scalar("SELECT allocate_seed_for_user($1, $2, $3, $4, $5)")
+            .bind(request.user_id)
+            .bind(request.commitment_hash.as_slice())
+            .bind(&request.encoding_version)
+            .bind(request.nonce.as_slice())
+            .bind(request.ciphertext.as_slice())
+            .fetch_one(executor)
+            .await?,
+    )
+}
+
 pub async fn find_tradeup_quote<'e, E>(
     executor: E,
     public_id: PublicId,
