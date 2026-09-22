@@ -19,6 +19,11 @@ BEGIN
         'public.finalize_contract(bigint, bigint[], uuid)'::regprocedure
     ) INTO definition;
 
+    IF position('cardinality(p_locked_input_ids) NOT BETWEEN 4 AND 10' IN definition) > 0 AND
+       position('contract finalization requires between 4 and 10 unique inputs' IN definition) > 0 THEN
+        RETURN;
+    END IF;
+
     IF position(old_predicate IN definition) = 0 OR
        position('contract finalization requires exactly ten unique inputs' IN definition) = 0 THEN
         RAISE EXCEPTION 'cannot upgrade finalize_contract cardinality invariant safely';
