@@ -6,6 +6,7 @@ use application::auth::AuthConfig;
 use application::quote_signing::QuoteSigner;
 use config::ServerConfig;
 use db::{Database, DatabaseConfig};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -27,7 +28,8 @@ async fn run() -> Result<(), StartupError> {
     // rather than discovering that only when the first request arrives.
     database.health_check().await?;
 
-    let mut state = AppState::new(database, AuthConfig::default());
+    let mut state = AppState::new(database, AuthConfig::default())
+        .with_seed_protector(Arc::new(config.seed_protector().clone()));
     if config.insecure_cookies() {
         tracing::warn!(
             "INSECURE_COOKIES is set: session cookies omit the Secure attribute,              which is only safe for local HTTP development"

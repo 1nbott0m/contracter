@@ -74,6 +74,10 @@ impl ServerConfig {
     pub fn quote_signer(&self) -> &EnvironmentQuoteSigner {
         &self.quote_signer
     }
+
+    pub fn seed_protector(&self) -> &EnvironmentSeedProtector {
+        &self.seed_protector
+    }
 }
 
 impl fmt::Debug for ServerConfig {

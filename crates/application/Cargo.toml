@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 db.workspace = true
+economy-core.workspace = true
 thiserror.workspace = true
 argon2 = { version = "0.5", features = ["std"] }
 base64 = "0.22"

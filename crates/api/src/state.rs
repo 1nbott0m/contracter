@@ -1,5 +1,7 @@
 use application::auth::AuthConfig;
+use application::seed_protection::SeedProtector;
 use db::Database;
+use std::sync::Arc;
 
 use crate::session_cookie::SessionCookiePolicy;
 
@@ -11,6 +13,7 @@ pub struct AppState {
     database: Database,
     auth_config: AuthConfig,
     secure_cookies: bool,
+    seed_protector: Option<Arc<dyn SeedProtector>>,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
             database,
             auth_config,
             secure_cookies: true,
+            seed_protector: None,
         }
     }
 
@@ -29,6 +33,16 @@ impl AppState {
     pub const fn with_insecure_cookies(mut self) -> Self {
         self.secure_cookies = false;
         self
+    }
+
+    #[must_use]
+    pub fn with_seed_protector(mut self, protector: Arc<dyn SeedProtector>) -> Self {
+        self.seed_protector = Some(protector);
+        self
+    }
+
+    pub fn seed_protector(&self) -> Option<&Arc<dyn SeedProtector>> {
+        self.seed_protector.as_ref()
     }
 
     pub const fn database(&self) -> &Database {

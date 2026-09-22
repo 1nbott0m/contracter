@@ -1,4 +1,7 @@
-use db::{Database, DatabaseError, PublicId, UserId};
+use crate::seed_protection::{SeedProtectionError, SeedProtector};
+use db::{Database, DatabaseError, PublicId, SeedAllocationRequest, UserId};
+use economy_core::tradeup::server_seed_commitment;
+use rand::RngCore;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -9,12 +12,49 @@ pub enum QuoteError {
     Inconsistent,
     #[error("quote cannot be accepted")]
     NotAcceptable,
+    #[error("seed protection failed")]
+    SeedProtection(#[from] SeedProtectionError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
 }
 
 pub struct AcceptedQuote {
     pub contract_public_id: PublicId,
+}
+
+pub struct SeedAllocation {
+    pub public_id: PublicId,
+    pub commitment: [u8; 32],
+}
+
+pub async fn allocate_seed(
+    database: &Database,
+    owner: UserId,
+    protector: &impl SeedProtector,
+) -> Result<SeedAllocation, QuoteError> {
+    let mut server_seed = [0_u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut server_seed);
+    let commitment = server_seed_commitment(&server_seed);
+    let protected = protector.encrypt(&server_seed, &commitment)?;
+    let ciphertext: [u8; 48] = protected
+        .ciphertext
+        .try_into()
+        .map_err(|_| QuoteError::SeedProtection(SeedProtectionError::Encryption))?;
+    let public_id = db::allocate_seed_for_user(
+        database.pool(),
+        &SeedAllocationRequest {
+            user_id: owner,
+            commitment_hash: commitment,
+            encoding_version: "contracter/server-seed/v1".to_owned(),
+            nonce: protected.nonce,
+            ciphertext,
+        },
+    )
+    .await?;
+    Ok(SeedAllocation {
+        public_id,
+        commitment,
+    })
 }
 
 /// Accepts a quote through the database's owner-bound finalization function.
