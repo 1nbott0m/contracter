@@ -12,6 +12,8 @@ pub enum QuoteError {
     Inconsistent,
     #[error("quote cannot be accepted")]
     NotAcceptable,
+    #[error("an active quote allocation already exists")]
+    ActiveAllocation,
     #[error("seed protection failed")]
     SeedProtection(#[from] SeedProtectionError),
     #[error(transparent)]
@@ -30,7 +32,7 @@ pub struct SeedAllocation {
 pub async fn allocate_seed(
     database: &Database,
     owner: UserId,
-    protector: &impl SeedProtector,
+    protector: &(impl SeedProtector + ?Sized),
 ) -> Result<SeedAllocation, QuoteError> {
     let mut server_seed = [0_u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut server_seed);
@@ -50,7 +52,11 @@ pub async fn allocate_seed(
             ciphertext,
         },
     )
-    .await?;
+    .await
+    .map_err(|error| match error.database_code().as_deref() {
+        Some("23505") => QuoteError::ActiveAllocation,
+        _ => QuoteError::Database(error),
+    })?;
     Ok(SeedAllocation {
         public_id,
         commitment,

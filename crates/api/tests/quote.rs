@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use api::{AppState, RouterConfig, SECURE_SESSION_COOKIE, build_router};
 use application::auth::{AuthConfig, SecretToken};
+use application::seed_protection::EnvironmentSeedProtector;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
@@ -11,13 +12,17 @@ use serde_json::Value;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+const TEST_SEED_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+
 async fn test_state() -> AppState {
     let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let database = Database::connect(&DatabaseConfig::new(url).expect("valid database URL"))
         .await
         .expect("connect to isolated PostgreSQL");
     database.migrate().await.expect("apply migrations");
-    AppState::new(database, AuthConfig::default())
+    AppState::new(database, AuthConfig::default()).with_seed_protector(std::sync::Arc::new(
+        EnvironmentSeedProtector::from_base64url(TEST_SEED_KEY).expect("valid test seed key"),
+    ))
 }
 
 fn router(state: &AppState) -> axum::Router {
@@ -330,6 +335,76 @@ async fn quote_acceptance_requires_an_authenticated_session_before_touching_the_
     let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["error"]["code"], "UNAUTHORIZED");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn owner_allocates_an_encrypted_seed_without_secret_material_in_the_response() {
+    let state = test_state().await;
+    let (owner_id, owner_cookie) = user_session(&state).await;
+
+    let first_response = router(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/me/quote-allocations")
+                .header(header::COOKIE, owner_cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_body = body_json(first_response).await;
+    let first_id = Uuid::parse_str(first_body["allocation_id"].as_str().unwrap()).unwrap();
+    assert_eq!(first_body["commitment"].as_array().unwrap().len(), 32);
+    assert!(first_body.get("server_seed").is_none());
+    assert!(first_body.get("nonce").is_none());
+    assert!(first_body.get("ciphertext").is_none());
+
+    let stored: (i32, i32, bool) = sqlx::query_as(
+        "SELECT octet_length(envelope.nonce), octet_length(envelope.ciphertext), \
+                allocation.released_at IS NULL \
+         FROM seed_allocations allocation \
+         JOIN seed_secret_envelopes envelope ON envelope.commitment_id = allocation.commitment_id \
+         WHERE allocation.public_id = $1 AND allocation.user_id = $2",
+    )
+    .bind(first_id)
+    .bind(owner_id)
+    .fetch_one(state.database().pool())
+    .await
+    .expect("encrypted seed envelope is stored");
+    assert_eq!(stored, (24, 48, true));
+
+    let second_response = router(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/me/quote-allocations")
+                .header(header::COOKIE, owner_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_response.status(), StatusCode::CONFLICT);
+    let second_body = body_json(second_response).await;
+    assert_eq!(second_body["error"]["code"], "CONFLICT");
+    let serialized_error = serde_json::to_string(&second_body).unwrap();
+    for forbidden in ["sql", "constraint", "seed", "nonce", "ciphertext"] {
+        assert!(
+            !serialized_error.to_lowercase().contains(forbidden),
+            "conflict response leaked {forbidden}"
+        );
+    }
+
+    let first_is_active: bool =
+        sqlx::query_scalar("SELECT released_at IS NULL FROM seed_allocations WHERE public_id = $1")
+            .bind(first_id)
+            .fetch_one(state.database().pool())
+            .await
+            .expect("first allocation remains the active concurrency gate");
+    assert!(first_is_active);
 }
 
 #[tokio::test]

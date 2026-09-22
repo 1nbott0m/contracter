@@ -19,6 +19,29 @@ pub struct QuoteResponse {
     pub inputs: Vec<QuoteInputResponse>,
     pub outcomes: Vec<QuoteOutcomeResponse>,
 }
+
+#[derive(Serialize)]
+pub struct SeedAllocationResponse {
+    pub allocation_id: uuid::Uuid,
+    pub commitment: [u8; 32],
+}
+
+/// `POST /api/v1/me/quote-allocations` fixes a server-seed commitment before
+/// any client seed or inventory item IDs are submitted.
+pub async fn allocate(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<Json<SeedAllocationResponse>, ApiError> {
+    let protector = state
+        .seed_protector()
+        .ok_or_else(|| ApiError::service_unavailable("Quote creation is unavailable"))?;
+    let allocation =
+        quote::allocate_seed(state.database(), caller.user_id, protector.as_ref()).await?;
+    Ok(Json(SeedAllocationResponse {
+        allocation_id: allocation.public_id.get(),
+        commitment: allocation.commitment,
+    }))
+}
 #[derive(Serialize)]
 pub struct QuoteInputResponse {
     pub position: i16,

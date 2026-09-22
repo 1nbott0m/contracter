@@ -172,6 +172,7 @@ impl From<application::quote::QuoteError> for ApiError {
                 internal(&error, "inconsistent quote data")
             }
             application::quote::QuoteError::NotAcceptable => Self::Conflict(error.to_string()),
+            application::quote::QuoteError::ActiveAllocation => Self::Conflict(error.to_string()),
             application::quote::QuoteError::SeedProtection(ref cause) => {
                 internal(cause, "quote seed protection failed")
             }
