@@ -12,5 +12,6 @@ pub mod market;
 pub mod pagination;
 pub mod quote;
 pub mod quote_signing;
+pub mod seed_protection;
 
 pub use health::{ReadinessError, check_readiness};
