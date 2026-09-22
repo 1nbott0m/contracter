@@ -1,6 +1,7 @@
 use std::{fmt, net::SocketAddr};
 
 use application::quote_signing::{EnvironmentQuoteSigner, QuoteSigningError};
+use application::seed_protection::{EnvironmentSeedProtector, SeedProtectionError};
 
 /// Typed server configuration, read once at startup. Fails fast (returns
 /// `Err`, never panics) on missing or malformed values -- there are no
@@ -12,6 +13,7 @@ pub struct ServerConfig {
     log_filter: String,
     insecure_cookies: bool,
     quote_signer: EnvironmentQuoteSigner,
+    seed_protector: EnvironmentSeedProtector,
 }
 
 impl ServerConfig {
@@ -25,6 +27,8 @@ impl ServerConfig {
         let database_url = required_value("DATABASE_URL", &mut value)?;
         let quote_signing_key = required_value("QUOTE_SIGNING_KEY", &mut value)?;
         let quote_signer = EnvironmentQuoteSigner::from_base64url(&quote_signing_key)?;
+        let quote_seed_key = required_value("QUOTE_SEED_KEY", &mut value)?;
+        let seed_protector = EnvironmentSeedProtector::from_base64url(&quote_seed_key)?;
 
         let host = value("HOST").unwrap_or_else(|| "127.0.0.1".to_owned());
         let port_value = value("PORT").unwrap_or_else(|| "8080".to_owned());
@@ -47,6 +51,7 @@ impl ServerConfig {
             log_filter,
             insecure_cookies,
             quote_signer,
+            seed_protector,
         })
     }
 
@@ -80,6 +85,7 @@ impl fmt::Debug for ServerConfig {
             .field("log_filter", &self.log_filter)
             .field("insecure_cookies", &self.insecure_cookies)
             .field("quote_signer", &self.quote_signer)
+            .field("seed_protector", &self.seed_protector)
             .finish()
     }
 }
@@ -103,16 +109,35 @@ mod tests {
     }
 
     #[test]
-    fn debug_output_does_not_reveal_quote_signing_key() {
-        let private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    fn quote_seed_key_is_required_at_startup() {
+        let error = ServerConfig::from_values(|name| match name {
+            "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
+            "QUOTE_SIGNING_KEY" => Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()),
+            _ => None,
+        })
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingEnvVar("QUOTE_SEED_KEY")
+        ));
+    }
+
+    #[test]
+    fn debug_output_does_not_reveal_server_secrets() {
+        let quote_signing_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let quote_seed_key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
         let config = ServerConfig::from_values(|name| match name {
             "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
-            "QUOTE_SIGNING_KEY" => Some(private_key.to_owned()),
+            "QUOTE_SIGNING_KEY" => Some(quote_signing_key.to_owned()),
+            "QUOTE_SEED_KEY" => Some(quote_seed_key.to_owned()),
             _ => None,
         })
         .unwrap();
 
-        assert!(!format!("{config:?}").contains(private_key));
+        let debug = format!("{config:?}");
+        assert!(!debug.contains(quote_signing_key));
+        assert!(!debug.contains(quote_seed_key));
     }
 }
 
@@ -133,4 +158,6 @@ pub enum ConfigError {
     InvalidBindAddress { host: String, port: u16 },
     #[error(transparent)]
     QuoteSigning(#[from] QuoteSigningError),
+    #[error(transparent)]
+    SeedProtection(#[from] SeedProtectionError),
 }

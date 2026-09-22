@@ -13,6 +13,7 @@ application = { path = "crates/application" }
 api = { path = "crates/api" }
 rust_decimal = "1"
 ed25519-dalek = "2"
+chacha20poly1305 = "0.10"
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
