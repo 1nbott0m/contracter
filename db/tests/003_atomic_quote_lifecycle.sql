@@ -22,7 +22,7 @@ BEGIN
       VALUES ('atomic-v1',clock_timestamp()) RETURNING id INTO snapshot;
     INSERT INTO valuation_snapshot_items(snapshot_id,sku_id,verified_price_microcredits,
         source_code,window_days,valid_sale_count,evidence_cutoff_at,evidence_digest)
-      VALUES(snapshot,sku,100,'market_csgo',7,20,clock_timestamp(),decode(repeat('11',32),'hex'))
+        VALUES(snapshot,sku,20000000,'market_csgo',7,20,clock_timestamp(),decode(repeat('11',32),'hex'))
       RETURNING id INTO valuation;
     PERFORM publish_valuation_snapshot(snapshot);
     INSERT INTO stock_policy_versions(version,activated_at)
@@ -33,7 +33,7 @@ BEGIN
       VALUES (3001,1,1,1,1,0,1,clock_timestamp()) RETURNING id INTO risk_policy;
     INSERT INTO quote_signing_keys(public_key,activated_at)
       VALUES(decode(repeat('22',32),'hex'),clock_timestamp()) RETURNING id INTO key_id;
-    UPDATE risk_state SET risk_policy_version_id=risk_policy,liquid_reserve_microcredits=1000000;
+    UPDATE risk_state SET risk_policy_version_id=risk_policy,liquid_reserve_microcredits=1000000000;
     INSERT INTO warehouse_stock(sku_id,available_units) VALUES(sku,2);
     FOR i IN 1..6 LOOP
         INSERT INTO inventory_items(sku_id,canonical_float) VALUES(sku,0.02) RETURNING id INTO item;
@@ -47,7 +47,7 @@ BEGIN
             outcomes := outcomes || jsonb_build_object('sku_id',sku,
                 'candidate_inventory_item_id',item,'valuation_snapshot_item_id',valuation,
                 'probability_numerator',1,'probability_denominator',2,
-                'output_float',0.02,'buyback_microcredits',100);
+                'output_float',0.02,'buyback_microcredits',80000000);
         END IF;
     END LOOP;
     allocation := allocate_seed_for_user(u,decode(repeat('33',32),'hex'),'v1',
@@ -55,9 +55,9 @@ BEGIN
     payload := jsonb_build_object('public_id',gen_random_uuid(),'valuation_snapshot_id',snapshot,
         'stock_policy_version_id',stock_policy,'risk_policy_version_id',risk_policy,
         'signing_key_id',key_id,'formula_version','atomic-v1','client_seed','abcd','nonce',0,
-        'verified_input_value_microcredits',400,'expected_buyback_microcredits',100,
-        'quote_total_microcredits',400,'adjustment_microcredits',0,
-        'maximum_exposure_microcredits',100,'ordered_outcome_digest',repeat('66',32),
+        'verified_input_value_microcredits',80000000,'expected_buyback_microcredits',80000000,
+        'quote_total_microcredits',80000000,'adjustment_microcredits',0,
+        'maximum_exposure_microcredits',80000000,'ordered_outcome_digest',repeat('66',32),
         'signature',repeat('77',64),'selected_outcome_position',1,
         'created_at',clock_timestamp(),'expires_at',clock_timestamp()+interval '45 seconds');
 
@@ -95,8 +95,8 @@ BEGIN
     EXCEPTION WHEN check_violation THEN failed := true;
     END;
     IF NOT failed THEN RAISE EXCEPTION 'insufficient global risk capacity accepted'; END IF;
-    UPDATE risk_state SET liquid_reserve_microcredits=1000000;
-    INSERT INTO risk_sku_exposures(sku_id,liability_microcredits) VALUES(sku,999901);
+    UPDATE risk_state SET liquid_reserve_microcredits=1000000000;
+    INSERT INTO risk_sku_exposures(sku_id,liability_microcredits) VALUES(sku,999901000);
     failed := false;
     BEGIN
         PERFORM create_quote_for_user(u,allocation,payload,inputs,outcomes);
@@ -104,7 +104,7 @@ BEGIN
     END;
     IF NOT failed THEN RAISE EXCEPTION 'insufficient SKU risk capacity accepted'; END IF;
     UPDATE risk_sku_exposures SET liability_microcredits=0 WHERE sku_id=sku;
-    INSERT INTO risk_collection_exposures(collection_id,liability_microcredits) VALUES(c,999901);
+    INSERT INTO risk_collection_exposures(collection_id,liability_microcredits) VALUES(c,999901000);
     failed := false;
     BEGIN
         PERFORM create_quote_for_user(u,allocation,payload,inputs,outcomes);
@@ -171,7 +171,7 @@ BEGIN
       VALUES(snapshot,'atomic-v1',clock_timestamp()) RETURNING id INTO newer_snapshot;
     INSERT INTO valuation_snapshot_items(snapshot_id,sku_id,verified_price_microcredits,
         source_code,window_days,valid_sale_count,evidence_cutoff_at,evidence_digest)
-      VALUES(newer_snapshot,sku,101,'market_csgo',7,20,clock_timestamp(),decode(repeat('12',32),'hex'))
+        VALUES(newer_snapshot,sku,20000000,'market_csgo',7,20,clock_timestamp(),decode(repeat('12',32),'hex'))
       RETURNING id INTO newer_valuation;
     PERFORM publish_valuation_snapshot(newer_snapshot);
     IF (SELECT status_code FROM tradeup_quotes WHERE public_id=q)<>'invalidated' OR
@@ -182,7 +182,7 @@ BEGIN
        EXISTS(SELECT 1 FROM user_active_operations WHERE user_id=u) THEN
         RAISE EXCEPTION 'repricing leaked reservations';
     END IF;
-    payload := payload || jsonb_build_object('valuation_snapshot_id',newer_snapshot,'verified_input_value_microcredits',404);
+    payload := payload || jsonb_build_object('valuation_snapshot_id',newer_snapshot,'verified_input_value_microcredits',80000000);
     SELECT jsonb_agg(x || jsonb_build_object('valuation_snapshot_item_id',newer_valuation)) INTO inputs
       FROM jsonb_array_elements(inputs) AS e(x);
     SELECT jsonb_agg(x || jsonb_build_object('valuation_snapshot_item_id',newer_valuation)) INTO outcomes
