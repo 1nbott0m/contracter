@@ -2,6 +2,7 @@ use crate::seed_protection::{SeedProtectionError, SeedProtector};
 use db::{Database, DatabaseError, PublicId, SeedAllocationRequest, UserId};
 use economy_core::tradeup::server_seed_commitment;
 use rand::RngCore;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -22,6 +23,64 @@ pub enum QuoteError {
     SeedProtection(#[from] SeedProtectionError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
+}
+
+/// Decrypts the owner-bound envelope returned by the database reader.  The
+/// lengths and commitment are checked here as a second boundary: malformed
+/// database data must never reach the deterministic trade-up algorithm.
+pub fn decrypt_server_seed(
+    envelope: &db::SeedEnvelope,
+    protector: &(impl SeedProtector + ?Sized),
+) -> Result<[u8; 32], QuoteError> {
+    let commitment: [u8; 32] = envelope
+        .commitment_hash
+        .as_slice()
+        .try_into()
+        .map_err(|_| QuoteError::Inconsistent)?;
+    let nonce: [u8; 24] = envelope
+        .nonce
+        .as_slice()
+        .try_into()
+        .map_err(|_| QuoteError::Inconsistent)?;
+    let ciphertext: [u8; 48] = envelope
+        .ciphertext
+        .as_slice()
+        .try_into()
+        .map_err(|_| QuoteError::Inconsistent)?;
+    let seed = protector.decrypt(
+        &crate::seed_protection::ProtectedSeed {
+            nonce,
+            ciphertext: ciphertext.to_vec(),
+        },
+        &commitment,
+    )?;
+    if server_seed_commitment(&seed) != commitment {
+        return Err(QuoteError::Inconsistent);
+    }
+    Ok(seed)
+}
+
+/// Canonical digest input for a quote proposal.  Length-prefixing removes
+/// ambiguity between variable-length UUID/decimal/text fields and keeps the
+/// signed representation independent of JSON key ordering.
+pub fn canonical_quote_digest(
+    allocation_id: PublicId,
+    client_seed: &[u8],
+    ordered_outcome_digest: &[u8; 32],
+    formula_version: &str,
+) -> [u8; 32] {
+    let mut bytes = Vec::with_capacity(128 + client_seed.len() + formula_version.len());
+    bytes.extend_from_slice(b"contracter/quote/v1\0");
+    for field in [
+        allocation_id.get().as_bytes().as_slice(),
+        client_seed,
+        ordered_outcome_digest,
+        formula_version.as_bytes(),
+    ] {
+        bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(field);
+    }
+    Sha256::digest(bytes).into()
 }
 
 /// The entire client-controlled quote input. Prices, candidates, weights,
