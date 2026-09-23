@@ -100,6 +100,8 @@ pub struct QuoteProposalProjection {
     pub catalog_item_id: crate::CatalogItemId,
     pub collection_id: crate::CollectionId,
     pub rarity_code: String,
+    pub candidate_min_float: Decimal,
+    pub candidate_max_float: Decimal,
     pub min_float: Decimal,
     pub max_float: Decimal,
     pub valuation_snapshot_id: ValuationSnapshotId,
@@ -397,7 +399,7 @@ pub async fn read_quote_candidate_projection<'e, E>(
 where
     E: Executor<'e, Database = Postgres>,
 {
-    Ok(sqlx::query_as("SELECT inventory_item_id, inventory_item_public_id, sku_id, sku_public_id, catalog_item_id, collection_id, rarity_code, canonical_float, valuation_snapshot_item_id, verified_price_microcredits, warehouse_available_units, warehouse_reserved_units, sku_liability_microcredits, sku_reserved_units, collection_liability_microcredits, scarcity_weight_numerator, scarcity_weight_denominator FROM read_quote_candidate_projection($1,$2,$3,$4)").bind(user_id).bind(allocation_public_id).bind(collection_id).bind(rarity_code).fetch_all(executor).await?)
+    Ok(sqlx::query_as("SELECT inventory_item_id, inventory_item_public_id, sku_id, sku_public_id, catalog_item_id, collection_id, rarity_code, candidate_min_float, candidate_max_float, canonical_float, valuation_snapshot_item_id, verified_price_microcredits, warehouse_available_units, warehouse_reserved_units, sku_liability_microcredits, sku_reserved_units, collection_liability_microcredits, scarcity_weight_numerator, scarcity_weight_denominator FROM read_quote_candidate_projection($1,$2,$3,$4)").bind(user_id).bind(allocation_public_id).bind(collection_id).bind(rarity_code).fetch_all(executor).await?)
 }
 
 pub async fn find_tradeup_quote<'e, E>(
