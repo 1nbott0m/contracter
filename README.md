@@ -18,7 +18,9 @@
 
 ## Переменные окружения и запуск
 
-Скопируйте [.env.example](.env.example) в игнорируемый локальный файл и подставьте значения только локально. Сервер требует `DATABASE_URL`; `HOST`, `PORT` и `LOG_FILTER` имеют безопасные значения по умолчанию. `INSECURE_COOKIES=true` допустим только для локального HTTP: в обычном режиме cookie имеют `Secure` и `__Host-` защиту.
+Скопируйте [.env.example](.env.example) в игнорируемый локальный файл и подставьте значения только локально. Сервер требует `DATABASE_URL`; `HOST`, `PORT`, `LOG_FILTER` и `RATE_LIMIT_BURST=30` имеют безопасные значения по умолчанию. `INSECURE_COOKIES=true` допустим только для локального HTTP: в обычном режиме cookie имеют `Secure` и `__Host-` защиту.
+
+Production-развёртывание должно завершать TLS на доверенном reverse proxy и передавать приложению реальный peer IP. Backend добавляет HSTS ко всем ответам, использует Secure-cookie и ограничивает запросы по peer IP; не публикуйте порт приложения напрямую в интернет и не доверяйте клиентским `X-Forwarded-For` без настройки proxy.
 
 ```bash
 DATABASE_URL='postgres://USER@HOST:PORT/contracter?sslmode=require' \

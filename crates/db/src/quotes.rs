@@ -1,4 +1,5 @@
 use rust_decimal::Decimal;
+use sha2::{Digest, Sha256};
 use sqlx::{
     Executor, Postgres,
     types::chrono::{DateTime, Utc},
@@ -227,6 +228,76 @@ fn lowercase_hex(bytes: &[u8]) -> String {
 }
 
 impl CreateTradeupQuote {
+    /// Canonical signature digest for the complete immutable quote document.
+    /// The writer recomputes this value so no caller can alter economics,
+    /// ownership, ordering, expiry, or referenced projections after signing.
+    pub fn signature_digest(&self) -> [u8; 32] {
+        let mut bytes = Vec::with_capacity(512 + self.client_seed.len());
+        bytes.extend_from_slice(b"contracter/quote/document-v3\0");
+        let mut push = |field: &[u8]| {
+            bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(field);
+        };
+        push(&self.user_id.get().to_be_bytes());
+        push(self.allocation_public_id.get().as_bytes());
+        push(self.public_id.get().as_bytes());
+        for value in [
+            self.valuation_snapshot_id.get(),
+            self.stock_policy_version_id.get(),
+            self.risk_policy_version_id.get(),
+            self.signing_key_id.get(),
+            self.nonce,
+            self.verified_input_value_microcredits,
+            self.expected_buyback_microcredits,
+            self.quote_total_microcredits,
+            self.adjustment_microcredits,
+            self.maximum_exposure_microcredits,
+            i64::from(self.selected_outcome_position),
+        ] {
+            push(&value.to_be_bytes());
+        }
+        push(self.formula_version.as_bytes());
+        push(&self.client_seed);
+        push(&self.ordered_outcome_digest);
+        push(self.created_at.to_rfc3339().as_bytes());
+        push(self.expires_at.to_rfc3339().as_bytes());
+        for input in &self.inputs {
+            for value in [
+                input.inventory_item_id.get(),
+                input.valuation_snapshot_item_id.get(),
+                input.locked_position_version,
+            ] {
+                push(&value.to_be_bytes());
+            }
+        }
+        for outcome in &self.outcomes {
+            for value in [
+                outcome.sku_id.get(),
+                outcome.candidate_inventory_item_id.get(),
+                outcome.valuation_snapshot_item_id.get(),
+                outcome.probability_numerator,
+                outcome.probability_denominator,
+                outcome.buyback_microcredits,
+            ] {
+                push(&value.to_be_bytes());
+            }
+            push(outcome.output_float.to_string().as_bytes());
+        }
+        Sha256::digest(bytes).into()
+    }
+
+    fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
+        let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(public_key) else {
+            return false;
+        };
+        verifying_key
+            .verify_strict(
+                &self.signature_digest(),
+                &ed25519_dalek::Signature::from_bytes(&self.signature),
+            )
+            .is_ok()
+    }
+
     fn payloads(&self) -> (JsonValue, JsonValue, JsonValue) {
         let quote = json_object([
             ("public_id", self.public_id.get().to_string().into()),
@@ -346,15 +417,9 @@ pub async fn create_tradeup_quote_for_user(
     let public_key: [u8; 32] = public_key
         .try_into()
         .map_err(|_| sqlx::Error::Protocol("invalid quote signing key length".into()))?;
-    let signature = request.signature;
-    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&public_key)
-        .map_err(|_| sqlx::Error::Protocol("invalid quote signing key".into()))?;
-    verifying_key
-        .verify_strict(
-            &request.ordered_outcome_digest,
-            &ed25519_dalek::Signature::from_bytes(&signature),
-        )
-        .map_err(|_| sqlx::Error::Protocol("invalid quote signature".into()))?;
+    if !request.verify_signature(&public_key) {
+        return Err(sqlx::Error::Protocol("invalid quote signature".into()).into());
+    }
     Ok(
         sqlx::query_scalar("SELECT create_quote_for_user($1, $2, $3, $4, $5)")
             .bind(request.user_id)
@@ -566,7 +631,7 @@ mod creation_tests {
     #[test]
     fn atomic_writer_payload_preserves_exact_values_and_sql_contract() {
         let created_at = DateTime::from_timestamp(1_800_000_000, 123_456_000).unwrap();
-        let request = CreateTradeupQuote {
+        let mut request = CreateTradeupQuote {
             user_id: UserId::new(12),
             allocation_public_id: PublicId::new(uuid::Uuid::new_v4()),
             public_id: PublicId::new(uuid::Uuid::new_v4()),
@@ -635,6 +700,23 @@ mod creation_tests {
         assert_eq!(
             outcomes[0]["candidate_inventory_item_id"].as_i64(),
             Some(12)
+        );
+        let signed_digest = request.signature_digest();
+        request.outcomes[0].buyback_microcredits += 1;
+        assert_ne!(
+            request.signature_digest(),
+            signed_digest,
+            "changing settlement economics must invalidate the signed digest"
+        );
+        use ed25519_dalek::Signer as _;
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        request.outcomes[0].buyback_microcredits -= 1;
+        request.signature = signing_key.sign(&request.signature_digest()).to_bytes();
+        assert!(request.verify_signature(&signing_key.verifying_key().to_bytes()));
+        request.quote_total_microcredits += 1;
+        assert!(
+            !request.verify_signature(&signing_key.verifying_key().to_bytes()),
+            "the DB writer boundary must reject economics changed after signing"
         );
     }
 }

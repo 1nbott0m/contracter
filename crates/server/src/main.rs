@@ -40,7 +40,7 @@ async fn run() -> Result<(), StartupError> {
     let router = build_router(
         state,
         &RouterConfig {
-            rate_limit_burst: Some(30),
+            rate_limit_burst: Some(config.rate_limit_burst()),
             ..RouterConfig::default()
         },
     );

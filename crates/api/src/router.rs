@@ -127,7 +127,20 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
 
     router
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(security_response_headers))
         .layer(axum::middleware::from_fn(request_id_middleware))
+}
+
+/// Deployment terminates TLS at the trusted edge; every response advertises
+/// the HTTPS-only browser policy so public, private, health, and error routes
+/// cannot drift apart.
+async fn security_response_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        axum::http::header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+    response
 }
 
 /// Marks every `/api/v1` response as private and cookie-dependent.
@@ -144,10 +157,6 @@ async fn private_response_headers(request: Request, next: Next) -> Response {
     let headers = response.headers_mut();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(VARY, HeaderValue::from_static("Cookie"));
-    headers.insert(
-        axum::http::header::STRICT_TRANSPORT_SECURITY,
-        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-    );
     response
 }
 
@@ -214,13 +223,19 @@ fn build_cors_layer(allowed_origins: &[String]) -> Option<CorsLayer> {
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
+    use std::{convert::Infallible, net::SocketAddr, time::Duration};
 
-    use axum::{body::Body, http::Request, http::StatusCode, routing::get};
+    use axum::{body::Body, extract::ConnectInfo, http::Request, http::StatusCode, routing::get};
     use tower::ServiceExt;
 
-    use super::{CatchPanicLayer, RequestBodyLimitLayer, ServiceBuilder, handle_panic};
+    use super::{
+        CatchPanicLayer, RequestBodyLimitLayer, RouterConfig, ServiceBuilder, build_router,
+        handle_panic,
+    };
+    use crate::AppState;
     use crate::request_id::{REQUEST_ID_HEADER, request_id_middleware};
+    use application::auth::AuthConfig;
+    use db::{Database, DatabaseConfig};
 
     /// Exercises the exact `handle_panic` callback wired into the real
     /// router, not a stand-in -- a panicking handler must become a
@@ -288,5 +303,41 @@ mod tests {
 
         let response = service.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Removing the production governor layer, changing its key extractor, or
+    /// accidentally leaving production wiring unlimited must make this fail.
+    #[tokio::test]
+    async fn configured_rate_limit_returns_429_for_the_same_peer() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable")
+                .unwrap()
+                .with_acquire_timeout(Duration::from_millis(1)),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig {
+                rate_limit_burst: Some(1),
+                ..RouterConfig::default()
+            },
+        );
+        let peer: SocketAddr = "127.0.0.1:41000".parse().unwrap();
+        let request = || {
+            let mut request = Request::builder()
+                .uri("/health/live")
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request
+        };
+
+        assert_eq!(
+            router.clone().oneshot(request()).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router.oneshot(request()).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 }

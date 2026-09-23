@@ -12,6 +12,7 @@ pub struct ServerConfig {
     bind_addr: SocketAddr,
     log_filter: String,
     insecure_cookies: bool,
+    rate_limit_burst: u32,
     quote_signer: EnvironmentQuoteSigner,
     seed_protector: EnvironmentSeedProtector,
 }
@@ -44,12 +45,19 @@ impl ServerConfig {
         // Secure attribute on rather than silently dropping it.
         let insecure_cookies = value("INSECURE_COOKIES")
             .is_some_and(|insecure_cookies| insecure_cookies.eq_ignore_ascii_case("true"));
+        let rate_limit_value = value("RATE_LIMIT_BURST").unwrap_or_else(|| "30".to_owned());
+        let rate_limit_burst = rate_limit_value
+            .parse::<u32>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| ConfigError::InvalidRateLimitBurst(rate_limit_value.clone()))?;
 
         Ok(Self {
             database_url,
             bind_addr,
             log_filter,
             insecure_cookies,
+            rate_limit_burst,
             quote_signer,
             seed_protector,
         })
@@ -71,6 +79,10 @@ impl ServerConfig {
         self.insecure_cookies
     }
 
+    pub const fn rate_limit_burst(&self) -> u32 {
+        self.rate_limit_burst
+    }
+
     pub fn quote_signer(&self) -> &EnvironmentQuoteSigner {
         &self.quote_signer
     }
@@ -88,6 +100,7 @@ impl fmt::Debug for ServerConfig {
             .field("bind_addr", &self.bind_addr)
             .field("log_filter", &self.log_filter)
             .field("insecure_cookies", &self.insecure_cookies)
+            .field("rate_limit_burst", &self.rate_limit_burst)
             .field("quote_signer", &self.quote_signer)
             .field("seed_protector", &self.seed_protector)
             .finish()
@@ -143,6 +156,31 @@ mod tests {
         assert!(!debug.contains(quote_signing_key));
         assert!(!debug.contains(quote_seed_key));
     }
+
+    #[test]
+    fn rate_limit_burst_is_positive_and_configurable() {
+        let base = |name| match name {
+            "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
+            "QUOTE_SIGNING_KEY" => Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()),
+            "QUOTE_SEED_KEY" => Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned()),
+            "RATE_LIMIT_BURST" => Some("17".to_owned()),
+            _ => None,
+        };
+        assert_eq!(
+            ServerConfig::from_values(base).unwrap().rate_limit_burst(),
+            17
+        );
+
+        let error = ServerConfig::from_values(|name| match name {
+            "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
+            "QUOTE_SIGNING_KEY" => Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()),
+            "QUOTE_SEED_KEY" => Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned()),
+            "RATE_LIMIT_BURST" => Some("0".to_owned()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::InvalidRateLimitBurst(_)));
+    }
 }
 
 fn required_value(
@@ -160,6 +198,8 @@ pub enum ConfigError {
     InvalidPort(String),
     #[error("'{host}:{port}' is not a valid bind address")]
     InvalidBindAddress { host: String, port: u16 },
+    #[error("RATE_LIMIT_BURST must be a positive integer, got '{0}'")]
+    InvalidRateLimitBurst(String),
     #[error(transparent)]
     QuoteSigning(#[from] QuoteSigningError),
     #[error(transparent)]
