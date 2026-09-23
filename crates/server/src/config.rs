@@ -1,7 +1,9 @@
-use std::{fmt, net::SocketAddr};
+use std::{fmt, fs, net::SocketAddr};
 
 use application::quote_signing::{EnvironmentQuoteSigner, QuoteSigningError};
 use application::seed_protection::{EnvironmentSeedProtector, SeedProtectionError};
+
+const MAX_SECRET_BYTES: u64 = 64 * 1024;
 
 /// Typed server configuration, read once at startup. Fails fast (returns
 /// `Err`, never panics) on missing or malformed values -- there are no
@@ -22,13 +24,11 @@ impl ServerConfig {
         Self::from_values(|name| std::env::var(name).ok())
     }
 
-    fn from_values(
-        mut value: impl FnMut(&'static str) -> Option<String>,
-    ) -> Result<Self, ConfigError> {
-        let database_url = required_value("DATABASE_URL", &mut value)?;
-        let quote_signing_key = required_value("QUOTE_SIGNING_KEY", &mut value)?;
+    fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let database_url = required_secret("DATABASE_URL", &mut value)?;
+        let quote_signing_key = required_secret("QUOTE_SIGNING_KEY", &mut value)?;
         let quote_signer = EnvironmentQuoteSigner::from_base64url(&quote_signing_key)?;
-        let quote_seed_key = required_value("QUOTE_SEED_KEY", &mut value)?;
+        let quote_seed_key = required_secret("QUOTE_SEED_KEY", &mut value)?;
         let seed_protector = EnvironmentSeedProtector::from_base64url(&quote_seed_key)?;
 
         let host = value("HOST").unwrap_or_else(|| "127.0.0.1".to_owned());
@@ -109,7 +109,107 @@ impl fmt::Debug for ServerConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfigError, ServerConfig};
+    use std::{fs, path::PathBuf, time::SystemTime};
+
+    use super::{ConfigError, ServerConfig, required_secret};
+
+    fn unique_test_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock is after the Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("contracter-{label}-{}-{nonce}", std::process::id()))
+    }
+
+    #[test]
+    fn secret_must_have_exactly_one_nonempty_source() {
+        let path = unique_test_path("secret-source");
+        fs::write(&path, "from-file\n").expect("write test secret");
+        let path_text = path.to_string_lossy().into_owned();
+
+        let mut direct_only = |name: &str| (name == "SECRET").then(|| "direct".to_owned());
+        assert_eq!(
+            required_secret("SECRET", &mut direct_only).unwrap(),
+            "direct"
+        );
+
+        let mut file_only = |name: &str| (name == "SECRET_FILE").then(|| path_text.clone());
+        assert_eq!(
+            required_secret("SECRET", &mut file_only).unwrap(),
+            "from-file"
+        );
+
+        let mut both = |name: &str| match name {
+            "SECRET" => Some("direct".to_owned()),
+            "SECRET_FILE" => Some(path_text.clone()),
+            _ => None,
+        };
+        assert!(matches!(
+            required_secret("SECRET", &mut both),
+            Err(ConfigError::ConflictingSecretSources("SECRET"))
+        ));
+
+        let mut neither = |_name: &str| None;
+        assert!(matches!(
+            required_secret("SECRET", &mut neither),
+            Err(ConfigError::MissingEnvVar("SECRET"))
+        ));
+
+        fs::remove_file(path).expect("remove test secret");
+    }
+
+    #[test]
+    fn secret_file_rejects_empty_directory_and_oversized_content_without_leaking() {
+        for (label, prepare) in [("empty", 0_usize), ("oversized", 65 * 1024)] {
+            let path = unique_test_path(label);
+            fs::write(&path, vec![b'x'; prepare]).expect("write invalid test secret");
+            let path_text = path.to_string_lossy().into_owned();
+            let mut source = |name: &str| (name == "SECRET_FILE").then(|| path_text.clone());
+            let error = required_secret("SECRET", &mut source).unwrap_err();
+            assert!(matches!(error, ConfigError::InvalidSecretFile("SECRET")));
+            assert!(!error.to_string().contains(&path_text));
+            fs::remove_file(path).expect("remove invalid test secret");
+        }
+
+        let directory = unique_test_path("directory");
+        fs::create_dir(&directory).expect("create invalid secret directory");
+        let path_text = directory.to_string_lossy().into_owned();
+        let mut source = |name: &str| (name == "SECRET_FILE").then(|| path_text.clone());
+        let error = required_secret("SECRET", &mut source).unwrap_err();
+        assert!(matches!(error, ConfigError::InvalidSecretFile("SECRET")));
+        assert!(!error.to_string().contains(&path_text));
+        fs::remove_dir(directory).expect("remove invalid secret directory");
+    }
+
+    #[test]
+    fn config_debug_never_contains_direct_or_file_backed_secrets() {
+        let database = unique_test_path("database-url");
+        let signing = unique_test_path("signing-key");
+        let seed = unique_test_path("seed-key");
+        fs::write(&database, "postgres://secret@localhost/contracter\n").unwrap();
+        fs::write(&signing, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n").unwrap();
+        fs::write(&seed, "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n").unwrap();
+
+        let config = ServerConfig::from_values(|name| match name {
+            "DATABASE_URL_FILE" => Some(database.to_string_lossy().into_owned()),
+            "QUOTE_SIGNING_KEY_FILE" => Some(signing.to_string_lossy().into_owned()),
+            "QUOTE_SEED_KEY_FILE" => Some(seed.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let debug = format!("{config:?}");
+        for secret in [
+            "postgres://secret@localhost/contracter",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+
+        for path in [&database, &signing, &seed] {
+            fs::remove_file(path).expect("remove test secret");
+        }
+    }
 
     #[test]
     fn quote_signing_key_is_required_at_startup() {
@@ -159,7 +259,7 @@ mod tests {
 
     #[test]
     fn rate_limit_burst_is_positive_and_configurable() {
-        let base = |name| match name {
+        let base = |name: &str| match name {
             "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
             "QUOTE_SIGNING_KEY" => Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()),
             "QUOTE_SEED_KEY" => Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned()),
@@ -183,17 +283,50 @@ mod tests {
     }
 }
 
-fn required_value(
+fn required_secret(
     name: &'static str,
-    value: &mut impl FnMut(&'static str) -> Option<String>,
+    value: &mut impl FnMut(&str) -> Option<String>,
 ) -> Result<String, ConfigError> {
-    value(name).ok_or(ConfigError::MissingEnvVar(name))
+    let file_name = format!("{name}_FILE");
+    let direct = value(name);
+    let file = value(&file_name);
+
+    match (direct, file) {
+        (Some(_), Some(_)) => Err(ConfigError::ConflictingSecretSources(name)),
+        (Some(secret), None) if !secret.is_empty() => Ok(secret),
+        (Some(_), None) | (None, None) => Err(ConfigError::MissingEnvVar(name)),
+        (None, Some(path)) => {
+            let metadata =
+                fs::metadata(&path).map_err(|_| ConfigError::UnreadableSecretFile(name))?;
+            if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SECRET_BYTES {
+                return Err(ConfigError::InvalidSecretFile(name));
+            }
+            let mut secret =
+                fs::read_to_string(&path).map_err(|_| ConfigError::UnreadableSecretFile(name))?;
+            if secret.ends_with('\n') {
+                secret.pop();
+                if secret.ends_with('\r') {
+                    secret.pop();
+                }
+            }
+            if secret.is_empty() {
+                return Err(ConfigError::InvalidSecretFile(name));
+            }
+            Ok(secret)
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("{0} environment variable is required")]
     MissingEnvVar(&'static str),
+    #[error("{0} and its _FILE source cannot both be set")]
+    ConflictingSecretSources(&'static str),
+    #[error("{0}_FILE must refer to a non-empty regular file no larger than 64 KiB")]
+    InvalidSecretFile(&'static str),
+    #[error("{0}_FILE could not be read")]
+    UnreadableSecretFile(&'static str),
     #[error("PORT must be a valid port number, got '{0}'")]
     InvalidPort(String),
     #[error("'{host}:{port}' is not a valid bind address")]

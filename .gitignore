@@ -11,3 +11,6 @@ target/
 *.log
 *.tmp
 coverage/
+deploy/secrets/
+backups/
+load/results/
