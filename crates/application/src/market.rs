@@ -10,8 +10,56 @@ use crate::pagination::{Cursor, Page, page_size};
 pub enum MarketError {
     #[error("the cursor is not valid")]
     InvalidCursor,
+    #[error("market operation could not be completed")]
+    OperationRejected,
     #[error(transparent)]
     Database(#[from] DatabaseError),
+}
+
+pub struct MarketOrder {
+    pub operation_id: PublicId,
+    pub inventory_item_id: PublicId,
+    pub amount_microcredits: i64,
+}
+
+pub async fn purchase(
+    database: &Database,
+    user_id: db::UserId,
+    sku_id: PublicId,
+    idempotency_key: uuid::Uuid,
+) -> Result<MarketOrder, MarketError> {
+    let result = db::purchase_market_item(database.pool(), user_id, sku_id, idempotency_key)
+        .await
+        .map_err(map_operation_error)?;
+    Ok(MarketOrder {
+        operation_id: result.operation_id,
+        inventory_item_id: result.inventory_item_id,
+        amount_microcredits: result.amount_microcredits,
+    })
+}
+
+pub async fn buyback(
+    database: &Database,
+    user_id: db::UserId,
+    inventory_item_id: PublicId,
+    idempotency_key: uuid::Uuid,
+) -> Result<MarketOrder, MarketError> {
+    let result =
+        db::buyback_market_item(database.pool(), user_id, inventory_item_id, idempotency_key)
+            .await
+            .map_err(map_operation_error)?;
+    Ok(MarketOrder {
+        operation_id: result.operation_id,
+        inventory_item_id: result.inventory_item_id,
+        amount_microcredits: result.amount_microcredits,
+    })
+}
+
+fn map_operation_error(error: DatabaseError) -> MarketError {
+    match error.database_code().as_deref() {
+        Some("23505" | "23514" | "42501" | "40001") => MarketError::OperationRejected,
+        _ => MarketError::Database(error),
+    }
 }
 
 pub async fn list_valuations(

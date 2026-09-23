@@ -6,6 +6,7 @@ mod identity;
 mod ids;
 mod inventory;
 mod ledger;
+mod market_orders;
 mod pricing;
 mod quotes;
 mod scarcity;
@@ -38,6 +39,7 @@ pub use ledger::{
     find_credit_adjustment, find_ledger_account, find_ledger_balance, post_credit_adjustment,
     reconcile_ledger_balances,
 };
+pub use market_orders::{MarketOrderResult, buyback_market_item, purchase_market_item};
 pub use pricing::{
     CurrentValuation, CurrentValuationDrift, MarketPriceHalt, MarketValuation, PriceHalt,
     PublishedValuationSnapshotDrift, SnapshotValuation, ValuationSnapshot, find_current_valuation,

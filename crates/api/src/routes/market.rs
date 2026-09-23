@@ -1,7 +1,8 @@
+use crate::extract::CurrentUser;
 use application::{market, pagination::Page};
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,59 @@ pub struct MarketValuationResponse {
 pub struct MarketPriceHaltResponse {
     pub sku_id: uuid::Uuid,
     pub halted_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarketOrderRequest {
+    pub idempotency_key: uuid::Uuid,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarketOrderResponse {
+    pub operation_id: uuid::Uuid,
+    pub inventory_item_id: uuid::Uuid,
+    pub amount_microcredits: i64,
+}
+
+pub async fn purchase(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+    Path(sku_id): Path<uuid::Uuid>,
+    Json(request): Json<MarketOrderRequest>,
+) -> Result<Json<MarketOrderResponse>, ApiError> {
+    let order = market::purchase(
+        state.database(),
+        caller.user_id,
+        db::PublicId::new(sku_id),
+        request.idempotency_key,
+    )
+    .await?;
+    Ok(Json(MarketOrderResponse {
+        operation_id: order.operation_id.get(),
+        inventory_item_id: order.inventory_item_id.get(),
+        amount_microcredits: order.amount_microcredits,
+    }))
+}
+
+pub async fn buyback(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+    Path(item_id): Path<uuid::Uuid>,
+    Json(request): Json<MarketOrderRequest>,
+) -> Result<Json<MarketOrderResponse>, ApiError> {
+    let order = market::buyback(
+        state.database(),
+        caller.user_id,
+        db::PublicId::new(item_id),
+        request.idempotency_key,
+    )
+    .await?;
+    Ok(Json(MarketOrderResponse {
+        operation_id: order.operation_id.get(),
+        inventory_item_id: order.inventory_item_id.get(),
+        amount_microcredits: order.amount_microcredits,
+    }))
 }
 
 /// `GET /api/v1/market/valuations` -- current public prices. Quantities and

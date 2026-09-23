@@ -159,6 +159,7 @@ impl From<application::market::MarketError> for ApiError {
 
         match error {
             MarketError::InvalidCursor => Self::BadRequest(error.to_string()),
+            MarketError::OperationRejected => Self::Conflict(error.to_string()),
             MarketError::Database(ref cause) => internal(cause, "a market database call failed"),
         }
     }
