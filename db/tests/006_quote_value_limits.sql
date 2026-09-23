@@ -31,7 +31,8 @@ BEGIN
     -- Boundary constants are exact integer microcredits and remain stable at
     -- the accepted edges.  The actual reject paths are exercised with a
     -- temporary trigger row below, then rolled back with this transaction.
-    IF 20::bigint * 1000000 <> 20000000 OR 15000::bigint * 1000000 <> 15000000000 THEN
+    IF (20::bigint * 1000000::bigint) <> 20000000::bigint OR
+       (15000::bigint * 1000000::bigint) <> 15000000000::bigint THEN
         RAISE EXCEPTION 'microcredit conversion boundary changed';
     END IF;
     IF (-1::bigint) >= 0 OR 15000000001::bigint <= 15000000000 THEN
