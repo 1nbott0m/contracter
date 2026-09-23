@@ -254,8 +254,7 @@ pub async fn create(
             .collect(),
         outcomes: outcomes
             .iter()
-            .enumerate()
-            .map(|(_, r)| db::CreateQuoteOutcome {
+            .map(|r| db::CreateQuoteOutcome {
                 sku_id: r.output_sku_id,
                 candidate_inventory_item_id: r.candidate_inventory_item_id,
                 valuation_snapshot_item_id: r.valuation_snapshot_item_id,
