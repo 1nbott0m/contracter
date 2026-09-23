@@ -49,9 +49,10 @@ pub use pricing::{
 };
 pub use quotes::{
     CreateQuoteInput, CreateQuoteOutcome, CreateTradeupQuote, QuoteInput, QuoteOutcome,
-    SeedAllocationRequest, SeedEnvelope, TradeupQuote, allocate_seed_for_user,
-    create_tradeup_quote_for_user, find_active_quote_for_user, find_tradeup_quote,
-    list_quote_inputs, list_quote_outcomes, read_seed_envelope_for_user,
+    QuoteProposalProjection, SeedAllocationRequest, SeedEnvelope, TradeupQuote,
+    allocate_seed_for_user, create_tradeup_quote_for_user, find_active_quote_for_user,
+    find_tradeup_quote, list_quote_inputs, list_quote_outcomes, read_quote_proposal_projection,
+    read_seed_envelope_for_user,
 };
 pub use scarcity::{
     CollectionScarcity, CollectionScarcityDrift, CollectionScarcitySnapshotItem,

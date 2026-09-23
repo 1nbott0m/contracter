@@ -84,6 +84,33 @@ pub struct SeedEnvelope {
     pub ciphertext: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct QuoteProposalProjection {
+    pub allocation_public_id: PublicId,
+    pub commitment_hash: Vec<u8>,
+    pub seed_nonce: Vec<u8>,
+    pub seed_ciphertext: Vec<u8>,
+    pub allocation_expires_at: DateTime<Utc>,
+    pub inventory_item_id: InventoryItemId,
+    pub inventory_item_public_id: PublicId,
+    pub sku_id: SkuId,
+    pub sku_public_id: PublicId,
+    pub canonical_float: Decimal,
+    pub locked_position_version: i64,
+    pub catalog_item_id: crate::CatalogItemId,
+    pub collection_id: crate::CollectionId,
+    pub rarity_code: String,
+    pub min_float: Decimal,
+    pub max_float: Decimal,
+    pub valuation_snapshot_id: ValuationSnapshotId,
+    pub valuation_snapshot_item_id: ValuationSnapshotItemId,
+    pub verified_price_microcredits: i64,
+    pub stock_policy_version_id: StockPolicyVersionId,
+    pub risk_policy_version_id: RiskPolicyVersionId,
+    pub signing_key_id: QuoteSigningKeyId,
+    pub formula_version: String,
+}
+
 /// A server-computed and signed proposal, never deserialized from an HTTP body.
 /// The authenticated owner and owner-bound allocation are separate from the
 /// immutable quote document: PostgreSQL determines their internal IDs.
@@ -308,6 +335,35 @@ where
     .bind(user_id)
     .bind(allocation_public_id)
     .fetch_optional(executor)
+    .await?)
+}
+
+pub async fn read_quote_proposal_projection<'e, E>(
+    executor: E,
+    user_id: UserId,
+    allocation_public_id: PublicId,
+    inventory_item_public_ids: &[PublicId],
+) -> Result<Vec<QuoteProposalProjection>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let ids: Vec<_> = inventory_item_public_ids
+        .iter()
+        .map(|id| id.get())
+        .collect();
+    Ok(sqlx::query_as(
+        "SELECT allocation_public_id, commitment_hash, seed_nonce, seed_ciphertext,\
+                allocation_expires_at, inventory_item_id, inventory_item_public_id, sku_id,\
+                sku_public_id, canonical_float, locked_position_version, catalog_item_id,\
+                collection_id, rarity_code, min_float, max_float, valuation_snapshot_id,\
+                valuation_snapshot_item_id, verified_price_microcredits, stock_policy_version_id,\
+                risk_policy_version_id, signing_key_id, formula_version\
+         FROM read_quote_proposal_projection($1, $2, $3)",
+    )
+    .bind(user_id)
+    .bind(allocation_public_id)
+    .bind(&ids)
+    .fetch_all(executor)
     .await?)
 }
 
