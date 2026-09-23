@@ -133,6 +133,34 @@ pub struct QuoteCandidateProjection {
     pub scarcity_weight_denominator: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct QuoteCanonicalOutcome {
+    pub input_count: i32,
+    pub input_collection_id: crate::CollectionId,
+    pub input_rarity_code: String,
+    pub output_sku_id: SkuId,
+    pub output_sku_public_id: PublicId,
+    pub output_collection_id: crate::CollectionId,
+    pub output_rarity_code: String,
+    pub output_weight_numerator: i64,
+    pub output_weight_denominator: i64,
+    pub candidate_inventory_item_id: InventoryItemId,
+    pub candidate_inventory_item_public_id: PublicId,
+    pub candidate_min_float: Decimal,
+    pub candidate_max_float: Decimal,
+    pub candidate_canonical_float: Decimal,
+    pub valuation_snapshot_item_id: ValuationSnapshotItemId,
+    pub verified_price_microcredits: i64,
+    pub warehouse_available_units: i32,
+    pub warehouse_reserved_units: i32,
+    pub stock_eligible: bool,
+    pub risk_eligible: bool,
+    pub valuation_snapshot_id: ValuationSnapshotId,
+    pub stock_policy_version_id: StockPolicyVersionId,
+    pub risk_policy_version_id: RiskPolicyVersionId,
+    pub formula_version: String,
+}
+
 /// A server-computed and signed proposal, never deserialized from an HTTP body.
 /// The authenticated owner and owner-bound allocation are separate from the
 /// immutable quote document: PostgreSQL determines their internal IDs.
@@ -400,6 +428,33 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     Ok(sqlx::query_as("SELECT inventory_item_id, inventory_item_public_id, sku_id, sku_public_id, catalog_item_id, collection_id, rarity_code, candidate_min_float, candidate_max_float, canonical_float, valuation_snapshot_item_id, verified_price_microcredits, warehouse_available_units, warehouse_reserved_units, sku_liability_microcredits, sku_reserved_units, collection_liability_microcredits, scarcity_weight_numerator, scarcity_weight_denominator FROM read_quote_candidate_projection($1,$2,$3,$4)").bind(user_id).bind(allocation_public_id).bind(collection_id).bind(rarity_code).fetch_all(executor).await?)
+}
+
+pub async fn read_quote_canonical_outcomes<'e, E>(
+    executor: E,
+    user_id: UserId,
+    allocation_public_id: PublicId,
+    input_inventory_item_ids: &[InventoryItemId],
+) -> Result<Vec<QuoteCanonicalOutcome>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let ids: Vec<i64> = input_inventory_item_ids.iter().map(|id| id.get()).collect();
+    Ok(sqlx::query_as(
+        "SELECT input_count, input_collection_id, input_rarity_code, output_sku_id, \
+                output_sku_public_id, output_collection_id, output_rarity_code, \
+                output_weight_numerator, output_weight_denominator, candidate_inventory_item_id, \
+                candidate_inventory_item_public_id, candidate_min_float, candidate_max_float, \
+                candidate_canonical_float, valuation_snapshot_item_id, verified_price_microcredits, \
+                warehouse_available_units, warehouse_reserved_units, stock_eligible, risk_eligible, \
+                valuation_snapshot_id, stock_policy_version_id, risk_policy_version_id, formula_version \
+         FROM read_quote_canonical_outcomes($1, $2, $3)",
+    )
+    .bind(user_id)
+    .bind(allocation_public_id)
+    .bind(&ids)
+    .fetch_all(executor)
+    .await?)
 }
 
 pub async fn find_tradeup_quote<'e, E>(
