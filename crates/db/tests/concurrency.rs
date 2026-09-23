@@ -21,8 +21,9 @@
 //! uniquely named per run.
 
 use db::{
-    CollectionId, Database, DatabaseConfig, find_current_collection_scarcity,
-    post_credit_adjustment, publish_collection_scarcity_snapshot, register_invited_user,
+    CollectionId, Database, DatabaseConfig, create_user_session_for_credential,
+    find_current_collection_scarcity, post_credit_adjustment, publish_collection_scarcity_snapshot,
+    register_invited_user,
 };
 use uuid::Uuid;
 
@@ -580,5 +581,98 @@ async fn concurrent_registrations_of_one_login_create_exactly_one_user() {
     assert_eq!(
         users, 1,
         "a login must exist at most once, case-insensitively"
+    );
+}
+
+/// A login racing an account disable must not mint a session for the
+/// disabled account.
+///
+/// `create_user_session_for_credential` (0022) originally read the
+/// account's id with a plain `SELECT`, then inserted a session using that
+/// cached id unconditionally -- nothing locked the row in between. An
+/// independent concurrency review found this by hand with two psql
+/// sessions: begin a transaction, run the lookup, disable the account from
+/// a second connection and commit it, then run the insert from the first
+/// transaction. It succeeded, and the disabled account ended up with a
+/// live session. Migration 0023 adds `FOR UPDATE` to the lookup, which
+/// under PostgreSQL's default READ COMMITTED isolation re-evaluates the
+/// WHERE clause (via EvalPlanQual) against the latest committed row once
+/// the lock is available, so a disable that commits first is seen.
+///
+/// This forces exactly that ordering: the disable takes the row lock
+/// first and holds it, so the login is provably blocked on it -- not
+/// merely unlucky in a free-running race -- and then must see the
+/// disable once it proceeds.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn a_login_that_loses_the_race_to_a_disable_is_refused_not_granted_a_stale_session() {
+    use sqlx::Connection;
+
+    let database = test_database().await;
+    let suffix = Uuid::new_v4().simple().to_string();
+    let login = format!("toctou_{suffix}");
+
+    sqlx::query("INSERT INTO users (login, password_hash) VALUES ($1, 'toctou-test-hash')")
+        .bind(&login)
+        .execute(database.pool())
+        .await
+        .expect("seed the account");
+
+    let mut disabling = database
+        .pool()
+        .acquire()
+        .await
+        .expect("acquire the disabling connection");
+    let mut disable_transaction = disabling.begin().await.expect("begin the disable");
+    // Takes the row lock and holds it, so the concurrent login below is
+    // genuinely blocked on it rather than merely racing in the open.
+    sqlx::query("UPDATE users SET disabled_at = clock_timestamp() WHERE login = $1")
+        .bind(&login)
+        .execute(&mut *disable_transaction)
+        .await
+        .expect("disable the account, holding its row lock");
+
+    let login_attempt = {
+        let database = database.pool().clone();
+        let login = login.clone();
+        tokio::spawn(async move {
+            create_user_session_for_credential(
+                &database,
+                &login,
+                "toctou-test-hash",
+                &Uuid::new_v4().as_bytes().repeat(2),
+                std::time::Duration::from_secs(60),
+            )
+            .await
+        })
+    };
+
+    // Give the login attempt time to reach the row lock and start
+    // waiting on it before the disable commits.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    disable_transaction
+        .commit()
+        .await
+        .expect("commit the disable, releasing the row lock");
+
+    let result = login_attempt.await.expect("join the login attempt");
+    assert!(
+        result.is_err(),
+        "a login that was blocked on a disable's row lock must be refused once it proceeds, \
+         not minted a session as though the account were still enabled"
+    );
+
+    let sessions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM user_sessions AS session \
+         JOIN users AS app_user ON app_user.id = session.user_id \
+         WHERE app_user.login = $1",
+    )
+    .bind(&login)
+    .fetch_one(database.pool())
+    .await
+    .expect("count sessions");
+    assert_eq!(
+        sessions, 0,
+        "the disabled account must end up with no session at all"
     );
 }
