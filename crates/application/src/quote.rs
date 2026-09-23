@@ -206,7 +206,12 @@ pub async fn create(
         })
         .collect();
     let price = economy_core::pricing::quote_adjustment_microcredits(
-        first.verified_price_microcredits * input_ids.len() as i64,
+        projection
+            .iter()
+            .try_fold(0_i64, |sum, row| {
+                sum.checked_add(row.verified_price_microcredits)
+            })
+            .ok_or(QuoteError::Inconsistent)?,
         &priced,
     )
     .map_err(|_| QuoteError::Inconsistent)?;
@@ -230,18 +235,30 @@ pub async fn create(
         formula_version: first.formula_version.clone(),
         client_seed: request.client_seed.clone(),
         nonce: 0,
-        verified_input_value_microcredits: first.verified_price_microcredits
-            * input_ids.len() as i64,
+        verified_input_value_microcredits: projection
+            .iter()
+            .try_fold(0_i64, |sum, row| {
+                sum.checked_add(row.verified_price_microcredits)
+            })
+            .ok_or(QuoteError::Inconsistent)?,
         expected_buyback_microcredits: price.expected_buyback_microcredits,
         quote_total_microcredits: price.quote_total_microcredits,
         adjustment_microcredits: price.adjustment_microcredits,
-        maximum_exposure_microcredits: price.expected_buyback_microcredits,
+        maximum_exposure_microcredits: outcomes
+            .iter()
+            .map(|row| economy_core::pricing::buyback_microcredits(row.verified_price_microcredits))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| QuoteError::Inconsistent)?
+            .into_iter()
+            .max()
+            .ok_or(QuoteError::Inconsistent)?,
         ordered_outcome_digest: ordered_digest,
         signature,
         selected_outcome_position: outcomes
             .iter()
             .position(|r| r.output_sku_public_id == selected.output_sku_public_id)
-            .unwrap_or(0) as i16,
+            .map(|position| position as i16 + 1)
+            .ok_or(QuoteError::Inconsistent)?,
         created_at: now,
         expires_at: first.allocation_expires_at,
         inputs: projection
