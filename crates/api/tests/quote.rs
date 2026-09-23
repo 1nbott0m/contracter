@@ -339,6 +339,41 @@ async fn quote_acceptance_requires_an_authenticated_session_before_touching_the_
 
 #[tokio::test]
 #[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn quote_acceptance_is_owner_bound_and_idempotent_over_http() {
+    let state = test_state().await;
+    let (owner_id, owner_cookie) = user_session(&state).await;
+    let fixture = seed_active_quote(&state, owner_id).await;
+    let (_, stranger_cookie) = user_session(&state).await;
+    let key = Uuid::new_v4();
+
+    let request = |cookie: &str, key: Uuid| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/v1/me/quote/{}/accept", fixture.quote_public_id))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, cookie)
+            .body(Body::from(serde_json::json!({"idempotency_key": key}).to_string()))
+            .unwrap()
+    };
+
+    let stranger = router(&state).oneshot(request(&stranger_cookie, key)).await.unwrap();
+    assert_eq!(stranger.status(), StatusCode::NOT_FOUND);
+
+    let first = router(&state).oneshot(request(&owner_cookie, key)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body = body_json(first).await;
+    let contract_id = first_body["contract_id"].as_str().unwrap().to_owned();
+
+    let retry = router(&state).oneshot(request(&owner_cookie, key)).await.unwrap();
+    assert_eq!(retry.status(), StatusCode::OK);
+    assert_eq!(body_json(retry).await["contract_id"], contract_id);
+
+    let conflicting = router(&state).oneshot(request(&owner_cookie, Uuid::new_v4())).await.unwrap();
+    assert_eq!(conflicting.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
 async fn owner_allocates_an_encrypted_seed_without_secret_material_in_the_response() {
     let state = test_state().await;
     let (owner_id, owner_cookie) = user_session(&state).await;
