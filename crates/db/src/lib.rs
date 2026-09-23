@@ -2,6 +2,7 @@ mod catalog;
 mod config;
 mod contracts;
 mod database;
+mod history;
 mod identity;
 mod ids;
 mod inventory;
@@ -24,6 +25,10 @@ pub use contracts::{
     list_contract_inputs,
 };
 pub use database::{Database, DatabaseError, MIGRATOR};
+pub use history::{
+    ContractHistoryRow, InventoryEventHistoryRow, LedgerHistoryRow, list_contract_history,
+    list_inventory_event_history, list_ledger_history,
+};
 pub use identity::{
     Account, ActiveSession, UserCredential, create_user_session, find_account_by_public_id,
     find_active_user_session, find_user_credential_by_login, find_user_credit_balance,

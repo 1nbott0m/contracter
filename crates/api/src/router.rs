@@ -20,7 +20,7 @@ use tower_http::{
 use crate::{
     error::ApiError,
     request_id::request_id_middleware,
-    routes::{account, auth, catalog, health, inventory, market, quote},
+    routes::{account, auth, catalog, health, history, inventory, market, quote},
     state::AppState,
 };
 
@@ -74,6 +74,12 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/me/quotes", post(quote::create))
         .route("/me/market/purchases/{sku_id}", post(market::purchase))
         .route("/me/market/buybacks/{item_id}", post(market::buyback))
+        .route("/me/history/contracts", get(history::contracts))
+        .route("/me/history/ledger", get(history::ledger))
+        .route(
+            "/me/history/inventory-events",
+            get(history::inventory_events),
+        )
         .route("/me/quote", get(quote::active))
         .route("/me/quote/{quote_id}/accept", post(quote::accept))
         .layer(axum::middleware::from_fn(private_response_headers))
