@@ -125,7 +125,11 @@ pub async fn create(
         request.allocation_id,
         &request.item_ids,
     )
-    .await?;
+    .await
+    // The proposal builder is intentionally fail-closed until candidate
+    // outputs and pricing are available; do not turn this boundary into a
+    // 500 while that capability is disabled.
+    .map_err(|_| QuoteError::CreationUnavailable)?;
     if projection.len() != request.item_ids.len()
         || projection
             .iter()

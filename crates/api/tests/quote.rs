@@ -349,26 +349,43 @@ async fn quote_acceptance_is_owner_bound_and_idempotent_over_http() {
     let request = |cookie: &str, key: Uuid| {
         Request::builder()
             .method("POST")
-            .uri(format!("/api/v1/me/quote/{}/accept", fixture.quote_public_id))
+            .uri(format!(
+                "/api/v1/me/quote/{}/accept",
+                fixture.quote_public_id
+            ))
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::COOKIE, cookie)
-            .body(Body::from(serde_json::json!({"idempotency_key": key}).to_string()))
+            .body(Body::from(
+                serde_json::json!({"idempotency_key": key}).to_string(),
+            ))
             .unwrap()
     };
 
-    let stranger = router(&state).oneshot(request(&stranger_cookie, key)).await.unwrap();
+    let stranger = router(&state)
+        .oneshot(request(&stranger_cookie, key))
+        .await
+        .unwrap();
     assert_eq!(stranger.status(), StatusCode::NOT_FOUND);
 
-    let first = router(&state).oneshot(request(&owner_cookie, key)).await.unwrap();
+    let first = router(&state)
+        .oneshot(request(&owner_cookie, key))
+        .await
+        .unwrap();
     assert_eq!(first.status(), StatusCode::OK);
     let first_body = body_json(first).await;
     let contract_id = first_body["contract_id"].as_str().unwrap().to_owned();
 
-    let retry = router(&state).oneshot(request(&owner_cookie, key)).await.unwrap();
+    let retry = router(&state)
+        .oneshot(request(&owner_cookie, key))
+        .await
+        .unwrap();
     assert_eq!(retry.status(), StatusCode::OK);
     assert_eq!(body_json(retry).await["contract_id"], contract_id);
 
-    let conflicting = router(&state).oneshot(request(&owner_cookie, Uuid::new_v4())).await.unwrap();
+    let conflicting = router(&state)
+        .oneshot(request(&owner_cookie, Uuid::new_v4()))
+        .await
+        .unwrap();
     assert_eq!(conflicting.status(), StatusCode::CONFLICT);
 }
 
