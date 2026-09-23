@@ -124,10 +124,10 @@ BEGIN
     IF (SELECT count(*) FROM inventory_item_locks WHERE quote_id=qid)<>4 OR
        (SELECT count(*) FROM quote_candidate_reservations WHERE quote_id=qid)<>2 OR
        (SELECT reserved_units FROM warehouse_stock WHERE sku_id=sku)<>2 OR
-       (SELECT outstanding_quote_exposure_microcredits FROM risk_state)<>100 OR
-       (SELECT liability_microcredits FROM risk_sku_exposures WHERE sku_id=sku)<>100 OR
+       (SELECT outstanding_quote_exposure_microcredits FROM risk_state)<>80000000 OR
+       (SELECT liability_microcredits FROM risk_sku_exposures WHERE sku_id=sku)<>80000000 OR
        (SELECT reserved_units FROM risk_sku_exposures WHERE sku_id=sku)<>2 OR
-       (SELECT liability_microcredits FROM risk_collection_exposures WHERE collection_id=c)<>100 THEN
+       (SELECT liability_microcredits FROM risk_collection_exposures WHERE collection_id=c)<>80000000 THEN
         RAISE EXCEPTION 'quote reservation projections incorrect';
     END IF;
     failed := false;
