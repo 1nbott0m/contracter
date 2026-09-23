@@ -76,6 +76,196 @@ pub struct SeedAllocationRequest {
     pub ciphertext: [u8; 48],
 }
 
+/// A server-computed and signed proposal, never deserialized from an HTTP body.
+/// The authenticated owner and owner-bound allocation are separate from the
+/// immutable quote document: PostgreSQL determines their internal IDs.
+pub struct CreateTradeupQuote {
+    pub user_id: UserId,
+    pub allocation_public_id: PublicId,
+    pub public_id: PublicId,
+    pub valuation_snapshot_id: ValuationSnapshotId,
+    pub stock_policy_version_id: StockPolicyVersionId,
+    pub risk_policy_version_id: RiskPolicyVersionId,
+    pub signing_key_id: QuoteSigningKeyId,
+    pub formula_version: String,
+    pub client_seed: Vec<u8>,
+    pub nonce: i64,
+    pub verified_input_value_microcredits: i64,
+    pub expected_buyback_microcredits: i64,
+    pub quote_total_microcredits: i64,
+    pub adjustment_microcredits: i64,
+    pub maximum_exposure_microcredits: i64,
+    pub ordered_outcome_digest: [u8; 32],
+    pub signature: [u8; 64],
+    pub selected_outcome_position: i16,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub inputs: Vec<CreateQuoteInput>,
+    pub outcomes: Vec<CreateQuoteOutcome>,
+}
+
+pub struct CreateQuoteInput {
+    pub inventory_item_id: InventoryItemId,
+    pub valuation_snapshot_item_id: ValuationSnapshotItemId,
+    pub locked_position_version: i64,
+}
+
+pub struct CreateQuoteOutcome {
+    pub sku_id: SkuId,
+    pub candidate_inventory_item_id: InventoryItemId,
+    pub valuation_snapshot_item_id: ValuationSnapshotItemId,
+    pub probability_numerator: i64,
+    pub probability_denominator: i64,
+    pub output_float: Decimal,
+    pub buyback_microcredits: i64,
+}
+
+type JsonValue = sqlx::types::JsonValue;
+
+fn json_object<const N: usize>(entries: [(&str, JsonValue); N]) -> JsonValue {
+    JsonValue::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    )
+}
+
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 15)]));
+    }
+    encoded
+}
+
+impl CreateTradeupQuote {
+    fn payloads(&self) -> (JsonValue, JsonValue, JsonValue) {
+        let quote = json_object([
+            ("public_id", self.public_id.get().to_string().into()),
+            (
+                "valuation_snapshot_id",
+                self.valuation_snapshot_id.get().into(),
+            ),
+            (
+                "stock_policy_version_id",
+                self.stock_policy_version_id.get().into(),
+            ),
+            (
+                "risk_policy_version_id",
+                self.risk_policy_version_id.get().into(),
+            ),
+            ("signing_key_id", self.signing_key_id.get().into()),
+            ("formula_version", self.formula_version.clone().into()),
+            ("client_seed", lowercase_hex(&self.client_seed).into()),
+            ("nonce", self.nonce.into()),
+            (
+                "verified_input_value_microcredits",
+                self.verified_input_value_microcredits.into(),
+            ),
+            (
+                "expected_buyback_microcredits",
+                self.expected_buyback_microcredits.into(),
+            ),
+            (
+                "quote_total_microcredits",
+                self.quote_total_microcredits.into(),
+            ),
+            (
+                "adjustment_microcredits",
+                self.adjustment_microcredits.into(),
+            ),
+            (
+                "maximum_exposure_microcredits",
+                self.maximum_exposure_microcredits.into(),
+            ),
+            (
+                "ordered_outcome_digest",
+                lowercase_hex(&self.ordered_outcome_digest).into(),
+            ),
+            ("signature", lowercase_hex(&self.signature).into()),
+            (
+                "selected_outcome_position",
+                self.selected_outcome_position.into(),
+            ),
+            ("created_at", self.created_at.to_rfc3339().into()),
+            ("expires_at", self.expires_at.to_rfc3339().into()),
+        ]);
+        let inputs = JsonValue::Array(
+            self.inputs
+                .iter()
+                .map(|input| {
+                    json_object([
+                        ("inventory_item_id", input.inventory_item_id.get().into()),
+                        (
+                            "valuation_snapshot_item_id",
+                            input.valuation_snapshot_item_id.get().into(),
+                        ),
+                        (
+                            "locked_position_version",
+                            input.locked_position_version.into(),
+                        ),
+                    ])
+                })
+                .collect(),
+        );
+        let outcomes = JsonValue::Array(
+            self.outcomes
+                .iter()
+                .map(|outcome| {
+                    json_object([
+                        ("sku_id", outcome.sku_id.get().into()),
+                        (
+                            "candidate_inventory_item_id",
+                            outcome.candidate_inventory_item_id.get().into(),
+                        ),
+                        (
+                            "valuation_snapshot_item_id",
+                            outcome.valuation_snapshot_item_id.get().into(),
+                        ),
+                        (
+                            "probability_numerator",
+                            outcome.probability_numerator.into(),
+                        ),
+                        (
+                            "probability_denominator",
+                            outcome.probability_denominator.into(),
+                        ),
+                        // PostgreSQL casts the exact decimal text to numeric; never f64.
+                        ("output_float", outcome.output_float.to_string().into()),
+                        ("buyback_microcredits", outcome.buyback_microcredits.into()),
+                    ])
+                })
+                .collect(),
+        );
+        (quote, inputs, outcomes)
+    }
+}
+
+/// Persists an already-computed proposal atomically. PostgreSQL rechecks owner,
+/// allocation expiry, positions, stock, and risk at the write boundary.
+pub async fn create_tradeup_quote_for_user<'e, E>(
+    executor: E,
+    request: &CreateTradeupQuote,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let (quote, inputs, outcomes) = request.payloads();
+    Ok(
+        sqlx::query_scalar("SELECT create_quote_for_user($1, $2, $3, $4, $5)")
+            .bind(request.user_id)
+            .bind(request.allocation_public_id)
+            .bind(sqlx::types::Json(quote))
+            .bind(sqlx::types::Json(inputs))
+            .bind(sqlx::types::Json(outcomes))
+            .fetch_one(executor)
+            .await?,
+    )
+}
+
 pub async fn allocate_seed_for_user<'e, E>(
     executor: E,
     request: &SeedAllocationRequest,
@@ -179,4 +369,84 @@ where
     .bind(quote_id)
     .fetch_all(executor)
     .await?)
+}
+
+#[cfg(test)]
+mod creation_tests {
+    use super::*;
+
+    #[test]
+    fn atomic_writer_payload_preserves_exact_values_and_sql_contract() {
+        let created_at = DateTime::from_timestamp(1_800_000_000, 123_456_000).unwrap();
+        let request = CreateTradeupQuote {
+            user_id: UserId::new(12),
+            allocation_public_id: PublicId::new(uuid::Uuid::new_v4()),
+            public_id: PublicId::new(uuid::Uuid::new_v4()),
+            valuation_snapshot_id: ValuationSnapshotId::new(3),
+            stock_policy_version_id: StockPolicyVersionId::new(4),
+            risk_policy_version_id: RiskPolicyVersionId::new(5),
+            signing_key_id: QuoteSigningKeyId::new(6),
+            formula_version: "test/v1".to_owned(),
+            client_seed: vec![0x00, 0xab, 0xff],
+            nonce: 1,
+            verified_input_value_microcredits: i64::MAX,
+            expected_buyback_microcredits: 1234,
+            quote_total_microcredits: 2000,
+            adjustment_microcredits: -100,
+            maximum_exposure_microcredits: 1334,
+            ordered_outcome_digest: [0xab; 32],
+            signature: [0xcd; 64],
+            selected_outcome_position: 1,
+            created_at,
+            expires_at: DateTime::from_timestamp(1_800_000_015, 123_456_000).unwrap(),
+            inputs: [19, 3, 25, 9]
+                .into_iter()
+                .map(|id| CreateQuoteInput {
+                    inventory_item_id: InventoryItemId::new(id),
+                    valuation_snapshot_item_id: ValuationSnapshotItemId::new(21),
+                    locked_position_version: 42,
+                })
+                .collect(),
+            outcomes: vec![CreateQuoteOutcome {
+                sku_id: SkuId::new(11),
+                candidate_inventory_item_id: InventoryItemId::new(12),
+                valuation_snapshot_item_id: ValuationSnapshotItemId::new(23),
+                probability_numerator: 100,
+                probability_denominator: 100,
+                output_float: Decimal::new(123456789012345678, 18),
+                buyback_microcredits: 1234,
+            }],
+        };
+        let (quote, inputs, outcomes) = request.payloads();
+        assert_eq!(quote["client_seed"].as_str(), Some("00abff"));
+        assert_eq!(quote["ordered_outcome_digest"], "ab".repeat(32));
+        assert_eq!(quote["signature"], "cd".repeat(64));
+        assert_eq!(
+            quote["verified_input_value_microcredits"].as_i64(),
+            Some(i64::MAX)
+        );
+        assert_eq!(quote["adjustment_microcredits"].as_i64(), Some(-100));
+        assert_eq!(quote["selected_outcome_position"].as_i64(), Some(1));
+        assert_eq!(quote["created_at"], request.created_at.to_rfc3339());
+        assert_eq!(quote["expires_at"], request.expires_at.to_rfc3339());
+        assert!(quote.get("user_id").is_none());
+        assert!(quote.get("allocation_id").is_none());
+        assert!(quote.get("commitment_id").is_none());
+        let ids: Vec<_> = inputs
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|input| input["inventory_item_id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![19, 3, 25, 9]);
+        assert_eq!(inputs[0]["locked_position_version"].as_i64(), Some(42));
+        assert_eq!(
+            outcomes[0]["output_float"].as_str(),
+            Some("0.123456789012345678")
+        );
+        assert_eq!(
+            outcomes[0]["candidate_inventory_item_id"].as_i64(),
+            Some(12)
+        );
+    }
 }

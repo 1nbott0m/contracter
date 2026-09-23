@@ -71,6 +71,7 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/me/inventory", get(inventory::list))
         .route("/me/inventory/{item_id}", get(inventory::detail))
         .route("/me/quote-allocations", post(quote::allocate))
+        .route("/me/quotes", post(quote::create))
         .route("/me/market/purchases/{sku_id}", post(market::purchase))
         .route("/me/market/buybacks/{item_id}", post(market::buyback))
         .route("/me/quote", get(quote::active))

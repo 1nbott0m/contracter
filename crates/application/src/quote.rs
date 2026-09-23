@@ -6,6 +6,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum QuoteError {
+    #[error("a quote requires 4 to 10 distinct item IDs and a client seed of 1 to 1024 bytes")]
+    InvalidRequest,
+    #[error("quote creation is unavailable")]
+    CreationUnavailable,
     #[error("there is no active quote")]
     NotFound,
     #[error("quote data is inconsistent")]
@@ -18,6 +22,47 @@ pub enum QuoteError {
     SeedProtection(#[from] SeedProtectionError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
+}
+
+/// The entire client-controlled quote input. Prices, candidates, weights,
+/// signatures and seeds from the server are deliberately absent.
+pub struct CreateQuoteRequest {
+    pub allocation_id: PublicId,
+    pub item_ids: Vec<PublicId>,
+    pub client_seed: Vec<u8>,
+}
+
+impl CreateQuoteRequest {
+    pub fn validate(&self) -> Result<(), QuoteError> {
+        let distinct = self
+            .item_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        if !(economy_core::tradeup::MIN_INPUT_COUNT..=economy_core::tradeup::MAX_INPUT_COUNT)
+            .contains(&self.item_ids.len())
+            || distinct.len() != self.item_ids.len()
+            || !(1..=1024).contains(&self.client_seed.len())
+        {
+            return Err(QuoteError::InvalidRequest);
+        }
+        Ok(())
+    }
+}
+
+/// Validates the public boundary and fails closed until the complete
+/// server-side proposal builder is available. In particular, the runtime
+/// role cannot read seed_secret_envelopes; no owner-bound envelope reader or
+/// versioned canonical quote-signature encoding exists yet. A configured
+/// signer alone must never enable unsigned or client-computed proposals.
+pub async fn create(
+    _database: &Database,
+    _owner: UserId,
+    request: &CreateQuoteRequest,
+    _protector: &(impl SeedProtector + ?Sized),
+    _signer: &(impl crate::quote_signing::QuoteSigner + ?Sized),
+) -> Result<ActiveQuote, QuoteError> {
+    request.validate()?;
+    Err(QuoteError::CreationUnavailable)
 }
 
 pub struct AcceptedQuote {
@@ -167,4 +212,45 @@ pub async fn find_active(database: &Database, owner: UserId) -> Result<ActiveQuo
         inputs,
         outcomes,
     })
+}
+
+#[cfg(test)]
+mod creation_tests {
+    use super::*;
+
+    fn request(count: usize) -> CreateQuoteRequest {
+        CreateQuoteRequest {
+            allocation_id: PublicId::new(uuid::Uuid::new_v4()),
+            item_ids: (0..count)
+                .map(|_| PublicId::new(uuid::Uuid::new_v4()))
+                .collect(),
+            client_seed: b"client-chosen-seed".to_vec(),
+        }
+    }
+
+    #[test]
+    fn input_count_must_be_four_through_ten() {
+        for count in 0..=12 {
+            assert_eq!(request(count).validate().is_ok(), (4..=10).contains(&count));
+        }
+    }
+
+    #[test]
+    fn duplicate_ids_do_not_count_as_distinct_inputs() {
+        let mut request = request(4);
+        request.item_ids[3] = request.item_ids[0];
+        assert!(matches!(
+            request.validate(),
+            Err(QuoteError::InvalidRequest)
+        ));
+    }
+
+    #[test]
+    fn client_seed_limit_counts_bytes() {
+        let mut request = request(4);
+        for (length, valid) in [(0, false), (1, true), (1024, true), (1025, false)] {
+            request.client_seed = vec![42; length];
+            assert_eq!(request.validate().is_ok(), valid);
+        }
+    }
 }
