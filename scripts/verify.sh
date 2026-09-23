@@ -24,7 +24,15 @@ if [ -n "${TEST_DATABASE_URL:-}" ]; then
     # HTTP and use-case integration tests, and they must run after
     # db/verify.sh, which expects a pristine database (the Rust suites
     # commit fixtures on purpose).
-    cargo test --workspace --tests -- --ignored
+    # db/verify.sh seeds reference data and deliberately leaves it committed
+    # for SQL assertions. Rust integration tests use rollback fixtures and
+    # must run against a separate pristine database.
+    if [ -n "${TEST_DATABASE_URL_INTEGRATION:-}" ]; then
+        TEST_DATABASE_URL="$TEST_DATABASE_URL_INTEGRATION" \
+            cargo test --workspace --tests -- --ignored
+    else
+        cargo test --workspace --tests -- --ignored
+    fi
 else
     echo "PostgreSQL integration skipped: TEST_DATABASE_URL is not set"
 fi
