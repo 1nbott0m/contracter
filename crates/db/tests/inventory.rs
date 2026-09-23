@@ -365,6 +365,13 @@ async fn user_inventory_excludes_retired_and_actively_locked_items_in_stable_ord
 async fn warehouse_inventory_excludes_retired_locked_and_reserved_items_in_stable_order() {
     let database = test_database().await;
     let mut transaction = isolated_transaction(&database).await;
+    // Other ignored integration binaries may run concurrently against the
+    // same database. Remove their committed warehouse fixtures so this
+    // listing assertion remains isolated even when Cargo parallelizes tests.
+    sqlx::query("TRUNCATE TABLE inventory_items, warehouse_stock RESTART IDENTITY CASCADE")
+        .execute(transaction.as_mut())
+        .await
+        .expect("clear committed inventory fixtures");
     let (_, _, sku_id, user_id) = seed_inventory_item(&mut transaction).await;
     let (first_id, _) = insert_inventory_item(
         &mut transaction,

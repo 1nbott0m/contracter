@@ -13,6 +13,7 @@ use axum::{
     routing::{get, post},
 };
 use tower::ServiceBuilder;
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     catch_panic::CatchPanicLayer, cors::CorsLayer, limit::RequestBodyLimitLayer, trace::TraceLayer,
 };
@@ -31,6 +32,9 @@ pub struct RouterConfig {
     pub request_timeout: Duration,
     pub max_body_bytes: usize,
     pub cors_allowed_origins: Vec<String>,
+    /// Requests per second limiter burst. `None` is used by in-process tests;
+    /// production wiring must set a finite value.
+    pub rate_limit_burst: Option<u32>,
 }
 
 impl Default for RouterConfig {
@@ -39,6 +43,7 @@ impl Default for RouterConfig {
             request_timeout: Duration::from_secs(10),
             max_body_bytes: 256 * 1024,
             cors_allowed_origins: Vec::new(),
+            rate_limit_burst: None,
         }
     }
 }
@@ -104,6 +109,15 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
                 .timeout(config.request_timeout),
         );
 
+    if let Some(burst) = config.rate_limit_burst {
+        let governor = GovernorConfigBuilder::default()
+            .const_per_second(1)
+            .const_burst_size(burst.max(1))
+            .finish()
+            .expect("rate limiter configuration must be valid");
+        router = router.layer(GovernorLayer::new(governor));
+    }
+
     // CORS wraps outside timeout/body-limit/panic handling so error
     // responses (503 on timeout, 500 on panic, etc.) still carry the
     // headers a browser needs to read them via fetch, not just 2xx ones.
@@ -130,6 +144,10 @@ async fn private_response_headers(request: Request, next: Next) -> Response {
     let headers = response.headers_mut();
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(VARY, HeaderValue::from_static("Cookie"));
+    headers.insert(
+        axum::http::header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
     response
 }
 

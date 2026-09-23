@@ -172,6 +172,27 @@ async fn credit_adjustment_updates_balance_and_is_idempotent() {
 
 #[tokio::test]
 #[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn user_credit_balance_cannot_become_negative() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    let (administrator_id, target_user_id, _, _) =
+        seed_credit_adjustment_fixture(&mut transaction).await;
+    let error = post_credit_adjustment(
+        transaction.as_mut(),
+        administrator_id,
+        target_user_id,
+        -1,
+        Uuid::new_v4(),
+        None,
+    )
+    .await
+    .expect_err("a user credit account must not settle below zero");
+    assert_eq!(error.database_code().as_deref(), Some("23514"));
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
 async fn invalid_adjustment_rolls_back_without_creating_an_event_or_balance() {
     let database = test_database().await;
     let mut transaction = isolated_transaction(&database).await;

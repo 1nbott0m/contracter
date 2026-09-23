@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+: "${TEST_DATABASE_URL:?TEST_DATABASE_URL is required}"
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export LC_ALL=C
+
+for migration in "$repo_dir"/db/migrations/*.sql; do
+    psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+        --single-transaction --command='SET ROLE anonymous' --file="$migration"
+done
+for seed in "$repo_dir"/db/seeds/*.sql; do
+    psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+        --single-transaction --command='SET ROLE anonymous' --file="$seed"
+done
+
+# Keep reference catalog/risk data, but remove every mutable inventory/quote
+# fixture: the ignored suites create their own deterministic state.  CASCADE
+# is intentional here because quote reservations and transfer events reference
+# inventory rows; leaving any of those rows behind makes tests depend on order.
+psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+    --command='SET ROLE anonymous' \
+    --command='TRUNCATE TABLE
+        inventory_transfer_events,
+        inventory_item_locks,
+        quote_candidate_reservations,
+        quote_outcomes,
+        quote_inputs,
+        tradeup_quotes,
+        price_halts,
+        inventory_positions,
+        inventory_items,
+        warehouse_stock
+        RESTART IDENTITY CASCADE;'

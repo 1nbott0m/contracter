@@ -4,13 +4,21 @@
 //! never belongs in PostgreSQL, application responses, logs, or source control.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use ed25519_dalek::{Signer as _, SigningKey};
+use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier, VerifyingKey};
 use thiserror::Error;
 
 pub trait QuoteSigner: Send + Sync {
     fn public_key(&self) -> [u8; 32];
 
     fn sign(&self, payload_digest: &[u8; 32]) -> [u8; 64];
+
+    fn verify(&self, payload_digest: &[u8; 32], signature: &[u8; 64]) -> bool {
+        let Ok(key) = VerifyingKey::from_bytes(&self.public_key()) else {
+            return false;
+        };
+        key.verify(payload_digest, &Signature::from_bytes(signature))
+            .is_ok()
+    }
 }
 
 #[derive(Clone)]

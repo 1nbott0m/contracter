@@ -51,5 +51,7 @@ jobs:
       - name: Verify workspace and PostgreSQL integration
         run: |
           psql postgresql://postgres:postgres@localhost:5432/postgres \
-            -v ON_ERROR_STOP=1 -c 'CREATE DATABASE contracter_integration'
+            -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE anonymous NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_admin_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_readonly NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
+          psql postgresql://postgres:postgres@localhost:5432/postgres \
+            -v ON_ERROR_STOP=1 -c 'CREATE DATABASE contracter_integration OWNER anonymous'
           ./scripts/verify.sh

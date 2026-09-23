@@ -83,6 +83,51 @@ pub fn canonical_quote_digest(
     Sha256::digest(bytes).into()
 }
 
+/// Canonical digest for the immutable economic quote payload. Every value
+/// that affects settlement is included, so changing economics invalidates the
+/// signature even when public identifiers remain unchanged.
+#[allow(clippy::too_many_arguments)]
+pub fn canonical_quote_payload_digest(
+    allocation_id: PublicId,
+    client_seed: &[u8],
+    ordered_outcome_digest: &[u8; 32],
+    formula_version: &str,
+    valuation_snapshot_id: i64,
+    stock_policy_version_id: i64,
+    risk_policy_version_id: i64,
+    input_value_microcredits: i64,
+    expected_buyback_microcredits: i64,
+    quote_total_microcredits: i64,
+    adjustment_microcredits: i64,
+    maximum_exposure_microcredits: i64,
+    selected_outcome_position: i16,
+) -> [u8; 32] {
+    let mut bytes = Vec::with_capacity(256 + client_seed.len() + formula_version.len());
+    bytes.extend_from_slice(b"contracter/quote/economic-v2\0");
+    let mut push = |field: &[u8]| {
+        bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(field);
+    };
+    push(allocation_id.get().as_bytes());
+    push(client_seed);
+    push(ordered_outcome_digest);
+    push(formula_version.as_bytes());
+    for value in [
+        valuation_snapshot_id,
+        stock_policy_version_id,
+        risk_policy_version_id,
+        input_value_microcredits,
+        expected_buyback_microcredits,
+        quote_total_microcredits,
+        adjustment_microcredits,
+        maximum_exposure_microcredits,
+        i64::from(selected_outcome_position),
+    ] {
+        push(&value.to_be_bytes());
+    }
+    Sha256::digest(bytes).into()
+}
+
 /// The entire client-controlled quote input. Prices, candidates, weights,
 /// signatures and seeds from the server are deliberately absent.
 pub struct CreateQuoteRequest {
@@ -215,13 +260,44 @@ pub async fn create(
         &priced,
     )
     .map_err(|_| QuoteError::Inconsistent)?;
-    let ordered_digest = canonical_quote_digest(
+    let input_value_microcredits = projection
+        .iter()
+        .try_fold(0_i64, |sum, row| {
+            sum.checked_add(row.verified_price_microcredits)
+        })
+        .ok_or(QuoteError::Inconsistent)?;
+    let maximum_exposure_microcredits = outcomes
+        .iter()
+        .map(|row| economy_core::pricing::buyback_microcredits(row.verified_price_microcredits))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| QuoteError::Inconsistent)?
+        .into_iter()
+        .max()
+        .ok_or(QuoteError::Inconsistent)?;
+    let selected_outcome_position = outcomes
+        .iter()
+        .position(|r| r.output_sku_public_id == selected.output_sku_public_id)
+        .map(|position| position as i16 + 1)
+        .ok_or(QuoteError::Inconsistent)?;
+    let ordered_digest = canonical_quote_payload_digest(
         request.allocation_id,
         &request.client_seed,
         &selection.digest,
         &first.formula_version,
+        first.valuation_snapshot_id.get(),
+        first.stock_policy_version_id.get(),
+        first.risk_policy_version_id.get(),
+        input_value_microcredits,
+        price.expected_buyback_microcredits,
+        price.quote_total_microcredits,
+        price.adjustment_microcredits,
+        maximum_exposure_microcredits,
+        selected_outcome_position,
     );
     let signature = _signer.sign(&ordered_digest);
+    if !_signer.verify(&ordered_digest, &signature) {
+        return Err(QuoteError::Inconsistent);
+    }
     let now = db::chrono::Utc::now();
     let quote_id = PublicId::new(uuid::Uuid::new_v4());
     let payload = db::CreateTradeupQuote {
@@ -235,30 +311,14 @@ pub async fn create(
         formula_version: first.formula_version.clone(),
         client_seed: request.client_seed.clone(),
         nonce: 0,
-        verified_input_value_microcredits: projection
-            .iter()
-            .try_fold(0_i64, |sum, row| {
-                sum.checked_add(row.verified_price_microcredits)
-            })
-            .ok_or(QuoteError::Inconsistent)?,
+        verified_input_value_microcredits: input_value_microcredits,
         expected_buyback_microcredits: price.expected_buyback_microcredits,
         quote_total_microcredits: price.quote_total_microcredits,
         adjustment_microcredits: price.adjustment_microcredits,
-        maximum_exposure_microcredits: outcomes
-            .iter()
-            .map(|row| economy_core::pricing::buyback_microcredits(row.verified_price_microcredits))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| QuoteError::Inconsistent)?
-            .into_iter()
-            .max()
-            .ok_or(QuoteError::Inconsistent)?,
+        maximum_exposure_microcredits,
         ordered_outcome_digest: ordered_digest,
         signature,
-        selected_outcome_position: outcomes
-            .iter()
-            .position(|r| r.output_sku_public_id == selected.output_sku_public_id)
-            .map(|position| position as i16 + 1)
-            .ok_or(QuoteError::Inconsistent)?,
+        selected_outcome_position,
         created_at: now,
         expires_at: first.allocation_expires_at,
         inputs: projection

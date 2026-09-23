@@ -28,8 +28,16 @@ if [ -n "${TEST_DATABASE_URL:-}" ]; then
     # for SQL assertions. Rust integration tests use rollback fixtures and
     # must run against a separate pristine database.
     if [ -n "${TEST_DATABASE_URL_INTEGRATION:-}" ]; then
-        TEST_DATABASE_URL="$TEST_DATABASE_URL_INTEGRATION" \
-            cargo test --workspace --tests -- --ignored
+        TEST_DATABASE_URL="$TEST_DATABASE_URL_INTEGRATION" ./scripts/prepare_integration_db.sh
+        # Cargo may execute test binaries from one package concurrently. The
+        # integration fixtures share a database, so run each target in a
+        # deterministic sequence while retaining parallelism inside a target.
+        find crates -path '*/tests/*.rs' -type f | sort | while IFS= read -r test_file; do
+            package=$(basename "$(dirname "$(dirname "$test_file")")")
+            target=$(basename "$test_file" .rs)
+            CONTRACTER_MIGRATIONS_READY=1 TEST_DATABASE_URL="$TEST_DATABASE_URL_INTEGRATION" \
+                cargo test -p "$package" --test "$target" -- --ignored --test-threads=1
+        done
     else
         cargo test --workspace --tests -- --ignored
     fi

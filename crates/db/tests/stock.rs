@@ -228,6 +228,14 @@ async fn active_stock_policy_bands_are_scoped_to_the_active_version_and_stably_o
 async fn risk_state_singleton_reflects_current_values() {
     let database = test_database().await;
     let mut transaction = isolated_transaction(&database).await;
+    transaction
+        .execute(
+            "UPDATE risk_state SET valuation_snapshot_id = NULL, risk_policy_version_id = NULL, \
+             liquid_reserve_microcredits = 0, stressed_liability_microcredits = 0, \
+             outstanding_quote_exposure_microcredits = 0, version = 0 WHERE singleton",
+        )
+        .await
+        .expect("reset risk state fixture");
 
     let initial = find_risk_state(transaction.as_mut())
         .await

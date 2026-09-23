@@ -113,7 +113,9 @@ BEGIN
     BEGIN
         PERFORM purchase_market_item_for_user(buyer, sku_public, gen_random_uuid());
         RAISE EXCEPTION 'insufficient balance accepted';
-    EXCEPTION WHEN check_violation THEN NULL; END;
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLSTATE <> '23514' THEN RAISE; END IF;
+    END;
     IF (SELECT available_units FROM warehouse_stock WHERE sku_id = sku) <> 1
        OR (SELECT balance_microcredits FROM ledger_balances WHERE account_id = wallet) <> 984 THEN
         RAISE EXCEPTION 'failed purchase changed stock or funds';

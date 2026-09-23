@@ -37,7 +37,13 @@ async fn run() -> Result<(), StartupError> {
         );
         state = state.with_insecure_cookies();
     }
-    let router = build_router(state, &RouterConfig::default());
+    let router = build_router(
+        state,
+        &RouterConfig {
+            rate_limit_burst: Some(30),
+            ..RouterConfig::default()
+        },
+    );
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;
     tracing::info!(addr = %config.bind_addr(), "contracter-server listening");

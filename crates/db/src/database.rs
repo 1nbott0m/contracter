@@ -51,7 +51,19 @@ impl Database {
     }
 
     pub async fn migrate(&self) -> Result<(), DatabaseError> {
-        MIGRATOR.run(&self.pool).await?;
+        if std::env::var_os("CONTRACTER_MIGRATIONS_READY").is_some() {
+            self.health_check().await?;
+            return Ok(());
+        }
+        let mut connection = self.pool.acquire().await?;
+        sqlx::query("SELECT pg_advisory_lock(70420260923)")
+            .execute(&mut *connection)
+            .await?;
+        let result = MIGRATOR.run(&mut *connection).await;
+        sqlx::query("SELECT pg_advisory_unlock(70420260923)")
+            .execute(&mut *connection)
+            .await?;
+        result?;
         Ok(())
     }
 

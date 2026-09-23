@@ -76,7 +76,7 @@ async fn seed_market_sku(
     let suffix = Uuid::new_v4().simple().to_string();
     sqlx::query(
         "INSERT INTO rarities (code, rank, is_covert) \
-         VALUES ('http_market', 9601, false) ON CONFLICT (code) DO NOTHING",
+         VALUES ('http_market', 9601, false) ON CONFLICT DO NOTHING",
     )
     .execute(pool)
     .await

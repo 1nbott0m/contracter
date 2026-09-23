@@ -331,14 +331,30 @@ impl CreateTradeupQuote {
 
 /// Persists an already-computed proposal atomically. PostgreSQL rechecks owner,
 /// allocation expiry, positions, stock, and risk at the write boundary.
-pub async fn create_tradeup_quote_for_user<'e, E>(
-    executor: E,
+pub async fn create_tradeup_quote_for_user(
+    pool: &sqlx::PgPool,
     request: &CreateTradeupQuote,
-) -> Result<PublicId, DatabaseError>
-where
-    E: Executor<'e, Database = Postgres>,
-{
+) -> Result<PublicId, DatabaseError> {
     let (quote, inputs, outcomes) = request.payloads();
+    let public_key: Vec<u8> = sqlx::query_scalar(
+        "SELECT public_key FROM quote_signing_keys WHERE id = $1 AND retired_at IS NULL",
+    )
+    .bind(request.signing_key_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| sqlx::Error::Protocol("quote signing key is unavailable".into()))?;
+    let public_key: [u8; 32] = public_key
+        .try_into()
+        .map_err(|_| sqlx::Error::Protocol("invalid quote signing key length".into()))?;
+    let signature = request.signature;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&public_key)
+        .map_err(|_| sqlx::Error::Protocol("invalid quote signing key".into()))?;
+    verifying_key
+        .verify_strict(
+            &request.ordered_outcome_digest,
+            &ed25519_dalek::Signature::from_bytes(&signature),
+        )
+        .map_err(|_| sqlx::Error::Protocol("invalid quote signature".into()))?;
     Ok(
         sqlx::query_scalar("SELECT create_quote_for_user($1, $2, $3, $4, $5)")
             .bind(request.user_id)
@@ -346,7 +362,7 @@ where
             .bind(sqlx::types::Json(quote))
             .bind(sqlx::types::Json(inputs))
             .bind(sqlx::types::Json(outcomes))
-            .fetch_one(executor)
+            .fetch_one(pool)
             .await?,
     )
 }
