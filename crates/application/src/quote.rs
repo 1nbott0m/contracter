@@ -74,7 +74,7 @@ pub fn canonical_quote_digest(
     for field in [
         allocation_id.get().as_bytes().as_slice(),
         client_seed,
-        ordered_outcome_digest: ordered_digest,
+        ordered_outcome_digest,
         formula_version.as_bytes(),
     ] {
         bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
@@ -236,7 +236,7 @@ pub async fn create(
         quote_total_microcredits: price.quote_total_microcredits,
         adjustment_microcredits: price.adjustment_microcredits,
         maximum_exposure_microcredits: price.expected_buyback_microcredits,
-        ordered_outcome_digest,
+        ordered_outcome_digest: ordered_digest,
         signature,
         selected_outcome_position: outcomes
             .iter()
