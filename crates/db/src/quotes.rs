@@ -110,6 +110,26 @@ pub struct QuoteProposalProjection {
     pub signing_key_id: QuoteSigningKeyId,
     pub formula_version: String,
 }
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct QuoteCandidateProjection {
+    pub inventory_item_id: InventoryItemId,
+    pub inventory_item_public_id: PublicId,
+    pub sku_id: SkuId,
+    pub sku_public_id: PublicId,
+    pub catalog_item_id: crate::CatalogItemId,
+    pub collection_id: crate::CollectionId,
+    pub rarity_code: String,
+    pub canonical_float: Decimal,
+    pub valuation_snapshot_item_id: ValuationSnapshotItemId,
+    pub verified_price_microcredits: i64,
+    pub warehouse_available_units: i32,
+    pub warehouse_reserved_units: i32,
+    pub sku_liability_microcredits: i64,
+    pub sku_reserved_units: i32,
+    pub collection_liability_microcredits: i64,
+    pub scarcity_weight_numerator: i64,
+    pub scarcity_weight_denominator: i64,
+}
 
 /// A server-computed and signed proposal, never deserialized from an HTTP body.
 /// The authenticated owner and owner-bound allocation are separate from the
@@ -365,6 +385,19 @@ where
     .bind(&ids)
     .fetch_all(executor)
     .await?)
+}
+
+pub async fn read_quote_candidate_projection<'e, E>(
+    executor: E,
+    user_id: UserId,
+    allocation_public_id: PublicId,
+    collection_id: crate::CollectionId,
+    rarity_code: &str,
+) -> Result<Vec<QuoteCandidateProjection>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT inventory_item_id, inventory_item_public_id, sku_id, sku_public_id, catalog_item_id, collection_id, rarity_code, canonical_float, valuation_snapshot_item_id, verified_price_microcredits, warehouse_available_units, warehouse_reserved_units, sku_liability_microcredits, sku_reserved_units, collection_liability_microcredits, scarcity_weight_numerator, scarcity_weight_denominator FROM read_quote_candidate_projection($1,$2,$3,$4)").bind(user_id).bind(allocation_public_id).bind(collection_id).bind(rarity_code).fetch_all(executor).await?)
 }
 
 pub async fn find_tradeup_quote<'e, E>(
