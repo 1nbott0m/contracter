@@ -74,7 +74,7 @@ pub fn canonical_quote_digest(
     for field in [
         allocation_id.get().as_bytes().as_slice(),
         client_seed,
-        ordered_outcome_digest,
+        ordered_outcome_digest: ordered_digest,
         formula_version.as_bytes(),
     ] {
         bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
@@ -146,10 +146,135 @@ pub async fn create(
         ciphertext: first.seed_ciphertext.clone(),
     };
     let _server_seed = decrypt_server_seed(&envelope, _protector)?;
-    // The projection deliberately contains no candidate outputs. Do not
-    // synthesize them from client data or publish an unsigned proposal.
-    let _ = _signer;
-    Err(QuoteError::CreationUnavailable)
+    let input_ids: Vec<_> = projection.iter().map(|row| row.inventory_item_id).collect();
+    let outcomes = db::read_quote_canonical_outcomes(
+        _database.pool(),
+        _owner,
+        request.allocation_id,
+        &input_ids,
+    )
+    .await?;
+    if outcomes.is_empty()
+        || outcomes
+            .iter()
+            .any(|row| !row.stock_eligible || !row.risk_eligible)
+    {
+        return Err(QuoteError::CreationUnavailable);
+    }
+    let first = &projection[0];
+    let weighted: Vec<_> = outcomes
+        .iter()
+        .map(|row| economy_core::tradeup::WeightedOutcome {
+            sku_id: row.output_sku_public_id.get().to_string(),
+            collection_id: row.output_collection_id.get().to_string(),
+            weight_numerator: row.output_weight_numerator as u64,
+            weight_denominator: row.output_weight_denominator as u64,
+        })
+        .collect();
+    let selection =
+        economy_core::tradeup::select_outcome(&weighted, &_server_seed, &request.client_seed, 0)
+            .map_err(|_| QuoteError::Inconsistent)?;
+    let selected = outcomes
+        .iter()
+        .find(|row| row.output_sku_public_id.get().to_string() == selection.sku_id)
+        .ok_or(QuoteError::Inconsistent)?;
+    let inputs: Vec<_> = projection
+        .iter()
+        .map(|row| economy_core::tradeup::InputItem {
+            sku_id: row.sku_public_id.get().to_string(),
+            collection_id: row.collection_id.get().to_string(),
+            rarity: 0,
+            float: row.canonical_float,
+            min_float: row.min_float,
+            max_float: row.max_float,
+        })
+        .collect();
+    let output_float = economy_core::tradeup::calculate_output_float(
+        &inputs,
+        selected.candidate_min_float,
+        selected.candidate_max_float,
+    )
+    .map_err(|_| QuoteError::Inconsistent)?;
+    let priced: Vec<_> = outcomes
+        .iter()
+        .map(|row| {
+            economy_core::pricing::PricedOutcome::new(
+                row.verified_price_microcredits,
+                row.output_weight_numerator as u64,
+                row.output_weight_denominator as u64,
+            )
+        })
+        .collect();
+    let price = economy_core::pricing::quote_adjustment_microcredits(
+        first.verified_price_microcredits * input_ids.len() as i64,
+        &priced,
+    )
+    .map_err(|_| QuoteError::Inconsistent)?;
+    let ordered_digest = canonical_quote_digest(
+        request.allocation_id,
+        &request.client_seed,
+        &selection.digest,
+        &first.formula_version,
+    );
+    let signature = _signer.sign(&ordered_digest);
+    let now = db::chrono::Utc::now();
+    let quote_id = PublicId::new(uuid::Uuid::new_v4());
+    let payload = db::CreateTradeupQuote {
+        user_id: _owner,
+        allocation_public_id: request.allocation_id,
+        public_id: quote_id,
+        valuation_snapshot_id: first.valuation_snapshot_id,
+        stock_policy_version_id: first.stock_policy_version_id,
+        risk_policy_version_id: first.risk_policy_version_id,
+        signing_key_id: first.signing_key_id,
+        formula_version: first.formula_version.clone(),
+        client_seed: request.client_seed.clone(),
+        nonce: 0,
+        verified_input_value_microcredits: first.verified_price_microcredits
+            * input_ids.len() as i64,
+        expected_buyback_microcredits: price.expected_buyback_microcredits,
+        quote_total_microcredits: price.quote_total_microcredits,
+        adjustment_microcredits: price.adjustment_microcredits,
+        maximum_exposure_microcredits: price.expected_buyback_microcredits,
+        ordered_outcome_digest,
+        signature,
+        selected_outcome_position: outcomes
+            .iter()
+            .position(|r| r.output_sku_public_id == selected.output_sku_public_id)
+            .unwrap_or(0) as i16,
+        created_at: now,
+        expires_at: first.allocation_expires_at,
+        inputs: projection
+            .iter()
+            .map(|r| db::CreateQuoteInput {
+                inventory_item_id: r.inventory_item_id,
+                valuation_snapshot_item_id: r.valuation_snapshot_item_id,
+                locked_position_version: r.locked_position_version,
+            })
+            .collect(),
+        outcomes: outcomes
+            .iter()
+            .enumerate()
+            .map(|(_, r)| db::CreateQuoteOutcome {
+                sku_id: r.output_sku_id,
+                candidate_inventory_item_id: r.candidate_inventory_item_id,
+                valuation_snapshot_item_id: r.valuation_snapshot_item_id,
+                probability_numerator: r.output_weight_numerator,
+                probability_denominator: r.output_weight_denominator,
+                output_float: if r.output_sku_public_id == selected.output_sku_public_id {
+                    output_float
+                } else {
+                    r.candidate_canonical_float
+                },
+                buyback_microcredits: economy_core::pricing::buyback_microcredits(
+                    r.verified_price_microcredits,
+                )
+                .unwrap_or(0),
+            })
+            .collect(),
+    };
+    db::create_tradeup_quote_for_user(_database.pool(), &payload).await?;
+    find_active(_database, _owner).await
 }
 
 pub struct AcceptedQuote {
