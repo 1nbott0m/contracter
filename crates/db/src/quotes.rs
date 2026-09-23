@@ -76,6 +76,14 @@ pub struct SeedAllocationRequest {
     pub ciphertext: [u8; 48],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct SeedEnvelope {
+    pub allocation_public_id: PublicId,
+    pub commitment_hash: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+}
+
 /// A server-computed and signed proposal, never deserialized from an HTTP body.
 /// The authenticated owner and owner-bound allocation are separate from the
 /// immutable quote document: PostgreSQL determines their internal IDs.
@@ -283,6 +291,24 @@ where
             .fetch_one(executor)
             .await?,
     )
+}
+
+pub async fn read_seed_envelope_for_user<'e, E>(
+    executor: E,
+    user_id: UserId,
+    allocation_public_id: PublicId,
+) -> Result<Option<SeedEnvelope>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as(
+        "SELECT allocation_public_id, commitment_hash, nonce, ciphertext \
+         FROM read_seed_envelope_for_user($1, $2)",
+    )
+    .bind(user_id)
+    .bind(allocation_public_id)
+    .fetch_optional(executor)
+    .await?)
 }
 
 pub async fn find_tradeup_quote<'e, E>(
