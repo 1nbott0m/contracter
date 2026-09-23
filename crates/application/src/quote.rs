@@ -108,11 +108,9 @@ impl CreateQuoteRequest {
     }
 }
 
-/// Validates the public boundary and fails closed until the complete
-/// server-side proposal builder is available. In particular, the runtime
-/// role cannot read seed_secret_envelopes; no owner-bound envelope reader or
-/// versioned canonical quote-signature encoding exists yet. A configured
-/// signer alone must never enable unsigned or client-computed proposals.
+/// Resolves the owner-bound proposal context and decrypts the server seed
+/// before proposal construction. The final writer is still fail-closed until
+/// candidate output selection and pricing are available in the projection.
 pub async fn create(
     _database: &Database,
     _owner: UserId,
@@ -121,6 +119,32 @@ pub async fn create(
     _signer: &(impl crate::quote_signing::QuoteSigner + ?Sized),
 ) -> Result<ActiveQuote, QuoteError> {
     request.validate()?;
+    let projection = db::read_quote_proposal_projection(
+        _database.pool(),
+        _owner,
+        request.allocation_id,
+        &request.item_ids,
+    )
+    .await?;
+    if projection.len() != request.item_ids.len()
+        || projection
+            .iter()
+            .zip(&request.item_ids)
+            .any(|(row, requested)| row.inventory_item_public_id != *requested)
+    {
+        return Err(QuoteError::Inconsistent);
+    }
+    let first = projection.first().ok_or(QuoteError::Inconsistent)?;
+    let envelope = db::SeedEnvelope {
+        allocation_public_id: first.allocation_public_id,
+        commitment_hash: first.commitment_hash.clone(),
+        nonce: first.seed_nonce.clone(),
+        ciphertext: first.seed_ciphertext.clone(),
+    };
+    let _server_seed = decrypt_server_seed(&envelope, _protector)?;
+    // The projection deliberately contains no candidate outputs. Do not
+    // synthesize them from client data or publish an unsigned proposal.
+    let _ = _signer;
     Err(QuoteError::CreationUnavailable)
 }
 
