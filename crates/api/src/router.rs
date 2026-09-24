@@ -19,6 +19,7 @@ use tower_http::{
 };
 
 use crate::{
+    client_ip::ClientIpKeyExtractor,
     error::ApiError,
     request_id::request_id_middleware,
     routes::{account, auth, catalog, health, history, inventory, market, quote},
@@ -35,6 +36,7 @@ pub struct RouterConfig {
     /// Requests per second limiter burst. `None` is used by in-process tests;
     /// production wiring must set a finite value.
     pub rate_limit_burst: Option<u32>,
+    pub trusted_proxies: crate::TrustedProxyConfig,
 }
 
 impl Default for RouterConfig {
@@ -44,6 +46,7 @@ impl Default for RouterConfig {
             max_body_bytes: 256 * 1024,
             cors_allowed_origins: Vec::new(),
             rate_limit_burst: None,
+            trusted_proxies: crate::TrustedProxyConfig::default(),
         }
     }
 }
@@ -110,9 +113,11 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         );
 
     if let Some(burst) = config.rate_limit_burst {
-        let governor = GovernorConfigBuilder::default()
-            .const_per_second(1)
-            .const_burst_size(burst.max(1))
+        let mut governor_builder = GovernorConfigBuilder::default()
+            .key_extractor(ClientIpKeyExtractor::new(config.trusted_proxies.clone()));
+        let governor = governor_builder
+            .per_second(1)
+            .burst_size(burst.max(1))
             .finish()
             .expect("rate limiter configuration must be valid");
         router = router.layer(GovernorLayer::new(governor));
@@ -232,8 +237,8 @@ mod tests {
         CatchPanicLayer, RequestBodyLimitLayer, RouterConfig, ServiceBuilder, build_router,
         handle_panic,
     };
-    use crate::AppState;
     use crate::request_id::{REQUEST_ID_HEADER, request_id_middleware};
+    use crate::{AppState, TrustedProxyConfig};
     use application::auth::AuthConfig;
     use db::{Database, DatabaseConfig};
 
@@ -337,6 +342,105 @@ mod tests {
         );
         assert_eq!(
             router.oneshot(request()).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_rate_limit_separates_clients_behind_a_trusted_proxy() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable")
+                .unwrap()
+                .with_acquire_timeout(Duration::from_millis(1)),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig {
+                rate_limit_burst: Some(1),
+                trusted_proxies: TrustedProxyConfig::parse("172.30.0.0/24").unwrap(),
+                ..RouterConfig::default()
+            },
+        );
+        let peer: SocketAddr = "172.30.0.2:41000".parse().unwrap();
+        let request = |client: &str| {
+            let mut request = Request::builder()
+                .uri("/health/live")
+                .header("x-forwarded-for", client)
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request
+        };
+
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request("203.0.113.7"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request("203.0.113.8"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router
+                .oneshot(request("203.0.113.7"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_rate_limit_ignores_forwarding_headers_from_untrusted_peers() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable")
+                .unwrap()
+                .with_acquire_timeout(Duration::from_millis(1)),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig {
+                rate_limit_burst: Some(1),
+                trusted_proxies: TrustedProxyConfig::parse("172.30.0.0/24").unwrap(),
+                ..RouterConfig::default()
+            },
+        );
+        let peer: SocketAddr = "198.51.100.4:41000".parse().unwrap();
+        let request = |forged: &str| {
+            let mut request = Request::builder()
+                .uri("/health/live")
+                .header("x-forwarded-for", forged)
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request
+        };
+
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request("203.0.113.7"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router
+                .oneshot(request("203.0.113.8"))
+                .await
+                .unwrap()
+                .status(),
             StatusCode::TOO_MANY_REQUESTS
         );
     }

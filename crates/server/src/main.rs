@@ -41,6 +41,7 @@ async fn run() -> Result<(), StartupError> {
         state,
         &RouterConfig {
             rate_limit_burst: Some(config.rate_limit_burst()),
+            trusted_proxies: config.trusted_proxy_cidrs().clone(),
             ..RouterConfig::default()
         },
     );

@@ -5,6 +5,8 @@
 //! for infrastructure wiring like `AppState`, directly for its plain
 //! `Database` handle.
 
+mod client_ip;
+mod currency;
 mod error;
 mod extract;
 mod request_id;
@@ -13,6 +15,8 @@ mod routes;
 mod session_cookie;
 mod state;
 
+pub use client_ip::{TrustedProxyConfig, TrustedProxyConfigError};
+pub use currency::{INTERNAL_CURRENCY_CODE, MICRO_UNITS_PER_CC};
 pub use error::{ApiError, ErrorBody, ErrorEnvelope};
 pub use extract::CurrentUser;
 pub use request_id::{REQUEST_ID_HEADER, RequestId};

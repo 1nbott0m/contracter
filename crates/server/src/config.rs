@@ -1,5 +1,6 @@
 use std::{fmt, fs, net::SocketAddr};
 
+use api::TrustedProxyConfig;
 use application::quote_signing::{EnvironmentQuoteSigner, QuoteSigningError};
 use application::seed_protection::{EnvironmentSeedProtector, SeedProtectionError};
 
@@ -17,6 +18,7 @@ pub struct ServerConfig {
     rate_limit_burst: u32,
     quote_signer: EnvironmentQuoteSigner,
     seed_protector: EnvironmentSeedProtector,
+    trusted_proxy_cidrs: TrustedProxyConfig,
 }
 
 impl ServerConfig {
@@ -51,6 +53,9 @@ impl ServerConfig {
             .ok()
             .filter(|value| *value > 0)
             .ok_or_else(|| ConfigError::InvalidRateLimitBurst(rate_limit_value.clone()))?;
+        let trusted_proxy_value = value("TRUSTED_PROXY_CIDRS").unwrap_or_default();
+        let trusted_proxy_cidrs = TrustedProxyConfig::parse(&trusted_proxy_value)
+            .map_err(|_| ConfigError::InvalidTrustedProxyCidrs(trusted_proxy_value.clone()))?;
 
         Ok(Self {
             database_url,
@@ -60,6 +65,7 @@ impl ServerConfig {
             rate_limit_burst,
             quote_signer,
             seed_protector,
+            trusted_proxy_cidrs,
         })
     }
 
@@ -90,6 +96,10 @@ impl ServerConfig {
     pub fn seed_protector(&self) -> &EnvironmentSeedProtector {
         &self.seed_protector
     }
+
+    pub fn trusted_proxy_cidrs(&self) -> &TrustedProxyConfig {
+        &self.trusted_proxy_cidrs
+    }
 }
 
 impl fmt::Debug for ServerConfig {
@@ -103,6 +113,7 @@ impl fmt::Debug for ServerConfig {
             .field("rate_limit_burst", &self.rate_limit_burst)
             .field("quote_signer", &self.quote_signer)
             .field("seed_protector", &self.seed_protector)
+            .field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs)
             .finish()
     }
 }
@@ -281,6 +292,33 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, ConfigError::InvalidRateLimitBurst(_)));
     }
+
+    #[test]
+    fn trusted_proxy_cidrs_are_parsed_and_invalid_values_fail_startup() {
+        let valid = ServerConfig::from_values(|name: &str| match name {
+            "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
+            "QUOTE_SIGNING_KEY" => Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()),
+            "QUOTE_SEED_KEY" => Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned()),
+            "TRUSTED_PROXY_CIDRS" => Some("172.30.0.0/24".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        assert!(
+            valid
+                .trusted_proxy_cidrs()
+                .contains("172.30.0.2".parse().unwrap())
+        );
+
+        let error = ServerConfig::from_values(|name: &str| match name {
+            "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
+            "QUOTE_SIGNING_KEY" => Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()),
+            "QUOTE_SEED_KEY" => Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned()),
+            "TRUSTED_PROXY_CIDRS" => Some("not-a-cidr".to_owned()),
+            _ => None,
+        })
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::InvalidTrustedProxyCidrs(_)));
+    }
 }
 
 fn required_secret(
@@ -333,6 +371,8 @@ pub enum ConfigError {
     InvalidBindAddress { host: String, port: u16 },
     #[error("RATE_LIMIT_BURST must be a positive integer, got '{0}'")]
     InvalidRateLimitBurst(String),
+    #[error("TRUSTED_PROXY_CIDRS must be a comma-separated CIDR list, got '{0}'")]
+    InvalidTrustedProxyCidrs(String),
     #[error(transparent)]
     QuoteSigning(#[from] QuoteSigningError),
     #[error(transparent)]
