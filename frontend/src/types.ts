@@ -15,7 +15,14 @@ export type SkinDefinition = {
 export type InventoryItem = SkinDefinition & {
   publicId?: string;
   skuId?: string | number;
-  state?: string;
+  catalogItemId?: string;
+  collectionId?: string;
+  collectionDisplayName?: string;
+  canonicalFloat?: string;
+  isStatTrak?: boolean;
+  isSouvenir?: boolean;
+  locked?: boolean;
+  acquiredAt?: string;
 };
 
 export type HistoryItem = {
