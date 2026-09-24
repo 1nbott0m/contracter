@@ -15,4 +15,5 @@ export const api = {
   inventory: () => request<ApiPage<InventoryItem>>('/me/inventory'),
   catalogSkus: () => request<ApiPage<CatalogSku>>('/catalog/skus'),
   history: () => request<ApiPage<ContractHistoryItem>>('/me/history/contracts'),
+  purchase: (skuId: string, idempotencyKey: string) => request<{ inventory_item_id: string }>('/me/market/purchases/' + skuId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotency_key: idempotencyKey }) }),
 };
