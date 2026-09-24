@@ -24,6 +24,23 @@ it('replaces development fixtures when the live inventory is empty', async () =>
   expect(document.querySelector('.section-head span')?.textContent).toContain('0 / 10');
 });
 
+it('does not leave development inventory visible when the API fails without fallback opt-in', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+    error: { code: 'SERVICE_UNAVAILABLE', message: 'Service temporarily unavailable' },
+  }), {
+    status: 503,
+    headers: { 'Content-Type': 'application/json' },
+  })));
+
+  await import('./main');
+
+  await waitFor(() => {
+    expect(document.querySelector('.live-copy')?.textContent).toContain('API UNAVAILABLE');
+  });
+  expect(document.querySelectorAll('.inventory-grid .skin-card')).toHaveLength(0);
+  expect(document.querySelector('.live-count')?.textContent).toBe('ONLINE: НЕДОСТУПНО');
+});
+
 it.each([
   ['/market', 'Маркет'],
   ['/inventory', 'Инвентарь'],
