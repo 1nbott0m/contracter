@@ -9,13 +9,14 @@ import './reveal-cinematic.css';
 import './visual-polish.css';
 import './image-states.css';
 import './accessibility.css';
-import { api, inventoryItemToSkin, type CatalogSku } from './api';
-import { items as mockItems, results, type MockItem } from './mocks/dev-data';
+import { api, inventoryItemToSkin, type CatalogSku, type MarketValuation } from './api';
+import { items as mockItems, results } from './mocks/dev-data';
 import { SkinCard } from './components/SkinCard';
 import { Logo } from './components/Logo';
 import { resolveSkinImage, SkinImage } from './components/SkinImage';
+import type { InventoryItem } from './types';
 
-type Item = MockItem;
+type Item = InventoryItem;
 
 function money(value: number) { return `${value.toLocaleString('ru-RU')} CC`; }
 
@@ -39,20 +40,23 @@ function App() {
   const navigate = (next: string) => { const paths: Record<string, string> = { КОНТРАКТЫ: '/contracts', МАРКЕТ: '/market', ИНВЕНТАРЬ: '/inventory', ИСТОРИЯ: '/history' }; setTab(next); window.history.pushState({}, '', paths[next] || '/'); };
   useEffect(() => { const onPopState = () => { setTab(routeTabs[window.location.pathname] || 'КОНТРАКТЫ'); setLoginOpen(window.location.pathname === '/profile'); }; window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState); }, []);
   useEffect(() => {
-    Promise.all([api.inventory(), api.catalogSkus()])
-      .then(([inventory, catalog]) => {
-        const artworkBySku = new Map(catalog.items.map((row: CatalogSku) => [row.sku_id, row.canonical_image_url]));
-        const mapped = inventory.items.map((row) => inventoryItemToSkin(row, artworkBySku.get(row.sku_id)));
+    Promise.all([api.inventory(), api.catalogSkus(), api.marketValuations()])
+      .then(([inventory, catalog, valuations]) => {
+        const catalogBySku = new Map(catalog.items.map((row: CatalogSku) => [row.sku_id, row]));
+        const valuationBySku = new Map(valuations.items.map((row: MarketValuation) => [row.sku_id, row]));
+        const mapped = inventory.items.map((row) => inventoryItemToSkin(row, catalogBySku.get(row.sku_id), valuationBySku.get(row.sku_id)));
         setApiStatus('live');
-        if (mapped.length > 0) {
-          setItems(mapped);
-          setSelected(mapped.filter((item) => !item.locked).slice(0, 4));
-        }
+        setItems(mapped);
+        setSelected(mapped.filter((item) => !item.locked).slice(0, 4));
       })
       .catch(() => setApiStatus('fallback'));
   }, []);
   const total = useMemo(() => selected.reduce((sum, item) => sum + item.price, 0), [selected]);
-  const toggleItem = (item: Item) => setSelected((current) => current.some((x) => x.id === item.id) ? current.filter((x) => x.id !== item.id) : current.length < 10 ? [...current, item] : current);
+  const nextSelectable = items.find((item) => !item.locked && !selected.some((selectedItem) => selectedItem.id === item.id));
+  const toggleItem = (item: Item) => {
+    if (item.locked) return;
+    setSelected((current) => current.some((x) => x.id === item.id) ? current.filter((x) => x.id !== item.id) : current.length < 10 ? [...current, item] : current);
+  };
   const submitLogin = async (event: React.FormEvent) => { event.preventDefault(); setLoginError(''); try { await api.login(login, password); window.history.pushState({}, '', '/contracts'); setLoginOpen(false); setApiStatus('live'); } catch { setLoginError('Не удалось войти. Проверьте логин и пароль.'); } };
   const commitContract = async () => { if (selected.length < 4 || processing) return; setProcessing(true); setRevealOpen(true); window.setTimeout(() => setProcessing(false), 6400); };
   const verifyContract = async (event: React.FormEvent) => { event.preventDefault(); setVerificationMessage('Проверяем операцию…'); try { const history = await api.history(); const found = history.items.find((item) => item.contract_id.toLowerCase() === verificationId.trim().toLowerCase()); setVerificationMessage(found ? `Операция подтверждена · ${found.status} · ${found.input_count} предмета` : 'Операция не найдена или недоступна для этого пользователя.'); } catch { setVerificationMessage('Не удалось загрузить данные проверки. Повторите после входа.'); } };
@@ -61,7 +65,7 @@ function App() {
     <div className="live-bar"><span className="live-dot" /> <b>LIVE</b><span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : ''}LIVE ACTIVITY</span><span className="live-count">0 ONLINE</span><span className="live-empty">Пока нет новых контрактов</span></div>
     <header className="header"><Logo /><nav>{['КОНТРАКТЫ', 'МАРКЕТ', 'ИНВЕНТАРЬ', 'ИСТОРИЯ'].map((name) => <button className={tab === name ? 'active' : ''} onClick={() => navigate(name)} key={name}>{name}</button>)}</nav><div className="header-actions"><button className="search"><Search size={16} /> Поиск скина</button><span className="balance">{money(1240)}</span><button className="profile-button" onClick={() => { window.history.pushState({}, '', '/profile'); setLoginOpen(true); }} aria-label="Открыть профиль"><div className="avatar">Y</div><span>ПРОФИЛЬ</span></button></div></header><main>
       <section className="intro"><div><span className="eyebrow">{tab} / WORKSPACE</span><h1>СОЗДАТЬ <em>КОНТРАКТ</em></h1><p>Выберите от 4 до 10 скинов. Соберите контракт и получите один результат.</p></div><div className="trust"><ShieldCheck size={17} /> ПРОЗРАЧНАЯ МЕХАНИКА <span>·</span> CC ECONOMY</div></section>
-      <section className="builder-layout"><div className="builder panel"><div className="section-head"><div><h2>ВАШИ ПРЕДМЕТЫ</h2><span>{selected.length} / 10 ПРЕДМЕТОВ</span></div><button className="filter">ВСЕ ПРЕДМЕТЫ <ChevronDown size={15} /></button></div><div className="selection-grid">{selected.map((item) => <SkinCard item={item} selected onRemove={() => toggleItem(item)} key={item.id} />)}{Array.from({ length: Math.max(0, 6 - selected.length) }).map((_, index) => <button className="empty-slot" key={index} onClick={() => toggleItem(items.find((item) => !selected.includes(item)) || items[0])}><CirclePlus size={19} /><span>ДОБАВИТЬ</span></button>)}</div><div className="builder-note"><span><Sparkles size={15} /> Эти предметы соберутся в один контракт</span><span>Минимум 4 · максимум 10</span></div></div><aside className="summary panel"><span className="eyebrow">CONTRACT / READY</span><h2>КОНТРАКТ</h2><div className="summary-rows"><div><span>СТОИМОСТЬ</span><strong>{money(total)}</strong></div><div><span>ПРЕДМЕТОВ</span><strong>{selected.length} / 10</strong></div><div><span>ВОЗМОЖНЫХ РЕЗУЛЬТАТОВ</span><strong>—</strong></div></div><button className="primary" disabled={selected.length < 4 || processing} onClick={commitContract}>{processing ? "ФИКСИРУЕМ…" : "ЗАКЛЮЧИТЬ КОНТРАК"} <ArrowRight size={17} /></button><small>После подтверждения выбранные предметы будут использованы в контракте.</small></aside></section>
+      <section className="builder-layout"><div className="builder panel"><div className="section-head"><div><h2>ВАШИ ПРЕДМЕТЫ</h2><span>{selected.length} / 10 ПРЕДМЕТОВ</span></div><button className="filter">ВСЕ ПРЕДМЕТЫ <ChevronDown size={15} /></button></div><div className="selection-grid">{selected.map((item) => <SkinCard item={item} selected onRemove={() => toggleItem(item)} key={item.id} />)}{Array.from({ length: Math.max(0, 6 - selected.length) }).map((_, index) => <button className="empty-slot" key={index} disabled={!nextSelectable} onClick={() => nextSelectable && toggleItem(nextSelectable)}><CirclePlus size={19} /><span>ДОБАВИТЬ</span></button>)}</div><div className="builder-note"><span><Sparkles size={15} /> Эти предметы соберутся в один контракт</span><span>Минимум 4 · максимум 10</span></div></div><aside className="summary panel"><span className="eyebrow">CONTRACT / READY</span><h2>КОНТРАКТ</h2><div className="summary-rows"><div><span>СТОИМОСТЬ</span><strong>{money(total)}</strong></div><div><span>ПРЕДМЕТОВ</span><strong>{selected.length} / 10</strong></div><div><span>ВОЗМОЖНЫХ РЕЗУЛЬТАТОВ</span><strong>—</strong></div></div><button className="primary" disabled={selected.length < 4 || processing} onClick={commitContract}>{processing ? "ФИКСИРУЕМ…" : "ЗАКЛЮЧИТЬ КОНТРАК"} <ArrowRight size={17} /></button><small>После подтверждения выбранные предметы будут использованы в контракте.</small></aside></section>
       <section className="content-section"><div className="section-title"><div><span className="eyebrow">OUTPUT RANGE</span><h2>ВОЗМОЖНЫЕ РЕЗУЛЬТАТЫ</h2></div><button className="text-button">ПОКАЗАТЬ ВСЕ <ArrowRight size={15} /></button></div><div className="result-grid">{results.map((item) => <SkinCard item={item} key={item.id} />)}</div></section>
       <section className="content-section inventory"><div className="section-title"><div><span className="eyebrow">YOUR COLLECTION / 24 ITEMS</span><h2>ВАШ ИНВЕНТАРЬ</h2></div><button className="filter"><Search size={15} /> НАЙТИ ПРЕДМЕТ</button></div><div className="inventory-grid">{items.map((item) => <SkinCard item={item} selected={selected.some((x) => x.id === item.id)} onAdd={() => toggleItem(item)} key={item.id} />)}</div></section>
       <section className="content-section live-contracts"><div className="section-title"><div><span className="eyebrow">LIVE ACTIVITY / NO GAMBLING</span><h2>СЕЙЧАС СОБИРАЮТ</h2></div><span className="quiet">Только подтверждённые операции</span></div><div className="activity-empty"><span className="live-dot" /><div><strong>Пока нет новых контрактов</strong><small>Здесь появятся реальные операции пользователей после подтверждения.</small></div></div></section>

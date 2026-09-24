@@ -20,7 +20,8 @@ export type ApiInventoryItem = {
 };
 /** @deprecated Prefer ApiInventoryItem for wire data and InventoryItem for UI data. */
 export type InventoryItem = ApiInventoryItem;
-export type CatalogSku = { sku_id: string; item_id: string; collection_id: string; collection_slug: string; collection_display_name: string; stable_name: string; rarity: string; rarity_rank: number; wear_band: string; min_float: string; max_float: string; canonical_skin_id: string | null; weapon: string | null; skin_name: string | null; canonical_image_url: string | null; available_wears: string[] };
+export type CatalogSku = { sku_id: string; item_id: string; collection_id: string; collection_slug: string; collection_display_name: string; stable_name: string; rarity: string; rarity_rank: number; wear_band: string; min_float: string; max_float: string; is_stattrak: boolean; is_souvenir: boolean; canonical_skin_id: string | null; weapon: string | null; skin_name: string | null; canonical_image_url: string | null; available_wears: string[] };
+export type MarketValuation = { sku_id: string; price_microcredits: number; currency_code: 'CC'; updated_at: string; available: boolean };
 export type Balance = { currency_code: 'CC'; available_microcredits: number; reserved_microcredits: number };
 export type ContractHistoryItem = { contract_id: string; created_at: string; input_count: number; input_value_microcredits: number; result_display_name?: string | null; result_value_microcredits?: number | null; status: string };
 const base = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8080').replace(/\/$/, '');
@@ -34,12 +35,16 @@ export const api = {
   balance: () => request<Balance>('/me/balance'),
   inventory: () => request<ApiPage<ApiInventoryItem>>('/me/inventory'),
   catalogSkus: () => request<ApiPage<CatalogSku>>('/catalog/skus'),
+  marketValuations: () => request<ApiPage<MarketValuation>>('/market/valuations'),
   history: () => request<ApiPage<ContractHistoryItem>>('/me/history/contracts'),
   purchase: (skuId: string, idempotencyKey: string) => request<{ inventory_item_id: string }>('/me/market/purchases/' + skuId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotency_key: idempotencyKey }) }),
 };
 
-/** Convert an owned-item wire record without coercing UUID or decimal strings. */
-export function inventoryItemToSkin(item: ApiInventoryItem, image?: string | null): SkinInventoryItem {
+/** Join an owned item to public catalog presentation and valuation data. */
+export function inventoryItemToSkin(item: ApiInventoryItem, catalog?: CatalogSku, valuation?: MarketValuation): SkinInventoryItem {
+  const [stableWeapon, ...stableSkinParts] = item.stable_name.split(' | ');
+  const stableSkin = stableSkinParts.join(' | ');
+  const image = catalog?.canonical_image_url || null;
   return {
     id: item.item_id,
     publicId: item.item_id,
@@ -47,11 +52,10 @@ export function inventoryItemToSkin(item: ApiInventoryItem, image?: string | nul
     catalogItemId: item.catalog_item_id,
     collectionId: item.collection_id,
     collectionDisplayName: item.collection_display_name,
-    weapon: item.collection_display_name,
-    skin: item.stable_name,
+    weapon: catalog?.weapon?.trim() || (stableSkin ? stableWeapon : 'CS2'),
+    skin: catalog?.skin_name?.trim() || stableSkin || catalog?.stable_name || item.stable_name,
     wear: item.wear_band.replace(/_/g, ' '),
-    // The inventory endpoint deliberately does not expose a valuation.
-    price: 0,
+    price: valuation ? valuation.price_microcredits / 1_000_000 : 0,
     color: '#58d6e7',
     rarity: item.rarity,
     image: image || '',

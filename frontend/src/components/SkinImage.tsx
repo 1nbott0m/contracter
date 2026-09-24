@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { SkinDefinition } from '../types';
 
 type SkinImageProps = {
@@ -23,14 +23,22 @@ export function resolveSkinImage(item: Pick<SkinDefinition, 'image' | 'canonical
 
 export function SkinImage({ src, alt, accent = '#58d6e7', className = '', loading = 'lazy', width = 640, height = 400, layout = 'fill' }: SkinImageProps) {
   const source = src?.trim() || null;
-  const [state, setState] = useState<{ source: string | null; failed: boolean; loaded: boolean }>({ source, failed: !source, loaded: false });
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [state, setState] = useState<{ source: string | null; failed: boolean; loaded: boolean }>({ source, failed: !source, loaded: !source });
   const isCurrentSource = state.source === source;
   const failed = isCurrentSource ? state.failed : !source;
-  const loaded = isCurrentSource ? state.loaded : false;
+  const loaded = isCurrentSource ? state.loaded : !source;
   const imageSrc = failed ? FALLBACK_ART : source!;
 
-  useEffect(() => {
-    setState({ source, failed: !source, loaded: false });
+  useLayoutEffect(() => {
+    const image = imageRef.current;
+    if (!source) {
+      setState({ source, failed: true, loaded: true });
+    } else if (image?.complete) {
+      setState({ source, failed: image.naturalWidth === 0, loaded: true });
+    } else {
+      setState({ source, failed: false, loaded: false });
+    }
   }, [source]);
 
   return (
@@ -40,6 +48,7 @@ export function SkinImage({ src, alt, accent = '#58d6e7', className = '', loadin
       data-image-state={failed ? 'error' : loaded ? 'ready' : 'loading'}
     >
       <img
+        ref={imageRef}
         key={imageSrc}
         src={imageSrc}
         alt={alt}
@@ -54,7 +63,7 @@ export function SkinImage({ src, alt, accent = '#58d6e7', className = '', loadin
           if (source && event.currentTarget.getAttribute('src') === source) setState({ source, failed: true, loaded: true });
         }}
       />
-      {!loaded && <span className="skin-image-loading" aria-hidden="true" />}
+      {!loaded && !failed && <span className="skin-image-loading" aria-hidden="true" />}
     </div>
   );
 }
