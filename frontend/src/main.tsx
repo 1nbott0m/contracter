@@ -6,6 +6,7 @@ import './extra.css';
 import './login.css';
 import './ux.css';
 import './visual-polish.css';
+import './image-states.css';
 import { api } from './api';
 import { items, results, type MockItem } from './mocks/dev-data';
 
@@ -13,8 +14,9 @@ type Item = MockItem;
 
 function money(value: number) { return `${value.toLocaleString('ru-RU')} CC`; }
 function SkinCard({ item, selected, onRemove, onAdd }: { item: Item; selected?: boolean; onRemove?: () => void; onAdd?: () => void }) {
+  const [imageState, setImageState] = useState<'loading' | 'ready' | 'error'>('loading');
   return <article className={`skin-card ${selected ? 'selected' : ''}`} onClick={onAdd}>
-    <div className="skin-art" style={{ '--accent': item.color, backgroundImage: `url('${item.image}')` } as React.CSSProperties}><span>{item.weapon.split('-')[0]}</span><div className="art-line" /></div>
+    <div className={`skin-art image-${imageState}`} style={{ '--accent': item.color } as React.CSSProperties}><img src={item.image} alt={`${item.weapon} | ${item.skin}`} loading="lazy" onLoad={() => setImageState('ready')} onError={() => setImageState('error')} /><span>{item.weapon.split('-')[0]}</span><div className="art-line" /></div>
     {selected && <button className="remove" aria-label="Удалить" onClick={(event) => { event.stopPropagation(); onRemove?.(); }}><X size={14} /></button>}
     <div className="skin-meta"><span className="weapon">{item.weapon}</span><strong>{item.skin}</strong><span className="wear">{item.wear}</span></div>
     <div className="card-footer"><span className="rarity" style={{ color: item.color }}>{item.rarity}</span><b>{money(item.price)}</b></div>

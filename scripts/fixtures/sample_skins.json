@@ -1,0 +1,13 @@
+[
+  {
+    "id": "ak47_redline",
+    "name": "Redline",
+    "weapon": {"name": "AK-47"},
+    "rarity": {"name": "Classified"},
+    "collection": {"name": "The Phoenix Collection"},
+    "image": "https://example.invalid/ak47-redline.png",
+    "min_float": 0.1,
+    "max_float": 0.7,
+    "wears": [{"name": "Minimal Wear"}, {"name": "Field-Tested"}, {"name": "Well-Worn"}]
+  }
+]
