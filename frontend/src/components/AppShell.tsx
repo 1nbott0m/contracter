@@ -2,13 +2,15 @@ import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import { Search } from 'lucide-react';
 import { Logo } from './Logo';
 import type { AppRoute, Navigate } from '../router';
+import type { SessionState } from '../session';
 
-export type ApiStatus = 'unverified' | 'connecting' | 'live' | 'fallback';
+export type ApiStatus = 'unverified' | 'connecting' | 'live' | 'auth' | 'fallback';
 
 type AppShellProps = {
   route: AppRoute;
   navigate: Navigate;
   apiStatus?: ApiStatus;
+  sessionState?: SessionState;
   children: ReactNode;
 };
 
@@ -40,10 +42,13 @@ function AppLink({ href, navigate, children, className, ariaLabel, current }: {
   return <a href={href} onClick={onClick} className={className} aria-label={ariaLabel} aria-current={current ? 'page' : undefined}>{children}</a>;
 }
 
-export function AppShell({ route, navigate, apiStatus = 'unverified', children }: AppShellProps) {
+export function AppShell({ route, navigate, apiStatus = 'unverified', sessionState, children }: AppShellProps) {
   const activeRoute = activePrimaryRoute(route);
   const pageClass = `page-${route.id}`;
   const mainRef = useRef<HTMLElement>(null);
+  const accountLogin = sessionState?.status === 'authenticated' && typeof sessionState.account.login === 'string'
+    ? sessionState.account.login.trim()
+    : '';
 
   useEffect(() => {
     const heading = mainRef.current?.querySelector<HTMLElement>('h1');
@@ -60,7 +65,7 @@ export function AppShell({ route, navigate, apiStatus = 'unverified', children }
     <div className="live-bar" aria-label="Статус сервиса">
       <span className="live-dot" />
       <b>LIVE</b>
-      <span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : apiStatus === 'fallback' ? 'API UNAVAILABLE · ' : apiStatus === 'connecting' ? 'API CONNECTING · ' : 'API NOT CHECKED · '}LIVE ACTIVITY</span>
+      <span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : apiStatus === 'auth' ? 'AUTHENTICATION REQUIRED · ' : apiStatus === 'fallback' ? 'API UNAVAILABLE · ' : apiStatus === 'connecting' ? 'API CONNECTING · ' : 'API NOT CHECKED · '}LIVE ACTIVITY</span>
       <span className="live-count">ONLINE: НЕДОСТУПНО</span>
       <span className="live-empty">Новые подтверждённые операции пока недоступны</span>
     </div>
@@ -74,7 +79,7 @@ export function AppShell({ route, navigate, apiStatus = 'unverified', children }
         <AppLink href="/market" navigate={navigate} className="search" ariaLabel="Поиск скина"><Search size={16} /> Поиск скина</AppLink>
         <span className="balance">БАЛАНС НЕДОСТУПЕН</span>
         <AppLink href="/profile" navigate={navigate} className="profile-button" ariaLabel="Открыть профиль">
-          <span className="avatar">Y</span><span>ПРОФИЛЬ</span>
+          <span className="avatar">{accountLogin ? accountLogin.slice(0, 1).toUpperCase() : '—'}</span><span>{accountLogin || (sessionState?.status === 'expired' ? 'СЕССИЯ ИСТЕКЛА' : 'ВОЙТИ')}</span>
         </AppLink>
       </div>
     </header>

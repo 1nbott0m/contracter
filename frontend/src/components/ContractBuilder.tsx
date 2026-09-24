@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { CirclePlus, Sparkles, X } from 'lucide-react';
 import type { InventoryItem, SkinDefinition } from '../types';
 import { ContractSummary, type ContractSubmitState } from './ContractSummary';
@@ -18,7 +18,7 @@ type ContractBuilderProps = {
   initialSelected?: InventoryItem[];
   selected?: InventoryItem[];
   onSelectionChange?: (items: InventoryItem[]) => void;
-  onSubmit: (items: InventoryItem[]) => Promise<CommittedContract>;
+  onSubmit: (items: readonly InventoryItem[]) => Promise<CommittedContract>;
 };
 
 function distinctSelection(items: InventoryItem[]) {
@@ -37,10 +37,13 @@ export function ContractBuilder({
   const [internalSelected, setInternalSelected] = useState(() => distinctSelection(initialSelected));
   const [inspected, setInspected] = useState<InventoryItem | null>(null);
   const [submitState, setSubmitState] = useState<ContractSubmitState>({ status: 'idle' });
+  const submitGeneration = useRef(0);
+  const submitting = useRef(false);
   const selected = controlledSelected === undefined ? internalSelected : distinctSelection(controlledSelected);
   const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
 
   const updateSelection = (next: InventoryItem[]) => {
+    if (submitting.current) return;
     const normalized = distinctSelection(next);
     if (controlledSelected === undefined) setInternalSelected(normalized);
     onSelectionChange?.(normalized);
@@ -52,15 +55,24 @@ export function ContractBuilder({
   };
   const remove = (item: InventoryItem) => updateSelection(selected.filter((candidate) => candidate.id !== item.id));
   const submit = async () => {
-    if (selected.length < MIN_CONTRACT_ITEMS || selected.length > MAX_CONTRACT_ITEMS || submitState.status === 'submitting') return;
+    if (selected.length < MIN_CONTRACT_ITEMS || selected.length > MAX_CONTRACT_ITEMS || submitting.current) return;
+    const generation = ++submitGeneration.current;
+    submitting.current = true;
+    const submittedSnapshot = Object.freeze([...selected]);
     setSubmitState({ status: 'submitting' });
     try {
-      const committed = await onSubmit(selected);
+      const committed = await onSubmit(submittedSnapshot);
+      if (generation !== submitGeneration.current) return;
       setSubmitState({ status: 'success', contractId: committed.contractId });
     } catch {
+      if (generation !== submitGeneration.current) return;
       setSubmitState({ status: 'error' });
+    } finally {
+      if (generation === submitGeneration.current) submitting.current = false;
     }
   };
+
+  const selectionFrozen = submitState.status === 'submitting';
 
   return (
     <>
@@ -70,7 +82,7 @@ export function ContractBuilder({
           <div className="selection-grid">
             {selected.map((item) => (
               <div className="contract-slot filled-slot" data-testid="contract-slot" key={item.id}>
-                <SkinCard item={item} selected onRemove={() => remove(item)} onAdd={() => remove(item)} />
+                <SkinCard item={item} selected onRemove={() => remove(item)} onAdd={() => remove(item)} selectionDisabled={selectionFrozen} />
                 <button className="inspect-item" type="button" onClick={() => setInspected(item)} aria-label={`Подробнее о ${item.weapon} | ${item.skin}`}>ПОДРОБНЕЕ</button>
               </div>
             ))}
@@ -90,7 +102,7 @@ export function ContractBuilder({
         {items.length > 0
           ? <div className="inventory-grid">{items.map((item) => {
               const isSelected = selectedIds.has(item.id);
-              return <div className="inventory-choice" key={item.id}><SkinCard item={item} selected={isSelected} onAdd={() => isSelected ? remove(item) : add(item)} selectionDisabled={!isSelected && selected.length >= MAX_CONTRACT_ITEMS} /><button className="inspect-item" type="button" onClick={() => setInspected(item)} aria-label={`Подробнее о ${item.weapon} | ${item.skin}`}>ПОДРОБНЕЕ</button></div>;
+              return <div className="inventory-choice" key={item.id}><SkinCard item={item} selected={isSelected} onAdd={() => isSelected ? remove(item) : add(item)} selectionDisabled={selectionFrozen || (!isSelected && selected.length >= MAX_CONTRACT_ITEMS)} /><button className="inspect-item" type="button" onClick={() => setInspected(item)} aria-label={`Подробнее о ${item.weapon} | ${item.skin}`}>ПОДРОБНЕЕ</button></div>;
             })}</div>
           : <div className="inventory-empty"><strong>Нет доступных предметов</strong><span>Инвентарь пуст или недоступен. Обновите страницу после входа.</span></div>}
       </section>

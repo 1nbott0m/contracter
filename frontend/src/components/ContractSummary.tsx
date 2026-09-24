@@ -39,7 +39,7 @@ export function ContractSummary({ selected, possibleResultCount, submitState, on
       <div className="summary-rows">
         <div><span>СТОИМОСТЬ</span><strong>{money(total)}</strong></div>
         <div><span>ПРЕДМЕТОВ</span><strong>{selected.length} / 10</strong></div>
-        <div><span>ВОЗМОЖНЫХ РЕЗУЛЬТАТОВ</span><strong>{possibleResultCount || '—'}</strong></div>
+        <div><span>ПОЗИЦИЙ В ПРЕДПРОСМОТРЕ</span><strong>{possibleResultCount || '—'}</strong></div>
       </div>
       {submitState.status === 'error' && <p className="contract-submit-error" role="alert">Не удалось заключить контракт. Проверьте доступность предметов и повторите.</p>}
       {submitState.status === 'success' && <p className="contract-submit-success" role="status">Контракт {submitState.contractId} принят сервером.</p>}

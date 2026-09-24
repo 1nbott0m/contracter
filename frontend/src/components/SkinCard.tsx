@@ -30,7 +30,7 @@ export function SkinCard({ item, selected = false, onRemove, onAdd, onClick, sel
         <span>{item.weapon.split('-')[0]}</span>
         <div className="art-line" />
       </div>
-      {selected && onRemove && <button className="remove" aria-label="Удалить" onClick={(event) => { event.stopPropagation(); onRemove(); }}><X size={14} /></button>}
+      {selected && onRemove && <button className="remove" aria-label="Удалить" disabled={selectionDisabled} onClick={(event) => { event.stopPropagation(); onRemove(); }}><X size={14} /></button>}
       <div className="skin-meta"><span className="weapon">{item.weapon}</span><strong>{item.skin}</strong><span className="wear">{item.wear}</span></div>
       <div className="card-footer"><span className="rarity" style={{ color: item.color }}>{item.rarity}</span><b>{money(item.price)}</b></div>
       {handleClick && <button className="skin-card-select" type="button" onClick={handleClick} aria-label={actionLabel} aria-pressed={selected} disabled={item.locked || selectionDisabled} />}

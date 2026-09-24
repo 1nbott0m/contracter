@@ -16,6 +16,14 @@ const items: InventoryItem[] = Array.from({ length: 11 }, (_, index) => ({
   image: `https://cdn.example.test/item-${index + 1}.png`,
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 afterEach(cleanup);
 
 describe('ContractBuilder selection', () => {
@@ -80,5 +88,29 @@ describe('ContractBuilder submission', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Не удалось заключить контракт');
     expect(screen.getByRole('button', { name: 'ПОВТОРИТЬ' })).toBeTruthy();
     expect(screen.queryByText(/ВАШ РЕЗУЛЬТАТ/)).toBeNull();
+  });
+
+  it('freezes the immutable submitted snapshot while the request is pending', async () => {
+    const pending = deferred<{ contractId: string }>();
+    const onSubmit = vi.fn((_submitted: readonly InventoryItem[]) => pending.promise);
+    render(<ContractBuilder items={items} initialSelected={items.slice(0, 4)} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'ЗАКЛЮЧИТЬ КОНТРАКТ' }));
+
+    const submitted = onSubmit.mock.calls[0]?.[0];
+    expect(Object.isFrozen(submitted)).toBe(true);
+    expect(submitted).toEqual(items.slice(0, 4));
+
+    const remove = screen.getAllByRole('button', { name: 'Убрать Weapon 1 | Skin 1 из контракта' })[0] as HTMLButtonElement;
+    const add = screen.getByRole('button', { name: 'Выбрать Weapon 5 | Skin 5 для контракта' }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(true);
+    expect(add.disabled).toBe(true);
+    fireEvent.click(remove);
+    fireEvent.click(add);
+    expect(screen.getByText('4 / 10 ПРЕДМЕТОВ')).toBeTruthy();
+    expect(submitted).toEqual(items.slice(0, 4));
+
+    pending.resolve({ contractId: 'server-contract-id' });
+    expect(await screen.findByText('Контракт server-contract-id принят сервером.')).toBeTruthy();
   });
 });

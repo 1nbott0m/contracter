@@ -14,4 +14,7 @@ it('renders only candidates with canonical artwork and never invents probabiliti
   expect(screen.getByRole('img', { name: 'AK-47 | Slate' }).getAttribute('src')).toBe('https://cdn.example.test/real.png');
   expect(screen.queryByText('Missing')).toBeNull();
   expect(document.body.textContent).not.toMatch(/\d+(?:[.,]\d+)?\s*%/);
+  expect(screen.getByRole('heading', { name: 'НЕПРОВЕРЕННЫЙ ПРЕДПРОСМОТР КАТАЛОГА' })).toBeTruthy();
+  expect(document.body.textContent).toContain('не подтверждает допустимость результата');
+  expect(document.body.textContent).not.toContain('ВОЗМОЖНЫЕ РЕЗУЛЬТАТЫ');
 });

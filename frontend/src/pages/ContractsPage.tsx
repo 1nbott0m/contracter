@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import {
   api,
@@ -19,7 +19,28 @@ type ContractsApi = Pick<typeof api,
   | 'allocateQuote'
   | 'createQuote'
   | 'acceptQuote'
+  | 'history'
 >;
+
+type ContractStage = 'allocation' | 'quote' | 'accept';
+
+export type ContractLifecycle = {
+  allocationId: string | null;
+  quoteId: string | null;
+  idempotencyKey: string;
+  stage: ContractStage;
+  submittedSnapshot: readonly string[];
+  historyBeforeAccept?: ReadonlySet<string>;
+};
+
+function sameSnapshot(lifecycle: ContractLifecycle, submitted: readonly string[]) {
+  return lifecycle.submittedSnapshot.length === submitted.length
+    && lifecycle.submittedSnapshot.every((id, index) => id === submitted[index]);
+}
+
+function isAmbiguousAcceptFailure(error: unknown) {
+  return !(error instanceof Error && 'status' in error && typeof error.status === 'number' && error.status < 500);
+}
 
 type ContractsPageProps = {
   setApiStatus: (status: ApiStatus) => void;
@@ -74,6 +95,7 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
   const [catalog, setCatalog] = useState<CatalogSku[]>([]);
   const [valuations, setValuations] = useState<MarketValuation[]>([]);
   const [usingDevelopmentFallback, setUsingDevelopmentFallback] = useState(developmentFallbackEnabled);
+  const lifecycle = useRef<ContractLifecycle | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -114,15 +136,47 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
     [catalog, selected, usingDevelopmentFallback, valuations],
   );
 
-  const commitContract = async (chosen: InventoryItem[]): Promise<CommittedContract> => {
-    const allocation = await client.allocateQuote();
-    const quote = await client.createQuote(
-      allocation.allocation_id,
-      chosen.map((item) => item.publicId || item.id),
-      crypto.randomUUID(),
-    );
-    const committed = await client.acceptQuote(quote.quote_id, crypto.randomUUID());
-    return { contractId: committed.contract_id };
+  const commitContract = async (chosen: readonly InventoryItem[]): Promise<CommittedContract> => {
+    const submittedSnapshot = Object.freeze(chosen.map((item) => item.publicId || item.id));
+    if (!lifecycle.current || !sameSnapshot(lifecycle.current, submittedSnapshot)) {
+      lifecycle.current = {
+        allocationId: null,
+        quoteId: null,
+        idempotencyKey: crypto.randomUUID(),
+        stage: 'allocation',
+        submittedSnapshot,
+      };
+    }
+    const operation = lifecycle.current;
+
+    if (operation.stage === 'allocation') {
+      const allocation = await client.allocateQuote();
+      operation.allocationId = allocation.allocation_id;
+      operation.stage = 'quote';
+    }
+    if (operation.stage === 'quote') {
+      const quote = await client.createQuote(
+        operation.allocationId!,
+        [...operation.submittedSnapshot],
+        operation.idempotencyKey,
+      );
+      operation.quoteId = quote.quote_id;
+      operation.stage = 'accept';
+    }
+    if (!operation.historyBeforeAccept) {
+      operation.historyBeforeAccept = new Set((await client.history()).map((item) => item.contract_id));
+    }
+
+    try {
+      const committed = await client.acceptQuote(operation.quoteId!, operation.idempotencyKey);
+      return { contractId: committed.contract_id };
+    } catch (error) {
+      if (!isAmbiguousAcceptFailure(error)) throw error;
+      const history = await client.history();
+      const created = history.filter((item) => !operation.historyBeforeAccept!.has(item.contract_id));
+      if (created.length === 1) return { contractId: created[0]!.contract_id };
+      throw error;
+    }
   };
 
   return (

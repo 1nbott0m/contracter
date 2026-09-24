@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight } from 'lucide-react';
 import './styles.css';
@@ -10,11 +10,12 @@ import './visual-polish.css';
 import './image-states.css';
 import './accessibility.css';
 import './contract-builder.css';
-import { api } from './api';
 import { AppShell, type ApiStatus } from './components/AppShell';
 import { ContractsPage } from './pages/ContractsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { useRouter, type AppRoute, type Navigate } from './router';
+import { useSession } from './hooks/useSession';
+import type { SessionState } from './session';
 
 const routeCopy: Partial<Record<AppRoute['id'], { eyebrow: string; title: string; text: string }>> = {
   market: { eyebrow: 'MARKET / CC ECONOMY', title: 'Маркет', text: 'Каталог предметов и покупка будут доступны на этой странице.' },
@@ -27,17 +28,20 @@ const routeCopy: Partial<Record<AppRoute['id'], { eyebrow: string; title: string
   support: { eyebrow: 'SERVICE / SUPPORT', title: 'Поддержка', text: 'Контакты и способы обращения будут опубликованы на этой странице.' },
 };
 
-function RoutePage({ route, navigate }: { route: AppRoute; navigate: Navigate }) {
+function RoutePage({ route, navigate, session, logout }: { route: AppRoute; navigate: Navigate; session: SessionState; logout: () => Promise<boolean> }) {
   if (route.id === 'contract-details') {
     return <section className="route-state"><span className="eyebrow">MY CONTRACT / HISTORY ENTRY</span><h1>Контракт {route.params.contractId}</h1><p>Здесь будет показана доступная владельцу сводка операции из истории аккаунта.</p><button className="primary route-state-action" onClick={() => navigate('/history')}>К истории <ArrowRight size={16} /></button></section>;
   }
 
   const copy = routeCopy[route.id];
   if (!copy) return null;
+  if (route.id === 'profile' && session.status === 'authenticated') {
+    return <section className="route-state"><span className="eyebrow">{copy.eyebrow}</span><h1>{copy.title}</h1><p>Вы вошли как {session.account.login}.</p><button className="primary route-state-action" onClick={async () => { if (await logout()) navigate('/login', { replace: true }); }}>Выйти <ArrowRight size={16} /></button></section>;
+  }
   return <section className="route-state"><span className="eyebrow">{copy.eyebrow}</span><h1>{copy.title}</h1><p>{copy.text}</p>{route.id === 'profile' && <button className="primary route-state-action" onClick={() => navigate('/login')}>Войти <ArrowRight size={16} /></button>}</section>;
 }
 
-function LoginPage({ navigate, setApiStatus }: { navigate: Navigate; setApiStatus: (status: ApiStatus) => void }) {
+function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; login: (login: string, password: string) => Promise<boolean> }) {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -45,8 +49,10 @@ function LoginPage({ navigate, setApiStatus }: { navigate: Navigate; setApiStatu
     event.preventDefault();
     setLoginError('');
     try {
-      await api.login(login, password);
-      setApiStatus('live');
+      if (!await authenticate(login, password)) {
+        setLoginError('Не удалось войти. Проверьте логин, пароль или доступность API.');
+        return;
+      }
       navigate('/contracts', { replace: true });
     } catch {
       setLoginError('Не удалось войти. Проверьте логин и пароль.');
@@ -59,14 +65,25 @@ function LoginPage({ navigate, setApiStatus }: { navigate: Navigate; setApiStatu
 export function App() {
   const { route, navigate } = useRouter();
   const [apiStatus, setApiStatus] = useState<ApiStatus>(() => route.id === 'contracts' ? 'connecting' : 'unverified');
+  const session = useSession();
+
+  useEffect(() => {
+    if (session.state.status === 'loading') setApiStatus('connecting');
+    else if (session.state.status === 'authenticated') setApiStatus('live');
+    else if (session.state.status === 'unauthenticated' || session.state.status === 'expired') setApiStatus('auth');
+    else setApiStatus('fallback');
+  }, [session.state]);
 
   let page;
-  if (route.id === 'contracts') page = <ContractsPage setApiStatus={setApiStatus} />;
-  else if (route.id === 'login') page = <LoginPage navigate={navigate} setApiStatus={setApiStatus} />;
+  if (route.id === 'contracts' && session.state.status === 'authenticated') page = <ContractsPage setApiStatus={setApiStatus} />;
+  else if (route.id === 'contracts' && session.state.status === 'loading') page = <section className="route-state"><h1>Проверяем сессию</h1><p>Загружаем данные аккаунта.</p></section>;
+  else if (route.id === 'contracts' && session.state.status === 'error') page = <section className="route-state"><h1>API недоступен</h1><p>Не удалось проверить сессию. Повторите попытку.</p><button className="primary route-state-action" onClick={() => void session.refresh()}>Повторить <ArrowRight size={16} /></button></section>;
+  else if (route.id === 'contracts') page = <section className="route-state"><h1>{session.state.status === 'expired' ? 'Сессия истекла' : 'Требуется вход'}</h1><p>Войдите, чтобы использовать принадлежащие вам предметы.</p><button className="primary route-state-action" onClick={() => navigate('/login')}>Войти <ArrowRight size={16} /></button></section>;
+  else if (route.id === 'login') page = <LoginPage navigate={navigate} login={session.login} />;
   else if (route.id === 'not-found') page = <NotFoundPage navigate={navigate} />;
-  else page = <RoutePage route={route} navigate={navigate} />;
+  else page = <RoutePage route={route} navigate={navigate} session={session.state} logout={session.logout} />;
 
-  return <AppShell route={route} navigate={navigate} apiStatus={apiStatus}>{page}</AppShell>;
+  return <AppShell route={route} navigate={navigate} apiStatus={apiStatus} sessionState={session.state}>{page}</AppShell>;
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

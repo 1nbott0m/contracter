@@ -33,13 +33,15 @@ export function useSession(client: SessionApi = api) {
     try {
       await client.login(loginValue, password);
       const account = await client.me();
-      if (operation !== operationGeneration.current) return;
+      if (operation !== operationGeneration.current) return false;
       authenticated.current = true;
       setState({ status: 'authenticated', account });
+      return true;
     } catch (error) {
-      if (operation !== operationGeneration.current) return;
+      if (operation !== operationGeneration.current) return false;
       authenticated.current = false;
       setState(sessionFailureState(error, false));
+      return false;
     }
   }, [client]);
 
@@ -48,12 +50,14 @@ export function useSession(client: SessionApi = api) {
     setState({ status: 'loading' });
     try {
       await client.logout();
-      if (operation !== operationGeneration.current) return;
+      if (operation !== operationGeneration.current) return false;
       authenticated.current = false;
       setState({ status: 'unauthenticated' });
+      return true;
     } catch (error) {
-      if (operation !== operationGeneration.current) return;
+      if (operation !== operationGeneration.current) return false;
       setState(sessionFailureState(error, authenticated.current));
+      return false;
     }
   }, [client]);
 
