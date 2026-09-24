@@ -7,8 +7,8 @@ import './login.css';
 import './ux.css';
 import './visual-polish.css';
 import './image-states.css';
-import { api } from './api';
-import { items, results, type MockItem } from './mocks/dev-data';
+import { api, type CatalogSku } from './api';
+import { items as mockItems, results, type MockItem } from './mocks/dev-data';
 
 type Item = MockItem;
 
@@ -24,7 +24,8 @@ function SkinCard({ item, selected, onRemove, onAdd }: { item: Item; selected?: 
 }
 
 function App() {
-  const [selected, setSelected] = useState<Item[]>(items.slice(0, 4));
+  const [items, setItems] = useState<Item[]>(mockItems);
+  const [selected, setSelected] = useState<Item[]>(mockItems.slice(0, 4));
   const [tab, setTab] = useState('КОНТРАКТЫ');
   const [apiStatus, setApiStatus] = useState<'connecting' | 'live' | 'fallback'>('connecting');
   const [loginOpen, setLoginOpen] = useState(false);
@@ -37,6 +38,7 @@ function App() {
   const [verificationId, setVerificationId] = useState('');
   const [verificationMessage, setVerificationMessage] = useState('');
   useEffect(() => { api.inventory().then(() => setApiStatus('live')).catch(() => setApiStatus('fallback')); }, []);
+  useEffect(() => { api.catalogSkus().then((page) => { const mapped = page.items.filter((row) => row.canonical_image_url && !row.canonical_image_url.includes('example.invalid')).map((row: CatalogSku, index) => ({ id: row.sku_id, weapon: row.weapon || 'CS2', skin: row.skin_name || row.stable_name, wear: row.wear_band.replace(/_/g, ' '), price: mockItems[index % mockItems.length]?.price || 0, color: '#58d6e7', rarity: row.rarity, image: row.canonical_image_url! })); if (mapped.length >= 4) { setItems(mapped); setSelected(mapped.slice(0, 4)); } }).catch(() => undefined); }, []);
   const total = useMemo(() => selected.reduce((sum, item) => sum + item.price, 0), [selected]);
   const toggleItem = (item: Item) => setSelected((current) => current.some((x) => x.id === item.id) ? current.filter((x) => x.id !== item.id) : current.length < 10 ? [...current, item] : current);
   const submitLogin = async (event: React.FormEvent) => { event.preventDefault(); setLoginError(''); try { await api.login(login, password); setLoginOpen(false); setApiStatus('live'); } catch { setLoginError('Не удалось войти. Проверьте логин и пароль.'); } };
