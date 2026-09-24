@@ -19,6 +19,7 @@ pub struct ServerConfig {
     quote_signer: EnvironmentQuoteSigner,
     seed_protector: EnvironmentSeedProtector,
     trusted_proxy_cidrs: TrustedProxyConfig,
+    metrics_addr: SocketAddr,
 }
 
 impl ServerConfig {
@@ -56,6 +57,17 @@ impl ServerConfig {
         let trusted_proxy_value = value("TRUSTED_PROXY_CIDRS").unwrap_or_default();
         let trusted_proxy_cidrs = TrustedProxyConfig::parse(&trusted_proxy_value)
             .map_err(|_| ConfigError::InvalidTrustedProxyCidrs(trusted_proxy_value.clone()))?;
+        let metrics_host = value("METRICS_HOST").unwrap_or_else(|| "127.0.0.1".to_owned());
+        let metrics_port_value = value("METRICS_PORT").unwrap_or_else(|| "9090".to_owned());
+        let metrics_port = metrics_port_value
+            .parse()
+            .map_err(|_| ConfigError::InvalidPort(metrics_port_value.clone()))?;
+        let metrics_addr = format!("{metrics_host}:{metrics_port}")
+            .parse()
+            .map_err(|_| ConfigError::InvalidBindAddress {
+                host: metrics_host,
+                port: metrics_port,
+            })?;
 
         Ok(Self {
             database_url,
@@ -66,6 +78,7 @@ impl ServerConfig {
             quote_signer,
             seed_protector,
             trusted_proxy_cidrs,
+            metrics_addr,
         })
     }
 
@@ -99,6 +112,10 @@ impl ServerConfig {
 
     pub fn trusted_proxy_cidrs(&self) -> &TrustedProxyConfig {
         &self.trusted_proxy_cidrs
+    }
+
+    pub const fn metrics_addr(&self) -> SocketAddr {
+        self.metrics_addr
     }
 }
 

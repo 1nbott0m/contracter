@@ -4,6 +4,7 @@ mod shutdown;
 use api::{AppState, RouterConfig, build_router};
 use application::auth::AuthConfig;
 use application::quote_signing::QuoteSigner;
+use axum::{Router, routing::get};
 use config::ServerConfig;
 use db::{Database, DatabaseConfig};
 use std::sync::Arc;
@@ -47,6 +48,15 @@ async fn run() -> Result<(), StartupError> {
     );
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;
+    let metrics_listener = tokio::net::TcpListener::bind(config.metrics_addr()).await?;
+    tokio::spawn(async move {
+        let metrics = Router::new().route("/metrics", get(|| async {
+            "# HELP contracter_up Process liveness\n# TYPE contracter_up gauge\ncontracter_up 1\n"
+        }));
+        if let Err(error) = axum::serve(metrics_listener, metrics).await {
+            tracing::error!(%error, "metrics listener stopped");
+        }
+    });
     tracing::info!(addr = %config.bind_addr(), "contracter-server listening");
 
     axum::serve(listener, router)
