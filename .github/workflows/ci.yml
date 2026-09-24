@@ -55,3 +55,15 @@ jobs:
           psql postgresql://postgres:postgres@localhost:5432/postgres \
             -v ON_ERROR_STOP=1 -c 'CREATE DATABASE contracter_integration OWNER anonymous'
           ./scripts/verify.sh
+
+      - name: Validate production deployment manifests
+        run: |
+          mkdir -p deploy/secrets
+          printf '%s\n' 'postgresql://contracter_runtime@postgres:5432/contracter' > deploy/secrets/database_url
+          printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' > deploy/secrets/quote_signing_key
+          printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' > deploy/secrets/quote_seed_key
+          printf '%s\n' 'temporary-ci-password' > deploy/secrets/postgres_owner_password
+          cp deploy/production.env.example deploy/production.env
+          cp deploy/postgres.env.example deploy/postgres.env
+          docker compose -f deploy/docker-compose.prod.yml config --quiet
+          rm -rf deploy/secrets deploy/production.env deploy/postgres.env
