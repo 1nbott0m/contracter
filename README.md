@@ -73,3 +73,6 @@ unset PGPASSWORD TEST_DATABASE_URL
 - Источник Market.CSGO добавлен выключенным; включение требует проверенного интеграционного процесса.
 - Конкретные модели скинов, SKU и float bounds не добавлены без проверенного источника каталога.
 - Для production остаются отдельными задачами deployment, мониторинг, резервное копирование, внешняя загрузка цен, Steam-интеграция и frontend.
+
+# Production deployment
+See deploy/README.md and deploy/docker-compose.prod.yml. Internal balances are CC; RUB is only an external top-up input.
