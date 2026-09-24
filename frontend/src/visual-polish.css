@@ -10,6 +10,7 @@
 :root{--surface:#11161d;--surface-raised:#151c24;--line:#27323d;--cyan:#58d6e7;--lime:#b8f35b;--violet:#9b7cff}
 body{background:radial-gradient(900px 500px at 82% -10%,#17344088,transparent 65%),radial-gradient(700px 420px at 8% 18%,#24183c55,transparent 68%),#080b0f}
 .live-bar{height:38px;background:#0a1015cc;border-color:#1d2a34;backdrop-filter:blur(16px)}
+.live-dot{animation:live-pulse 1.8s ease-in-out infinite}
 .header{height:72px;background:#0c1116dd;border-color:#1d2a34;box-shadow:0 12px 40px #0005}
 .brand-mark:before,.brand-mark:after{border-radius:8px;filter:saturate(1.2)}
 nav button{transition:color .2s ease,transform .2s ease}
@@ -28,9 +29,11 @@ main{animation:page-enter .55s cubic-bezier(.2,.8,.2,1) both}
 .skin-art{border-radius:10px;background-color:#0d1319;box-shadow:inset 0 0 55px #0009,0 0 0 1px #ffffff08;transition:transform .35s ease,background-size .35s ease}
 .skin-art::before,.skin-art::after,.skin-art .art-line{content:none!important;display:none!important;visibility:hidden!important;opacity:0!important;background:none!important;border:0!important;box-shadow:none!important}
 .skin-card:hover .skin-art{transform:scale(1.015)}
+.skin-card:hover .skin-art img{transform:scale(1.08) translate3d(2px,-2px,0);filter:saturate(1.15) drop-shadow(0 10px 14px #0009)}
+.skin-art img{transition:opacity .2s ease,transform .55s cubic-bezier(.2,.8,.2,1),filter .55s ease}
 .skin-art:after{opacity:.28;transition:opacity .3s ease}.skin-card:hover .skin-art:after{opacity:.65}
 .skin-meta{padding:13px 2px 8px}.skin-meta strong{font-size:13px}.card-footer{padding-top:2px}
-.primary{border-radius:10px;transition:transform .22s ease,filter .22s ease,box-shadow .22s ease}.primary:not(:disabled):hover{transform:translateY(-3px);box-shadow:0 12px 30px #58d6e755}
+.primary{border-radius:10px;position:relative;overflow:hidden;transition:transform .22s ease,filter .22s ease,box-shadow .22s ease}.primary::after{content:"";position:absolute;inset:0;width:35%;background:linear-gradient(90deg,transparent,#fff8,transparent);transform:translateX(-180%) skewX(-18deg);pointer-events:none}.primary:not(:disabled):hover{transform:translateY(-3px);box-shadow:0 12px 30px #58d6e755}.primary:not(:disabled):hover::after{animation:button-sweep .8s ease}
 .empty-slot{border-color:#344550;background:#10182099;transition:transform .25s ease,border-color .25s ease,background .25s ease}.empty-slot:hover{transform:translateY(-4px);background:#14242b}
 .content-section{animation:section-enter .7s ease both}
 .selection-grid .skin-card,.result-grid .skin-card,.inventory-grid .skin-card{animation:card-in .55s cubic-bezier(.2,.8,.2,1) both}
@@ -48,6 +51,8 @@ main{animation:page-enter .55s cubic-bezier(.2,.8,.2,1) both}
 @keyframes page-enter{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @keyframes section-enter{from{opacity:.15;transform:translateY(28px)}to{opacity:1;transform:none}}
 @keyframes card-in{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes live-pulse{0%,100%{box-shadow:0 0 0 3px #63d69a22}50%{box-shadow:0 0 0 6px #63d69a08,0 0 18px #63d69a88}}
+@keyframes button-sweep{to{transform:translateX(380%) skewX(-18deg)}}
 @keyframes fade-in{from{opacity:0}to{opacity:1}}
 @keyframes modal-pop{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
 @keyframes tile-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
