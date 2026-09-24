@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, ChevronDown, CirclePlus, Search, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, CirclePlus, Search, ShieldCheck, Sparkles } from 'lucide-react';
 import './styles.css';
 import './extra.css';
 import './login.css';
@@ -10,19 +10,12 @@ import './visual-polish.css';
 import './image-states.css';
 import { api, type CatalogSku } from './api';
 import { items as mockItems, results, type MockItem } from './mocks/dev-data';
+import { SkinCard } from './components/SkinCard';
+import { Logo } from './components/Logo';
 
 type Item = MockItem;
 
 function money(value: number) { return `${value.toLocaleString('ru-RU')} CC`; }
-function SkinCard({ item, selected, onRemove, onAdd }: { item: Item; selected?: boolean; onRemove?: () => void; onAdd?: () => void }) {
-  const [imageState, setImageState] = useState<'loading' | 'ready' | 'error'>('loading');
-  return <article className={`skin-card ${selected ? 'selected' : ''}`} onClick={onAdd}>
-    <div className={`skin-art image-${imageState}`} style={{ '--accent': item.color } as React.CSSProperties}><img src={item.image} alt={`${item.weapon} | ${item.skin}`} loading="lazy" onLoad={() => setImageState('ready')} onError={() => setImageState('error')} /><span>{item.weapon.split('-')[0]}</span><div className="art-line" /></div>
-    {selected && <button className="remove" aria-label="Удалить" onClick={(event) => { event.stopPropagation(); onRemove?.(); }}><X size={14} /></button>}
-    <div className="skin-meta"><span className="weapon">{item.weapon}</span><strong>{item.skin}</strong><span className="wear">{item.wear}</span></div>
-    <div className="card-footer"><span className="rarity" style={{ color: item.color }}>{item.rarity}</span><b>{money(item.price)}</b></div>
-  </article>;
-}
 
 function App() {
   const [items, setItems] = useState<Item[]>(mockItems);
@@ -53,7 +46,7 @@ function App() {
   const buyMarket = async (item: Item) => { setMarketMessage('Проверяем авторизацию и доступность предмета…'); try { await api.purchase(item.id, crypto.randomUUID()); toggleItem(item); setMarketMessage(`${item.weapon} | ${item.skin} добавлен в инвентарь.`); } catch { setMarketMessage('Покупка не выполнена: войдите в профиль или проверьте баланс.'); } };
   return <div className={`app-shell page-${tab.toLowerCase().replace(/[^a-zа-яё]+/gi, '-')}`}>
     <div className="live-bar"><span className="live-dot" /> <b>LIVE</b><span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : ''}LIVE ACTIVITY</span><span className="live-count">0 ONLINE</span><span className="live-empty">Пока нет новых контрактов</span></div>
-    <header className="header"><div className="brand"><div className="brand-mark"><span>AK</span><i /></div><span>CONTRACTER</span></div><nav>{['КОНТРАКТЫ', 'МАРКЕТ', 'ИНВЕНТАРЬ', 'ИСТОРИЯ'].map((name) => <button className={tab === name ? 'active' : ''} onClick={() => navigate(name)} key={name}>{name}</button>)}</nav><div className="header-actions"><button className="search"><Search size={16} /> Поиск скина</button><span className="balance">{money(1240)}</span><button className="profile-button" onClick={() => { window.history.pushState({}, '', '/profile'); setLoginOpen(true); }} aria-label="Открыть профиль"><div className="avatar">Y</div><span>ПРОФИЛЬ</span></button></div></header><main>
+    <header className="header"><Logo /><nav>{['КОНТРАКТЫ', 'МАРКЕТ', 'ИНВЕНТАРЬ', 'ИСТОРИЯ'].map((name) => <button className={tab === name ? 'active' : ''} onClick={() => navigate(name)} key={name}>{name}</button>)}</nav><div className="header-actions"><button className="search"><Search size={16} /> Поиск скина</button><span className="balance">{money(1240)}</span><button className="profile-button" onClick={() => { window.history.pushState({}, '', '/profile'); setLoginOpen(true); }} aria-label="Открыть профиль"><div className="avatar">Y</div><span>ПРОФИЛЬ</span></button></div></header><main>
       <section className="intro"><div><span className="eyebrow">{tab} / WORKSPACE</span><h1>СОЗДАТЬ <em>КОНТРАКТ</em></h1><p>Выберите от 4 до 10 скинов. Соберите контракт и получите один результат.</p></div><div className="trust"><ShieldCheck size={17} /> ПРОЗРАЧНАЯ МЕХАНИКА <span>·</span> CC ECONOMY</div></section>
       <section className="builder-layout"><div className="builder panel"><div className="section-head"><div><h2>ВАШИ ПРЕДМЕТЫ</h2><span>{selected.length} / 10 ПРЕДМЕТОВ</span></div><button className="filter">ВСЕ ПРЕДМЕТЫ <ChevronDown size={15} /></button></div><div className="selection-grid">{selected.map((item) => <SkinCard item={item} selected onRemove={() => toggleItem(item)} key={item.id} />)}{Array.from({ length: Math.max(0, 6 - selected.length) }).map((_, index) => <button className="empty-slot" key={index} onClick={() => toggleItem(items.find((item) => !selected.includes(item)) || items[0])}><CirclePlus size={19} /><span>ДОБАВИТЬ</span></button>)}</div><div className="builder-note"><span><Sparkles size={15} /> Эти предметы соберутся в один контракт</span><span>Минимум 4 · максимум 10</span></div></div><aside className="summary panel"><span className="eyebrow">CONTRACT / READY</span><h2>КОНТРАКТ</h2><div className="summary-rows"><div><span>СТОИМОСТЬ</span><strong>{money(total)}</strong></div><div><span>ПРЕДМЕТОВ</span><strong>{selected.length} / 10</strong></div><div><span>ВОЗМОЖНЫХ РЕЗУЛЬТАТОВ</span><strong>—</strong></div></div><button className="primary" disabled={selected.length < 4 || processing} onClick={commitContract}>{processing ? "ФИКСИРУЕМ…" : "ЗАКЛЮЧИТЬ КОНТРАК"} <ArrowRight size={17} /></button><small>После подтверждения выбранные предметы будут использованы в контракте.</small></aside></section>
       <section className="content-section"><div className="section-title"><div><span className="eyebrow">OUTPUT RANGE</span><h2>ВОЗМОЖНЫЕ РЕЗУЛЬТАТЫ</h2></div><button className="text-button">ПОКАЗАТЬ ВСЕ <ArrowRight size={15} /></button></div><div className="result-grid">{results.map((item) => <SkinCard item={item} key={item.id} />)}</div></section>
