@@ -1,6 +1,7 @@
 export type ApiPage<T> = { items: T[]; next_cursor?: string | null };
 export type InventoryItem = { public_id: string; sku_id: number; display_name: string; wear: string; value_microcredits: number; state: string };
 export type Balance = { currency_code: 'CC'; available_microcredits: number; reserved_microcredits: number };
+export type ContractHistoryItem = { contract_id: string; created_at: string; input_count: number; input_value_microcredits: number; result_display_name?: string | null; result_value_microcredits?: number | null; status: string };
 const base = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8080').replace(/\/$/, '');
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${base}/api/v1${path}`, { credentials: 'include', ...init, headers: { Accept: 'application/json', ...(init?.headers || {}) } });
@@ -12,4 +13,5 @@ export const api = {
   balance: () => request<Balance>('/me/balance'),
   inventory: () => request<ApiPage<InventoryItem>>('/me/inventory'),
   catalogSkus: () => request<ApiPage<unknown>>('/catalog/skus'),
+  history: () => request<ApiPage<ContractHistoryItem>>('/me/history/contracts'),
 };
