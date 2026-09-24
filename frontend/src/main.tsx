@@ -5,6 +5,7 @@ import './styles.css';
 import './extra.css';
 import './login.css';
 import './ux.css';
+import './reveal-cinematic.css';
 import './visual-polish.css';
 import './image-states.css';
 import { api, type CatalogSku } from './api';
@@ -47,7 +48,7 @@ function App() {
   const total = useMemo(() => selected.reduce((sum, item) => sum + item.price, 0), [selected]);
   const toggleItem = (item: Item) => setSelected((current) => current.some((x) => x.id === item.id) ? current.filter((x) => x.id !== item.id) : current.length < 10 ? [...current, item] : current);
   const submitLogin = async (event: React.FormEvent) => { event.preventDefault(); setLoginError(''); try { await api.login(login, password); window.history.pushState({}, '', '/contracts'); setLoginOpen(false); setApiStatus('live'); } catch { setLoginError('Не удалось войти. Проверьте логин и пароль.'); } };
-  const commitContract = async () => { if (selected.length < 4 || processing) return; setProcessing(true); setRevealOpen(true); window.setTimeout(() => setProcessing(false), 1500); };
+  const commitContract = async () => { if (selected.length < 4 || processing) return; setProcessing(true); setRevealOpen(true); window.setTimeout(() => setProcessing(false), 6400); };
   const verifyContract = async (event: React.FormEvent) => { event.preventDefault(); setVerificationMessage('Проверяем операцию…'); try { const history = await api.history(); const found = history.items.find((item) => item.contract_id.toLowerCase() === verificationId.trim().toLowerCase()); setVerificationMessage(found ? `Операция подтверждена · ${found.status} · ${found.input_count} предмета` : 'Операция не найдена или недоступна для этого пользователя.'); } catch { setVerificationMessage('Не удалось загрузить данные проверки. Повторите после входа.'); } };
   const buyMarket = async (item: Item) => { setMarketMessage('Проверяем авторизацию и доступность предмета…'); try { await api.purchase(item.id, crypto.randomUUID()); toggleItem(item); setMarketMessage(`${item.weapon} | ${item.skin} добавлен в инвентарь.`); } catch { setMarketMessage('Покупка не выполнена: войдите в профиль или проверьте баланс.'); } };
   return <div className={`app-shell page-${tab.toLowerCase().replace(/[^a-zа-яё]+/gi, '-')}`}>
