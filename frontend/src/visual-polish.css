@@ -5,3 +5,44 @@
 .page-маркет .intro,.page-маркет .builder-layout,.page-маркет .content-section:not(.market-section),.page-инвентарь .intro,.page-инвентарь .builder-layout,.page-инвентарь .content-section:not(.inventory),.page-история .intro,.page-история .builder-layout,.page-история .content-section:not(.history-section){display:none}.page-маркет main,.page-инвентарь main,.page-история main{padding-top:28px}.page-маркет .market-section,.page-инвентарь .inventory,.page-история .history-section{display:block}.page-маркет .market-row .skin-card{cursor:pointer}.page-история .history-empty{min-height:180px}
 @media(max-width:700px){.live-empty{display:none}}
 @media(max-width:700px){.profile-button span{display:none}.header-actions{gap:8px}.search{font-size:0;padding:8px}.search svg{margin:0}.balance{font-size:10px}.header{position:relative}.header nav{position:fixed;left:0;right:0;bottom:0;z-index:8;height:58px;background:#0d0f12f5;border-top:1px solid #242932;backdrop-filter:blur(12px);display:grid;grid-template-columns:repeat(4,1fr);align-items:stretch;padding:0 5px}.header nav button{font-size:8px;letter-spacing:.04em;padding:0}.header nav button.active{border-bottom:2px solid #58d6e7}.app-shell{padding-bottom:58px}}
+
+/* Product surface pass: softer geometry, layered depth and deliberate motion. */
+:root{--surface:#11161d;--surface-raised:#151c24;--line:#27323d;--cyan:#58d6e7;--lime:#b8f35b;--violet:#9b7cff}
+body{background:radial-gradient(900px 500px at 82% -10%,#17344088,transparent 65%),radial-gradient(700px 420px at 8% 18%,#24183c55,transparent 68%),#080b0f}
+.live-bar{height:38px;background:#0a1015cc;border-color:#1d2a34;backdrop-filter:blur(16px)}
+.header{height:72px;background:#0c1116dd;border-color:#1d2a34;box-shadow:0 12px 40px #0005}
+.brand-mark:before,.brand-mark:after{border-radius:8px;filter:saturate(1.2)}
+nav button{transition:color .2s ease,transform .2s ease}
+nav button:hover{color:#fff;transform:translateY(-1px)}
+nav button.active:after{height:3px;border-radius:8px 8px 0 0;box-shadow:0 0 14px var(--cyan)}
+.search,.filter,.panel,.skin-card,.empty-slot,.info-card,.activity-empty,.history-empty,.info-strip,.result-skin,.login-modal,.reveal-panel{border-radius:14px}
+.search,.filter{background:#121a21aa;border-color:#2a3945}
+.panel{background:linear-gradient(145deg,#131a22f2,#0f1419f2);border-color:#263441;box-shadow:0 22px 70px #0004}
+main{animation:page-enter .55s cubic-bezier(.2,.8,.2,1) both}
+.intro h1{font-size:clamp(34px,4vw,58px);letter-spacing:-.06em;text-shadow:0 8px 40px #58d6e722}
+.trust{padding:10px 14px;border:1px solid #29414a;border-radius:999px;background:#10212999}
+.selection-grid,.result-grid,.inventory-grid{perspective:900px}
+.skin-card{background:linear-gradient(155deg,#18212a,#11161c);border-color:#293743;box-shadow:0 10px 30px #0004;transition:transform .35s cubic-bezier(.2,.8,.2,1),border-color .25s ease,box-shadow .35s ease}
+.skin-card:hover{transform:translateY(-7px) rotateX(2deg);border-color:#4c7380;box-shadow:0 18px 38px #0009,0 0 0 1px #58d6e722}
+.skin-card.selected{border-color:var(--cyan);box-shadow:0 0 0 1px #58d6e766,0 18px 38px #0008}
+.skin-art{border-radius:10px;background-color:#0d1319;box-shadow:inset 0 0 55px #0009,0 0 0 1px #ffffff08;transition:transform .35s ease,background-size .35s ease}
+.skin-card:hover .skin-art{transform:scale(1.015)}
+.skin-art:after{opacity:.28;transition:opacity .3s ease}.skin-card:hover .skin-art:after{opacity:.65}
+.skin-meta{padding:13px 2px 8px}.skin-meta strong{font-size:13px}.card-footer{padding-top:2px}
+.primary{border-radius:10px;transition:transform .22s ease,filter .22s ease,box-shadow .22s ease}.primary:not(:disabled):hover{transform:translateY(-3px);box-shadow:0 12px 30px #58d6e755}
+.empty-slot{border-color:#344550;background:#10182099;transition:transform .25s ease,border-color .25s ease,background .25s ease}.empty-slot:hover{transform:translateY(-4px);background:#14242b}
+.content-section{animation:section-enter .7s both;animation-timeline:view();animation-range:entry 0% cover 22%}
+.market-row{transition:background .25s ease,padding .25s ease;border-radius:12px}.market-row:hover{background:#18232c;padding-left:12px;padding-right:12px}
+.buy-button{border-radius:9px;transition:transform .2s ease,background .2s ease}.buy-button:hover{transform:translateY(-2px)}
+.info-card{background:linear-gradient(145deg,#151e27,#10151a);transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease}.info-card:hover{transform:translateY(-5px);box-shadow:0 16px 32px #0007}
+.reveal-backdrop,.login-backdrop{backdrop-filter:blur(14px);animation:fade-in .25s ease both}
+.reveal-panel,.login-modal{background:linear-gradient(145deg,#18222c,#0e1318);box-shadow:0 30px 100px #000d,0 0 0 1px #58d6e71a;animation:modal-pop .4s cubic-bezier(.2,.8,.2,1) both}
+.reveal-panel.is-processing .reveal-items span{animation:tile-float 1.8s ease-in-out infinite}.reveal-panel.is-processing .reveal-items span:nth-child(2){animation-delay:.12s}.reveal-panel.is-processing .reveal-items span:nth-child(3){animation-delay:.24s}.reveal-panel.is-processing .reveal-items span:nth-child(4){animation-delay:.36s}
+.result-skin{animation:result-glow 1.8s ease-in-out infinite alternate}
+@keyframes page-enter{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes section-enter{from{opacity:.15;transform:translateY(28px)}to{opacity:1;transform:none}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes modal-pop{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes tile-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes result-glow{from{box-shadow:0 0 12px #9b7cff22}to{box-shadow:0 0 42px #9b7cff66}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
