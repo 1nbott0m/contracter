@@ -23,6 +23,11 @@ the object-storage sync destination, and `--image-base-url` should be the
 immutable CDN origin. If mirroring fails, metadata import continues but the
 job reports the failed image so the deployment can retry it.
 
+Set the same origin in `CONTRACTER_IMAGE_BASE_URL` for the sync job and
+`VITE_SKIN_CDN_URL` for local frontend previews. The production frontend
+normally consumes the API's `canonical_image_url`; the environment override
+exists only for development fixtures.
+
 The current frontend uses the same canonical image URL returned by
 `GET /api/v1/catalog/skus`. Its image component reserves card dimensions,
 lazy-loads the artwork, fades it in, and shows a neutral silhouette when the
