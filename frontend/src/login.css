@@ -1,4 +1,4 @@
-.login-fab{position:fixed;right:24px;bottom:24px;z-index:5;background:#b8f35b;color:#10130d;border:0;padding:12px 18px;font-size:10px;letter-spacing:.12em;font-weight:700;cursor:pointer;box-shadow:0 12px 30px #0008}
+.profile-button{display:flex;align-items:center;gap:8px;background:none;border:0;color:#89929e;font-size:9px;letter-spacing:.08em;cursor:pointer;padding:0}.profile-button:hover{color:#58d6e7}.profile-button .avatar{margin:0}
 .login-backdrop{position:fixed;inset:0;background:#090a0cdd;display:grid;place-items:center;z-index:10}
 .login-modal{width:min(380px,calc(100vw - 36px));background:#12151a;border:1px solid #34404a;padding:28px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 80px #000b}
 .login-modal h2{margin:4px 0 10px}
