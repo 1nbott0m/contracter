@@ -21,6 +21,8 @@
 - Restore and write-load tests must refuse production-like targets unless an explicit acknowledgement is supplied.
 - Tool-dependent checks absent from the workstation must report `NOT VERIFIED`, never `PASS`.
 - Production database runtime roles must not own schema objects and must not have superuser, `BYPASSRLS`, `CREATEROLE`, or `CREATEDB`.
+- `CC` is the only internal ledger/API currency; current `*_microcredits` columns mean micro-CC for migration compatibility.
+- RUB appears only at a future payment boundary and is converted by a server-recorded exchange-rate/payment event; clients never supply a rate or direct ledger amount.
 
 ## Review Focus
 

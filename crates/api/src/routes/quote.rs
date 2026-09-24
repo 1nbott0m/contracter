@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::ApiError, extract::CurrentUser, state::AppState};
+use crate::{INTERNAL_CURRENCY_CODE, error::ApiError, extract::CurrentUser, state::AppState};
 
 #[derive(Serialize)]
 pub struct QuoteResponse {
@@ -15,6 +15,7 @@ pub struct QuoteResponse {
     pub input_value_microcredits: i64,
     pub expected_buyback_microcredits: i64,
     pub total_microcredits: i64,
+    pub currency_code: &'static str,
     pub expires_at: String,
     pub inputs: Vec<QuoteInputResponse>,
     pub outcomes: Vec<QuoteOutcomeResponse>,
@@ -105,6 +106,7 @@ pub struct QuoteOutcomeResponse {
     pub probability_numerator: i64,
     pub probability_denominator: i64,
     pub buyback_microcredits: i64,
+    pub currency_code: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,6 +135,7 @@ fn quote_response(quote: quote::ActiveQuote) -> QuoteResponse {
         input_value_microcredits: quote.verified_input_value_microcredits,
         expected_buyback_microcredits: quote.expected_buyback_microcredits,
         total_microcredits: quote.quote_total_microcredits,
+        currency_code: INTERNAL_CURRENCY_CODE,
         expires_at: quote.expires_at.to_rfc3339(),
         inputs: quote
             .inputs
@@ -153,6 +156,7 @@ fn quote_response(quote: quote::ActiveQuote) -> QuoteResponse {
                 probability_numerator: outcome.probability_numerator,
                 probability_denominator: outcome.probability_denominator,
                 buyback_microcredits: outcome.buyback_microcredits,
+                currency_code: INTERNAL_CURRENCY_CODE,
             })
             .collect(),
     }

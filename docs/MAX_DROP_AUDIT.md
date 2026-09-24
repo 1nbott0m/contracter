@@ -1,12 +1,12 @@
-# MAX DROP AUDIT — 15 000 RUB
+# MAX DROP AUDIT — 15 000 CC
 
 ## Result
 
 - STATUS: `IMPLEMENTED`
-- VALUE: `15,000 RUB`
-- STORAGE UNIT: `OTHER` — `1 RUB = 1,000,000 microcredits`
+- VALUE: `15,000 CC`
+- STORAGE UNIT: `OTHER` — `1 CC = 1,000,000 micro-CC units`
 - DATABASE LIMIT: `15,000,000,000 microcredits`
-- MINIMUM INPUT VALUE: `20 RUB = 20,000,000 microcredits`
+- MINIMUM INPUT VALUE: `20 CC = 20,000,000 micro-CC units`
 - INPUT COUNT: `4..=10`
 - SERVER-SIDE: yes
 - DATABASE-SIDE: yes
@@ -59,7 +59,7 @@ or disable triggers; owner credentials must not be available to the service.
   - accepts the exact `20,000,000` boundary;
   - accepts the exact `15,000,000,000` boundary;
   - rejects `15,000,000,001` and negative outcomes;
-  - proves RUB-to-microcredit boundary arithmetic.
+  - proves CC-to-micro-CC boundary arithmetic.
 - `crates/application/src/quote.rs::input_count_must_be_four_through_ten`
 - `crates/economy-core/tests/tradeup.rs`
   - minimum of four;
@@ -70,7 +70,8 @@ or disable triggers; owner credentials must not be available to the service.
 
 ## Conclusion
 
-The 20 RUB floor and 15,000 RUB absolute result cap are server/database
+The 20 CC floor and 15,000 CC absolute result cap are server/database
 invariants, not UI conventions. They are enforced at both boundaries and have
-boundary regressions. This conclusion applies to the audited repository paths;
+boundary regressions. RUB is only a future funding input and cannot directly
+set an internal balance. This conclusion applies to the audited repository paths;
 production role grants must continue to exclude table-owner/schema privileges.

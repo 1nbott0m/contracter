@@ -10,7 +10,11 @@ reference deployment. It must provide a trusted TLS edge, preserve the real
 client IP without trusting arbitrary forwarding headers, load secrets without
 placing their values in the repository or process arguments, expose internal
 monitoring, prove PostgreSQL backup restoration, and provide repeatable load
-tests.
+tests. The platform's internal ledger currency is `CC` (Contracter Coins),
+stored as integer micro-CC. Rubles are only an external funding input: a future
+payment writer must convert a provider-confirmed RUB amount using a
+server-recorded, versioned exchange rate and must never accept a client-supplied
+rate or balance adjustment.
 
 The repository will contain deployment artifacts and executable verification,
 but it will not claim that an unknown production host, DNS record, certificate,
@@ -45,6 +49,22 @@ host ports.
 Kubernetes and a host-specific Nginx/systemd setup are intentionally excluded:
 they add operational choices that cannot be validated on the current machine
 and are unnecessary for a single-host reference deployment.
+
+### Currency boundary
+
+All wallet, quote, market, ledger and API money values are denominated in `CC`.
+The existing `*_microcredits` storage names remain for migration compatibility;
+they mean micro-CC, not RUB, USD or fiat. API money responses include
+`currency_code: "CC"`. External sale evidence may retain its source currency
+metadata, but it is converted into the internal valuation before it can affect
+CC balances.
+
+RUB top-ups are a separate payment boundary. The eventual payment webhook must
+authenticate the provider event, persist `amount_rub_kopecks`, a versioned
+`rub_to_cc_rate`, and the resulting `amount_microcredits` in one idempotent
+ledger operation. The user request cannot choose the rate, target account,
+credit amount, or currency. No payment provider or conversion rate is invented
+by this repository until one is selected.
 
 ## 3. TLS and reverse proxy
 

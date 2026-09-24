@@ -22,6 +22,13 @@
 
 Production-развёртывание должно завершать TLS на доверенном reverse proxy и передавать приложению реальный peer IP. Backend добавляет HSTS ко всем ответам, использует Secure-cookie и ограничивает запросы по peer IP; не публикуйте порт приложения напрямую в интернет и не доверяйте клиентским `X-Forwarded-For` без настройки proxy.
 
+Внутренняя валюта платформы — `CC` (Contracter Coins). Ledger, баланс,
+market и quote используют целые micro-CC; API помечает денежные ответы
+`currency_code: "CC"`. Рубли не являются валютой ledger: они могут появиться
+только на будущем платёжном входе и конвертируются сервером по зафиксированному
+курсу из подтверждённого события провайдера. Клиент не задаёт курс или сумму
+зачисления CC.
+
 ```bash
 DATABASE_URL='postgres://USER@HOST:PORT/contracter?sslmode=require' \
 cargo run -p server --bin contracter-server

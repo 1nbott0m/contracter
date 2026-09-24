@@ -662,6 +662,7 @@ async fn owner_reads_exact_active_quote_without_internal_or_secret_fields() {
 
     assert_eq!(body["quote_id"], fixture.quote_public_id.to_string());
     assert_eq!(body["formula_version"], "quote-http-v1");
+    assert_eq!(body["currency_code"], "CC");
     assert_eq!(body["input_value_microcredits"], 20_000_000);
     assert_eq!(body["expected_buyback_microcredits"], 8_500_000);
     assert_eq!(body["total_microcredits"], 20_000_000);
@@ -672,6 +673,7 @@ async fn owner_reads_exact_active_quote_without_internal_or_secret_fields() {
     );
     assert_eq!(body["inputs"][0]["canonical_float"], "0.10000000");
     assert_eq!(body["outcomes"][0]["position"], 1);
+    assert_eq!(body["outcomes"][0]["currency_code"], "CC");
     assert_eq!(
         body["outcomes"][0]["item_id"],
         fixture.outcome_public_id.to_string()

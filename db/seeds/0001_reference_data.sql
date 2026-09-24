@@ -84,7 +84,7 @@ VALUES ('USD', 2)
 ON CONFLICT (code) DO UPDATE SET minor_unit_scale = EXCLUDED.minor_unit_scale;
 
 INSERT INTO grant_kinds (code, description) VALUES
-    ('test_access_1000_usd', 'One-time test-environment grant of 1000 USD in virtual credits')
+    ('test_access_1000_usd', 'One-time test-environment grant of 1000 CC in virtual credits')
 ON CONFLICT (code) DO UPDATE SET description = EXCLUDED.description;
 
 INSERT INTO wear_bands (code, lower_bound, upper_bound, includes_upper_bound) VALUES

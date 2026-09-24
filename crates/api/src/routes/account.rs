@@ -3,7 +3,7 @@ use axum::{Json, extract::State, response::IntoResponse};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{error::ApiError, extract::CurrentUser, state::AppState};
+use crate::{INTERNAL_CURRENCY_CODE, error::ApiError, extract::CurrentUser, state::AppState};
 
 #[derive(Debug, Serialize)]
 pub struct AccountResponse {
@@ -14,6 +14,7 @@ pub struct AccountResponse {
 
 #[derive(Debug, Serialize)]
 pub struct BalanceResponse {
+    pub currency_code: &'static str,
     /// Integer microcredits, matching the ledger exactly. Never a float
     /// and never rounded here -- display formatting is a client concern.
     pub balance_microcredits: i64,
@@ -45,6 +46,7 @@ pub async fn balance(
     let balance_microcredits = auth::balance(state.database(), caller.user_public_id).await?;
 
     Ok(Json(BalanceResponse {
+        currency_code: INTERNAL_CURRENCY_CODE,
         balance_microcredits,
     }))
 }

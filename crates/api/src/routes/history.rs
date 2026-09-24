@@ -1,4 +1,4 @@
-use crate::{error::ApiError, extract::CurrentUser, state::AppState};
+use crate::{INTERNAL_CURRENCY_CODE, error::ApiError, extract::CurrentUser, state::AppState};
 use axum::{
     Json,
     extract::{Query, State},
@@ -28,6 +28,7 @@ pub struct LedgerItem {
     pub transaction_id: Uuid,
     pub operation: String,
     pub amount_microcredits: i64,
+    pub currency_code: &'static str,
     pub occurred_at: String,
 }
 #[derive(Debug, Serialize)]
@@ -71,6 +72,7 @@ pub async fn ledger(
                 transaction_id: r.public_id,
                 operation: r.operation_kind,
                 amount_microcredits: r.amount_microcredits,
+                currency_code: INTERNAL_CURRENCY_CODE,
                 occurred_at: r.occurred_at.to_rfc3339(),
             })
             .collect::<Vec<_>>(),

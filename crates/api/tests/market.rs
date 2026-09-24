@@ -222,6 +222,7 @@ async fn market_valuations_expose_only_boolean_availability_and_hide_halted_or_d
         .find(|item| item["sku_id"] == available_sku.to_string())
         .expect("available SKU is listed");
     assert_eq!(available["price_microcredits"], 1_234_567);
+    assert_eq!(available["currency_code"], "CC");
     assert_eq!(available["available"], true);
     assert!(available.get("available_units").is_none());
     assert!(available.get("reserved_units").is_none());

@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    INTERNAL_CURRENCY_CODE,
     error::ApiError,
     routes::catalog::{PageResponse, parse_cursor},
     state::AppState,
@@ -24,6 +25,7 @@ pub struct MarketQuery {
 pub struct MarketValuationResponse {
     pub sku_id: uuid::Uuid,
     pub price_microcredits: i64,
+    pub currency_code: &'static str,
     pub updated_at: String,
     pub available: bool,
 }
@@ -45,6 +47,7 @@ pub struct MarketOrderResponse {
     pub operation_id: uuid::Uuid,
     pub inventory_item_id: uuid::Uuid,
     pub amount_microcredits: i64,
+    pub currency_code: &'static str,
 }
 
 pub async fn purchase(
@@ -64,6 +67,7 @@ pub async fn purchase(
         operation_id: order.operation_id.get(),
         inventory_item_id: order.inventory_item_id.get(),
         amount_microcredits: order.amount_microcredits,
+        currency_code: INTERNAL_CURRENCY_CODE,
     }))
 }
 
@@ -84,6 +88,7 @@ pub async fn buyback(
         operation_id: order.operation_id.get(),
         inventory_item_id: order.inventory_item_id.get(),
         amount_microcredits: order.amount_microcredits,
+        currency_code: INTERNAL_CURRENCY_CODE,
     }))
 }
 
@@ -99,6 +104,7 @@ pub async fn valuations(
     Ok(Json(page_response(page, |row| MarketValuationResponse {
         sku_id: row.sku_public_id.get(),
         price_microcredits: row.verified_price_microcredits,
+        currency_code: INTERNAL_CURRENCY_CODE,
         updated_at: row.updated_at.to_rfc3339(),
         available: row.available,
     })))

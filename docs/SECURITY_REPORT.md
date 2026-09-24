@@ -20,7 +20,7 @@ UUID, `user_id`, цене, вероятности, редкости, выбра�
 - Риск: CRITICAL
 - Файл/функция: `db/migrations/0033_quote_value_limits.sql`,
   `assert_quote_value_limits`
-- Эксплуатация: записать outcome выше 15,000 RUB через серверный/DB write path.
+- Эксплуатация: записать outcome выше 15,000 CC через серверный/DB write path.
 - Влияние: неограниченное обязательство платформы и нарушение экономики.
 - Исправление: insert/update constraint trigger с абсолютным значением
   `15,000,000,000` microcredits; точный нижний предел входа также находится в БД.

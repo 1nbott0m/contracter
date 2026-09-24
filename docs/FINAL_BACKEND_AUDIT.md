@@ -45,7 +45,7 @@ allocation -> encrypted seed envelope -> canonical server projections
 ## ISSUES FOUND
 
 - P0: 0 confirmed.
-- P1: 5 confirmed: absent server-side 20 RUB floor; bypassable 15,000 RUB result
+- P1: 5 confirmed: absent server-side 20 CC floor; bypassable 15,000 CC result
   cap; incomplete quote signature boundary; no hard nonnegative invariant for
   user balances; no application-level request throttling.
 - P2: 3 confirmed: incomplete history API/readers; integration CI did not create
@@ -59,8 +59,11 @@ other defect can exist.
 
 ## ISSUES FIXED
 
-- `20 RUB` minimum is enforced by PostgreSQL for quote inputs.
-- `15,000 RUB` is an absolute cap for every persisted quote outcome buyback.
+- `20 CC` minimum is enforced by PostgreSQL for quote inputs.
+- `15,000 CC` is an absolute cap for every persisted quote outcome buyback.
+- Internal balances and API money values are explicitly labelled `CC`; storage
+  `*_microcredits` means micro-CC. RUB is reserved for a future payment input
+  and is never a client-controlled ledger currency.
 - Both limits have boundary and bypass regression tests.
 - Quote signatures cover ownership, allocation and quote identity, versions,
   expiry, economic totals, selected position, ordered inputs and ordered
