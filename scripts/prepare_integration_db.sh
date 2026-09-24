@@ -5,10 +5,14 @@ set -eu
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export LC_ALL=C
 
-for migration in "$repo_dir"/db/migrations/*.sql; do
-    psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
-        --single-transaction --command='SET ROLE anonymous' --file="$migration"
-done
+if ! psql -XAt --dbname="$TEST_DATABASE_URL" --command="SELECT to_regclass('public._sqlx_migrations') IS NULL" | grep -qx t; then
+    echo "integration database already has SQLx migration history; refusing to replay raw migrations" >&2
+else
+    for migration in "$repo_dir"/db/migrations/*.sql; do
+        psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+            --single-transaction --command='SET ROLE anonymous' --file="$migration"
+    done
+fi
 for seed in "$repo_dir"/db/seeds/*.sql; do
     psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
         --single-transaction --command='SET ROLE anonymous' --file="$seed"

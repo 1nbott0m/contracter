@@ -28,6 +28,7 @@ if [ -n "${TEST_DATABASE_URL:-}" ]; then
     # for SQL assertions. Rust integration tests use rollback fixtures and
     # must run against a separate pristine database.
     if [ -n "${TEST_DATABASE_URL_INTEGRATION:-}" ]; then
+        TEST_DATABASE_URL="$TEST_DATABASE_URL_INTEGRATION" cargo test -p db --test postgres -- --ignored --test-threads=1
         TEST_DATABASE_URL="$TEST_DATABASE_URL_INTEGRATION" ./scripts/prepare_integration_db.sh
         # Cargo may execute test binaries from one package concurrently. The
         # integration fixtures share a database, so run each target in a
