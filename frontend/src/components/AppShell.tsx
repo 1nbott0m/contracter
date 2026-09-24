@@ -1,9 +1,9 @@
-import type { MouseEvent, ReactNode } from 'react';
+import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import { Search } from 'lucide-react';
 import { Logo } from './Logo';
 import type { AppRoute, Navigate } from '../router';
 
-type ApiStatus = 'connecting' | 'live' | 'fallback';
+export type ApiStatus = 'unverified' | 'connecting' | 'live' | 'fallback';
 
 type AppShellProps = {
   route: AppRoute;
@@ -40,21 +40,33 @@ function AppLink({ href, navigate, children, className, ariaLabel, current }: {
   return <a href={href} onClick={onClick} className={className} aria-label={ariaLabel} aria-current={current ? 'page' : undefined}>{children}</a>;
 }
 
-export function AppShell({ route, navigate, apiStatus = 'connecting', children }: AppShellProps) {
+export function AppShell({ route, navigate, apiStatus = 'unverified', children }: AppShellProps) {
   const activeRoute = activePrimaryRoute(route);
   const pageClass = `page-${route.id}`;
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const heading = mainRef.current?.querySelector<HTMLElement>('h1');
+    document.title = heading?.textContent ? `${heading.textContent} · CONTRACTER` : 'CONTRACTER';
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus();
+    } else {
+      mainRef.current?.focus();
+    }
+  }, [route.pathname]);
 
   return <div className={`app-shell ${pageClass}`}>
     <div className="live-bar" aria-label="Статус сервиса">
       <span className="live-dot" />
       <b>LIVE</b>
-      <span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : apiStatus === 'fallback' ? 'API UNAVAILABLE · ' : 'API CONNECTING · '}LIVE ACTIVITY</span>
+      <span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : apiStatus === 'fallback' ? 'API UNAVAILABLE · ' : apiStatus === 'connecting' ? 'API CONNECTING · ' : 'API NOT CHECKED · '}LIVE ACTIVITY</span>
       <span className="live-count">ONLINE: НЕДОСТУПНО</span>
       <span className="live-empty">Новые подтверждённые операции пока недоступны</span>
     </div>
 
     <header className="header">
-      <Logo />
+      <Logo navigate={navigate} />
       <nav className="desktop-navigation" aria-label="Основная навигация">
         {primaryNavigation.map((item) => <AppLink href={item.href} navigate={navigate} current={activeRoute === item.id} key={item.id}>{item.label}</AppLink>)}
       </nav>
@@ -67,7 +79,7 @@ export function AppShell({ route, navigate, apiStatus = 'connecting', children }
       </div>
     </header>
 
-    <main>{children}</main>
+    <main ref={mainRef} tabIndex={-1}>{children}</main>
 
     <footer>
       <div><strong>CONTRACTER</strong><span><AppLink href="/contracts" navigate={navigate}>Контракты</AppLink> · <AppLink href="/market" navigate={navigate}>Маркет</AppLink> · <AppLink href="/inventory" navigate={navigate}>Инвентарь</AppLink> · <AppLink href="/history" navigate={navigate}>История</AppLink></span></div>

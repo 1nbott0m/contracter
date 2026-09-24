@@ -6,6 +6,7 @@ beforeEach(() => {
   vi.resetModules();
   window.history.replaceState({}, '', '/contracts');
   document.body.innerHTML = '<div id="root"></div>';
+  document.title = '';
 });
 
 it('replaces development fixtures when the live inventory is empty', async () => {
@@ -43,4 +44,15 @@ it.each([
   await waitFor(() => {
     expect(document.querySelector('h1')?.textContent).toBe(heading);
   });
+});
+
+it('keeps API availability unclaimed on a direct route that makes no request', async () => {
+  window.history.replaceState({}, '', '/market');
+
+  await import('./main');
+
+  await waitFor(() => {
+    expect(document.querySelector('.live-copy')?.textContent).toContain('API NOT CHECKED');
+  });
+  expect(document.querySelector('.live-copy')?.textContent).not.toContain('API UNAVAILABLE');
 });

@@ -11,7 +11,7 @@ import './image-states.css';
 import './accessibility.css';
 import { api, inventoryItemToSkin, type CatalogSku, type MarketValuation } from './api';
 import { items as mockItems, results } from './mocks/dev-data';
-import { AppShell } from './components/AppShell';
+import { AppShell, type ApiStatus } from './components/AppShell';
 import { SkinCard } from './components/SkinCard';
 import { resolveSkinImage, SkinImage } from './components/SkinImage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -21,8 +21,6 @@ import type { InventoryItem } from './types';
 type Item = InventoryItem;
 
 function money(value: number | null) { return value === null ? 'НЕДОСТУПНО' : `${value.toLocaleString('ru-RU')} CC`; }
-
-type ApiStatus = 'connecting' | 'live' | 'fallback';
 
 function ContractsPage({ navigate, setApiStatus }: { navigate: Navigate; setApiStatus: (status: ApiStatus) => void }) {
   const [items, setItems] = useState<Item[]>(mockItems);
@@ -34,6 +32,7 @@ function ContractsPage({ navigate, setApiStatus }: { navigate: Navigate; setApiS
   const [verificationMessage, setVerificationMessage] = useState('');
   const [marketMessage, setMarketMessage] = useState('');
   useEffect(() => {
+    setApiStatus('connecting');
     Promise.all([api.inventory(), api.catalogSkus(), api.marketValuations()])
       .then(([inventory, catalog, valuations]) => {
         const catalogBySku = new Map(catalog.items.map((row: CatalogSku) => [row.sku_id, row]));
@@ -116,7 +115,7 @@ function LoginPage({ navigate, setApiStatus }: { navigate: Navigate; setApiStatu
 
 export function App() {
   const { route, navigate } = useRouter();
-  const [apiStatus, setApiStatus] = useState<ApiStatus>(() => route.id === 'contracts' ? 'connecting' : 'fallback');
+  const [apiStatus, setApiStatus] = useState<ApiStatus>(() => route.id === 'contracts' ? 'connecting' : 'unverified');
 
   let page;
   if (route.id === 'contracts') page = <ContractsPage navigate={navigate} setApiStatus={setApiStatus} />;
