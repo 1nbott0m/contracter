@@ -43,6 +43,7 @@ async fn run() -> Result<(), StartupError> {
         &RouterConfig {
             rate_limit_burst: Some(config.rate_limit_burst()),
             trusted_proxies: config.trusted_proxy_cidrs().clone(),
+            cors_allowed_origins: config.cors_allowed_origins().to_vec(),
             ..RouterConfig::default()
         },
     );
@@ -59,9 +60,12 @@ async fn run() -> Result<(), StartupError> {
     });
     tracing::info!(addr = %config.bind_addr(), "contracter-server listening");
 
-    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown::shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown::shutdown_signal())
+    .await?;
 
     Ok(())
 }

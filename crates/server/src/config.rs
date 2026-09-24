@@ -21,6 +21,7 @@ pub struct ServerConfig {
     trusted_proxy_cidrs: TrustedProxyConfig,
     metrics_addr: SocketAddr,
     log_format: LogFormat,
+    cors_allowed_origins: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +81,13 @@ impl ServerConfig {
                 host: metrics_host,
                 port: metrics_port,
             })?;
+        let cors_allowed_origins = value("CORS_ALLOWED_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
 
         Ok(Self {
             database_url,
@@ -92,6 +100,7 @@ impl ServerConfig {
             trusted_proxy_cidrs,
             metrics_addr,
             log_format,
+            cors_allowed_origins,
         })
     }
 
@@ -133,6 +142,10 @@ impl ServerConfig {
 
     pub const fn log_format(&self) -> LogFormat {
         self.log_format
+    }
+
+    pub fn cors_allowed_origins(&self) -> &[String] {
+        &self.cors_allowed_origins
     }
 }
 
