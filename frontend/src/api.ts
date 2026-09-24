@@ -30,12 +30,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) throw new Error(`API_${response.status}`);
   return response.json() as Promise<T>;
 }
+
+async function requestAllPages<T>(path: string): Promise<ApiPage<T>> {
+  const items: T[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (;;) {
+    const query = new URLSearchParams({ limit: '200' });
+    if (cursor !== undefined) query.set('cursor', cursor);
+    const page = await request<ApiPage<T>>(`${path}?${query.toString()}`);
+    items.push(...page.items);
+
+    const nextCursor = page.next_cursor ?? undefined;
+    if (nextCursor === undefined) return { items };
+    if (seenCursors.has(nextCursor)) throw new Error('API_PAGINATION_CURSOR_REPEATED');
+
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+}
+
 export const api = {
   login: (login: string, password: string) => request<{ user_id: string }>('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) }),
   balance: () => request<Balance>('/me/balance'),
-  inventory: () => request<ApiPage<ApiInventoryItem>>('/me/inventory'),
-  catalogSkus: () => request<ApiPage<CatalogSku>>('/catalog/skus'),
-  marketValuations: () => request<ApiPage<MarketValuation>>('/market/valuations'),
+  inventory: () => requestAllPages<ApiInventoryItem>('/me/inventory'),
+  catalogSkus: () => requestAllPages<CatalogSku>('/catalog/skus'),
+  marketValuations: () => requestAllPages<MarketValuation>('/market/valuations'),
   history: () => request<ApiPage<ContractHistoryItem>>('/me/history/contracts'),
   purchase: (skuId: string, idempotencyKey: string) => request<{ inventory_item_id: string }>('/me/market/purchases/' + skuId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotency_key: idempotencyKey }) }),
 };
@@ -55,7 +76,7 @@ export function inventoryItemToSkin(item: ApiInventoryItem, catalog?: CatalogSku
     weapon: catalog?.weapon?.trim() || (stableSkin ? stableWeapon : 'CS2'),
     skin: catalog?.skin_name?.trim() || stableSkin || catalog?.stable_name || item.stable_name,
     wear: item.wear_band.replace(/_/g, ' '),
-    price: valuation ? valuation.price_microcredits / 1_000_000 : 0,
+    price: valuation ? valuation.price_microcredits / 1_000_000 : null,
     color: '#58d6e7',
     rarity: item.rarity,
     image: image || '',

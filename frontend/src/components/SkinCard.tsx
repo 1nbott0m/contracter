@@ -10,8 +10,8 @@ type SkinCardProps = {
   onClick?: () => void;
 };
 
-function money(value: number) {
-  return `${value.toLocaleString('ru-RU')} CC`;
+function money(value: number | null) {
+  return value === null ? 'ЦЕНА НЕДОСТУПНА' : `${value.toLocaleString('ru-RU')} CC`;
 }
 
 export function SkinCard({ item, selected = false, onRemove, onAdd, onClick }: SkinCardProps) {

@@ -4,7 +4,8 @@ export type SkinDefinition = {
   weapon: string;
   skin: string;
   wear: string;
-  price: number;
+  /** Display valuation in CC, or null when no current valuation exists. */
+  price: number | null;
   color: string;
   rarity: string;
   /** Canonical artwork URL. Never replace this with generated artwork in production. */

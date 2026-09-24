@@ -18,7 +18,7 @@ import type { InventoryItem } from './types';
 
 type Item = InventoryItem;
 
-function money(value: number) { return `${value.toLocaleString('ru-RU')} CC`; }
+function money(value: number | null) { return value === null ? 'НЕДОСТУПНО' : `${value.toLocaleString('ru-RU')} CC`; }
 
 function App() {
   const [items, setItems] = useState<Item[]>(mockItems);
@@ -51,7 +51,12 @@ function App() {
       })
       .catch(() => setApiStatus('fallback'));
   }, []);
-  const total = useMemo(() => selected.reduce((sum, item) => sum + item.price, 0), [selected]);
+  const total = useMemo(
+    () => selected.some((item) => item.price === null)
+      ? null
+      : selected.reduce((sum, item) => sum + (item.price ?? 0), 0),
+    [selected],
+  );
   const nextSelectable = items.find((item) => !item.locked && !selected.some((selectedItem) => selectedItem.id === item.id));
   const toggleItem = (item: Item) => {
     if (item.locked) return;

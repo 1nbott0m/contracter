@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { inventoryItemToSkin } from './api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api, inventoryItemToSkin } from './api';
 
 const inventoryItem = {
   item_id: 'inventory-item',
@@ -46,6 +46,58 @@ const valuation = {
   available: true,
 };
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('paginated API lists', () => {
+  it.each([
+    ['inventory', '/api/v1/me/inventory'],
+    ['catalogSkus', '/api/v1/catalog/skus'],
+    ['marketValuations', '/api/v1/market/valuations'],
+  ] as const)('loads every %s page by following the opaque cursor', async (method, pathname) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ page: 1 }], next_cursor: 'opaque cursor/+=' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ page: 2 }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api[method]();
+
+    expect(result.items).toEqual([{ page: 1 }, { page: 2 }]);
+    expect(result.next_cursor).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const firstUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(firstUrl.pathname).toBe(pathname);
+    expect(firstUrl.searchParams.get('limit')).toBe('200');
+    expect(firstUrl.searchParams.has('cursor')).toBe(false);
+
+    const secondUrl = new URL(String(fetchMock.mock.calls[1]?.[0]));
+    expect(secondUrl.pathname).toBe(pathname);
+    expect(secondUrl.searchParams.get('limit')).toBe('200');
+    expect(secondUrl.searchParams.get('cursor')).toBe('opaque cursor/+=');
+  });
+
+  it('stops with an error if a server repeats a cursor instead of looping forever', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      items: [],
+      next_cursor: 'same-cursor',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+
+    await expect(api.inventory()).rejects.toThrow('API_PAGINATION_CURSOR_REPEATED');
+  });
+});
+
 describe('inventoryItemToSkin', () => {
   it('joins canonical catalog metadata instead of presenting a collection as a weapon', () => {
     const result = inventoryItemToSkin(inventoryItem, catalogSku, valuation);
@@ -59,5 +111,11 @@ describe('inventoryItemToSkin', () => {
     const result = inventoryItemToSkin(inventoryItem, catalogSku, valuation);
 
     expect(result.price).toBe(1.234567);
+  });
+
+  it('marks a missing market valuation as unavailable instead of inventing a zero price', () => {
+    const result = inventoryItemToSkin(inventoryItem, catalogSku);
+
+    expect(result.price).toBeNull();
   });
 });

@@ -33,4 +33,11 @@ describe('SkinCard selection action', () => {
     fireEvent.click(action);
     expect(onAdd).not.toHaveBeenCalled();
   });
+
+  it('shows an unavailable value instead of a zero price when valuation data is missing', () => {
+    render(<SkinCard item={{ ...item, price: null }} />);
+
+    expect(screen.getByText('ЦЕНА НЕДОСТУПНА')).toBeTruthy();
+    expect(screen.queryByText('0 CC')).toBeNull();
+  });
 });
