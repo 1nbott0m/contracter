@@ -20,6 +20,13 @@ pub struct ServerConfig {
     seed_protector: EnvironmentSeedProtector,
     trusted_proxy_cidrs: TrustedProxyConfig,
     metrics_addr: SocketAddr,
+    log_format: LogFormat,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogFormat {
+    Json,
+    Pretty,
 }
 
 impl ServerConfig {
@@ -44,6 +51,11 @@ impl ServerConfig {
             .map_err(|_| ConfigError::InvalidBindAddress { host, port })?;
 
         let log_filter = value("LOG_FILTER").unwrap_or_else(|| "info".to_owned());
+        let log_format = match value("LOG_FORMAT").as_deref() {
+            None | Some("json") => LogFormat::Json,
+            Some("pretty") => LogFormat::Pretty,
+            Some(other) => return Err(ConfigError::InvalidLogFormat(other.to_owned())),
+        };
         // Opt-out only, and only by an exact value: any typo leaves the
         // Secure attribute on rather than silently dropping it.
         let insecure_cookies = value("INSECURE_COOKIES")
@@ -79,6 +91,7 @@ impl ServerConfig {
             seed_protector,
             trusted_proxy_cidrs,
             metrics_addr,
+            log_format,
         })
     }
 
@@ -116,6 +129,10 @@ impl ServerConfig {
 
     pub const fn metrics_addr(&self) -> SocketAddr {
         self.metrics_addr
+    }
+
+    pub const fn log_format(&self) -> LogFormat {
+        self.log_format
     }
 }
 
@@ -390,6 +407,8 @@ pub enum ConfigError {
     InvalidRateLimitBurst(String),
     #[error("TRUSTED_PROXY_CIDRS must be a comma-separated CIDR list, got '{0}'")]
     InvalidTrustedProxyCidrs(String),
+    #[error("invalid LOG_FORMAT: {0}")]
+    InvalidLogFormat(String),
     #[error(transparent)]
     QuoteSigning(#[from] QuoteSigningError),
     #[error(transparent)]

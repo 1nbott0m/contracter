@@ -5,7 +5,7 @@ use api::{AppState, RouterConfig, build_router};
 use application::auth::AuthConfig;
 use application::quote_signing::QuoteSigner;
 use axum::{Router, routing::get};
-use config::ServerConfig;
+use config::{LogFormat, ServerConfig};
 use db::{Database, DatabaseConfig};
 use std::sync::Arc;
 
@@ -19,7 +19,7 @@ async fn main() {
 
 async fn run() -> Result<(), StartupError> {
     let config = ServerConfig::from_env()?;
-    init_tracing(config.log_filter());
+    init_tracing(config.log_filter(), config.log_format());
     tracing::info!(public_key = ?config.quote_signer().public_key(), "quote signer configured");
 
     let database_config = DatabaseConfig::new(config.database_url())?;
@@ -66,14 +66,21 @@ async fn run() -> Result<(), StartupError> {
     Ok(())
 }
 
-fn init_tracing(filter: &str) {
+fn init_tracing(filter: &str, format: LogFormat) {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let env_filter = EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(fmt::layer())
-        .init();
+    if format == LogFormat::Json {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt::layer().json())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt::layer())
+            .init();
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
