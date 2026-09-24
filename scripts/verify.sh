@@ -8,6 +8,9 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 sh -n db/verify.sh
+sh -n deploy/backup.sh deploy/restore.sh scripts/verify_runtime_role.sh scripts/run_load_test.sh scripts/tests/*.sh
+sh scripts/tests/load_test_safety.sh
+sh scripts/tests/backup_restore_safety.sh
 
 if [ -n "${TEST_DATABASE_URL:-}" ]; then
     if ! command -v psql >/dev/null 2>&1; then
