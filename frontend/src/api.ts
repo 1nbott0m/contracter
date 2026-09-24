@@ -59,6 +59,36 @@ export type MarketPurchaseResponse = {
   amount_microcredits: number;
   currency_code: 'CC';
 };
+export type QuoteAllocationResponse = {
+  allocation_id: string;
+  commitment: number[];
+};
+export type QuoteInput = {
+  position: number;
+  item_id: string;
+  canonical_float: string;
+};
+export type QuoteOutcome = {
+  position: number;
+  item_id: string;
+  output_float: string;
+  probability_numerator: number;
+  probability_denominator: number;
+  buyback_microcredits: number;
+  currency_code: 'CC';
+};
+export type QuoteResponse = {
+  quote_id: string;
+  formula_version: string;
+  input_value_microcredits: number;
+  expected_buyback_microcredits: number;
+  total_microcredits: number;
+  currency_code: 'CC';
+  expires_at: string;
+  inputs: QuoteInput[];
+  outcomes: QuoteOutcome[];
+};
+export type AcceptQuoteResponse = { contract_id: string };
 
 type RuntimeEnvironment = {
   DEV: boolean;
@@ -159,6 +189,12 @@ const marketPurchase = (skuId: string, idempotencyKey: string) => request<Market
   },
 );
 
+const jsonPost = <T>(path: string, body?: unknown) => request<T>(path, {
+  method: 'POST',
+  headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+
 export const api = {
   login: (login: string, password: string) => request<LoginResponse>('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
@@ -167,9 +203,18 @@ export const api = {
   inventory: () => requestAllPages<ApiInventoryItem>('/me/inventory'),
   catalogSkus: () => requestAllPages<CatalogSku>('/catalog/skus'),
   marketValuations: () => requestAllPages<MarketValuation>('/market/valuations'),
+  allocateQuote: () => jsonPost<QuoteAllocationResponse>('/me/quote-allocations'),
+  createQuote: (allocationId: string, itemIds: string[], clientSeed: string) => jsonPost<QuoteResponse>('/me/quotes', {
+    allocation_id: allocationId,
+    item_ids: itemIds,
+    client_seed: clientSeed,
+  }),
+  acceptQuote: (quoteId: string, idempotencyKey: string) => jsonPost<AcceptQuoteResponse>(
+    `/me/quote/${encodeURIComponent(quoteId)}/accept`,
+    { idempotency_key: idempotencyKey },
+  ),
   history: requestAllContractHistory,
-  contractDetails: findContract,
-  verifyContract: findContract,
+  findMyContractHistoryEntry: findContract,
   marketPurchase,
   /** @deprecated Prefer marketPurchase. */
   purchase: marketPurchase,

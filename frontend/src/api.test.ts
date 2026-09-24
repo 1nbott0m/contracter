@@ -104,6 +104,44 @@ describe('paginated API lists', () => {
 });
 
 describe('API failures and endpoint contracts', () => {
+  it('allocates, creates, and accepts a quote using only backend-supported fields', async () => {
+    const allocation = { allocation_id: 'allocation-id', commitment: Array(32).fill(7) };
+    const quote = {
+      quote_id: 'quote-id',
+      formula_version: 'v1',
+      input_value_microcredits: 4_000_000,
+      expected_buyback_microcredits: 3_500_000,
+      total_microcredits: 3_600_000,
+      currency_code: 'CC',
+      expires_at: '2026-09-24T12:10:00Z',
+      inputs: [],
+      outcomes: [],
+    };
+    const accepted = { contract_id: 'server-contract-id' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(allocation), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(quote), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(accepted), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.allocateQuote()).resolves.toEqual(allocation);
+    await expect(api.createQuote('allocation-id', ['item-1', 'item-2', 'item-3', 'item-4'], 'client-seed')).resolves.toEqual(quote);
+    await expect(api.acceptQuote('quote-id', 'idempotency-key')).resolves.toEqual(accepted);
+
+    expect(fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      '/api/v1/me/quote-allocations',
+      '/api/v1/me/quotes',
+      '/api/v1/me/quote/quote-id/accept',
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      allocation_id: 'allocation-id',
+      item_ids: ['item-1', 'item-2', 'item-3', 'item-4'],
+      client_seed: 'client-seed',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ idempotency_key: 'idempotency-key' });
+  });
+
   it('preserves the backend status, stable code and request id for callers', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       error: {
@@ -138,7 +176,7 @@ describe('API failures and endpoint contracts', () => {
     );
   });
 
-  it('finds contract details and verification in the existing history route', async () => {
+  it('finds an owned contract summary in the authenticated history route', async () => {
     const contract = {
       contract_id: 'f7f78654-6db2-49b9-a927-9b75d061523f',
       status: 'completed',
@@ -151,8 +189,8 @@ describe('API failures and endpoint contracts', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(api.contractDetails(contract.contract_id.toUpperCase())).resolves.toEqual(contract);
-    await expect(api.verifyContract('missing-contract')).resolves.toBeNull();
+    await expect(api.findMyContractHistoryEntry(contract.contract_id.toUpperCase())).resolves.toEqual(contract);
+    await expect(api.findMyContractHistoryEntry('missing-contract')).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const [url] of fetchMock.mock.calls) {
       expect(new URL(String(url)).pathname).toBe('/api/v1/me/history/contracts');

@@ -8,13 +8,14 @@ type SkinCardProps = {
   onRemove?: () => void;
   onAdd?: () => void;
   onClick?: () => void;
+  selectionDisabled?: boolean;
 };
 
 function money(value: number | null) {
   return value === null ? 'ЦЕНА НЕДОСТУПНА' : `${value.toLocaleString('ru-RU')} CC`;
 }
 
-export function SkinCard({ item, selected = false, onRemove, onAdd, onClick }: SkinCardProps) {
+export function SkinCard({ item, selected = false, onRemove, onAdd, onClick, selectionDisabled = false }: SkinCardProps) {
   const handleClick = onClick || onAdd;
   const itemName = `${item.weapon} | ${item.skin}`;
   const actionLabel = item.locked
@@ -32,7 +33,7 @@ export function SkinCard({ item, selected = false, onRemove, onAdd, onClick }: S
       {selected && onRemove && <button className="remove" aria-label="Удалить" onClick={(event) => { event.stopPropagation(); onRemove(); }}><X size={14} /></button>}
       <div className="skin-meta"><span className="weapon">{item.weapon}</span><strong>{item.skin}</strong><span className="wear">{item.wear}</span></div>
       <div className="card-footer"><span className="rarity" style={{ color: item.color }}>{item.rarity}</span><b>{money(item.price)}</b></div>
-      {handleClick && <button className="skin-card-select" type="button" onClick={handleClick} aria-label={actionLabel} aria-pressed={selected} disabled={item.locked} />}
+      {handleClick && <button className="skin-card-select" type="button" onClick={handleClick} aria-label={actionLabel} aria-pressed={selected} disabled={item.locked || selectionDisabled} />}
     </article>
   );
 }
