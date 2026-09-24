@@ -7,7 +7,7 @@ use application::quote_signing::QuoteSigner;
 use axum::{Router, routing::get};
 use config::{LogFormat, ServerConfig};
 use db::{Database, DatabaseConfig};
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 #[tokio::main]
 async fn main() {
@@ -59,7 +59,7 @@ async fn run() -> Result<(), StartupError> {
     });
     tracing::info!(addr = %config.bind_addr(), "contracter-server listening");
 
-    axum::serve(listener, router)
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown::shutdown_signal())
         .await?;
 
