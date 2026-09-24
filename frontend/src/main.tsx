@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, ChevronDown, CirclePlus, Search, ShieldCheck, Sparkles, X } from 'lucide-react';
 import './styles.css';
+import { api } from './api';
 
 type Item = { id: string; weapon: string; skin: string; wear: string; price: number; color: string; rarity: string };
 const items: Item[] = [
@@ -29,10 +30,12 @@ function SkinCard({ item, selected, onRemove, onAdd }: { item: Item; selected?: 
 function App() {
   const [selected, setSelected] = useState<Item[]>(items.slice(0, 4));
   const [tab, setTab] = useState('КОНТРАКТЫ');
+  const [apiStatus, setApiStatus] = useState<'connecting' | 'live' | 'fallback'>('connecting');
+  useEffect(() => { api.inventory().then(() => setApiStatus('live')).catch(() => setApiStatus('fallback')); }, []);
   const total = useMemo(() => selected.reduce((sum, item) => sum + item.price, 0), [selected]);
   const toggleItem = (item: Item) => setSelected((current) => current.some((x) => x.id === item.id) ? current.filter((x) => x.id !== item.id) : current.length < 10 ? [...current, item] : current);
   return <div className="app-shell">
-    <div className="live-bar"><span className="live-dot" /> <b>LIVE</b><span className="live-copy">Контракты собираются прямо сейчас</span><span className="live-result">●  void &nbsp; M4A1-S | Decimator &nbsp; <strong>890 CC</strong></span><span className="live-result">●  yng &nbsp; AWP | Neo-Noir &nbsp; <strong>2 340 CC</strong></span></div>
+    <div className="live-bar"><span className="live-dot" /> <b>LIVE</b><span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : ''}Контракты собираются прямо сейчас</span><span className="live-result">●  void &nbsp; M4A1-S | Decimator &nbsp; <strong>890 CC</strong></span><span className="live-result">●  yng &nbsp; AWP | Neo-Noir &nbsp; <strong>2 340 CC</strong></span></div>
     <header className="header"><div className="brand"><div className="brand-mark"><span>AK</span><i /></div><span>CONTRACTER</span></div><nav>{['КОНТРАКТЫ', 'МАРКЕТ', 'ИНВЕНТАРЬ', 'ИСТОРИЯ'].map((name) => <button className={tab === name ? 'active' : ''} onClick={() => setTab(name)} key={name}>{name}</button>)}</nav><div className="header-actions"><button className="search"><Search size={16} /> Поиск скина</button><span className="balance">{money(1240)}</span><div className="avatar">Y</div></div></header>
     <main>
       <section className="intro"><div><span className="eyebrow">{tab} / WORKSPACE</span><h1>СОЗДАТЬ <em>КОНТРАКТ</em></h1><p>Выберите от 4 до 10 скинов. Соберите контракт и получите один результат.</p></div><div className="trust"><ShieldCheck size={17} /> ПРОЗРАЧНАЯ МЕХАНИКА <span>·</span> CC ECONOMY</div></section>
