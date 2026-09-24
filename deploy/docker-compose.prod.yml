@@ -13,6 +13,9 @@ services:
   postgres:
     image: postgres:16-alpine
     env_file: ./postgres.env
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_owner_password
+    secrets: [postgres_owner_password]
     volumes: [pgdata:/var/lib/postgresql/data]
     networks: [private]
     restart: unless-stopped
@@ -43,5 +46,6 @@ volumes:
   caddy_config: {}
 secrets:
   database_url: {file: ./secrets/database_url}
+  postgres_owner_password: {file: ./secrets/postgres_owner_password}
   quote_signing_key: {file: ./secrets/quote_signing_key}
   quote_seed_key: {file: ./secrets/quote_seed_key}
