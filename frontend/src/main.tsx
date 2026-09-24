@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { ArrowRight, ChevronDown, CirclePlus, Search, ShieldCheck, Sparkles, X } from 'lucide-react';
 import './styles.css';
 import './extra.css';
+import './login.css';
 import { api } from './api';
 
 type Item = { id: string; weapon: string; skin: string; wear: string; price: number; color: string; rarity: string };
@@ -32,13 +33,18 @@ function App() {
   const [selected, setSelected] = useState<Item[]>(items.slice(0, 4));
   const [tab, setTab] = useState('КОНТРАКТЫ');
   const [apiStatus, setApiStatus] = useState<'connecting' | 'live' | 'fallback'>('connecting');
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
   useEffect(() => { api.inventory().then(() => setApiStatus('live')).catch(() => setApiStatus('fallback')); }, []);
   const total = useMemo(() => selected.reduce((sum, item) => sum + item.price, 0), [selected]);
   const toggleItem = (item: Item) => setSelected((current) => current.some((x) => x.id === item.id) ? current.filter((x) => x.id !== item.id) : current.length < 10 ? [...current, item] : current);
+  const submitLogin = async (event: React.FormEvent) => { event.preventDefault(); setLoginError(''); try { await api.login(login, password); setLoginOpen(false); setApiStatus('live'); } catch { setLoginError('Не удалось войти. Проверьте логин и пароль.'); } };
   return <div className="app-shell">
     <div className="live-bar"><span className="live-dot" /> <b>LIVE</b><span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : ''}Контракты собираются прямо сейчас</span><span className="live-result">●  void &nbsp; M4A1-S | Decimator &nbsp; <strong>890 CC</strong></span><span className="live-result">●  yng &nbsp; AWP | Neo-Noir &nbsp; <strong>2 340 CC</strong></span></div>
     <header className="header"><div className="brand"><div className="brand-mark"><span>AK</span><i /></div><span>CONTRACTER</span></div><nav>{['КОНТРАКТЫ', 'МАРКЕТ', 'ИНВЕНТАРЬ', 'ИСТОРИЯ'].map((name) => <button className={tab === name ? 'active' : ''} onClick={() => setTab(name)} key={name}>{name}</button>)}</nav><div className="header-actions"><button className="search"><Search size={16} /> Поиск скина</button><span className="balance">{money(1240)}</span><div className="avatar">Y</div></div></header>
-    <main>
+    <button className="login-fab" onClick={() => setLoginOpen(true)}>ВОЙТИ</button><main>
       <section className="intro"><div><span className="eyebrow">{tab} / WORKSPACE</span><h1>СОЗДАТЬ <em>КОНТРАКТ</em></h1><p>Выберите от 4 до 10 скинов. Соберите контракт и получите один результат.</p></div><div className="trust"><ShieldCheck size={17} /> ПРОЗРАЧНАЯ МЕХАНИКА <span>·</span> CC ECONOMY</div></section>
       <section className="builder-layout"><div className="builder panel"><div className="section-head"><div><h2>ВАШИ ПРЕДМЕТЫ</h2><span>{selected.length} / 10 ПРЕДМЕТОВ</span></div><button className="filter">ВСЕ ПРЕДМЕТЫ <ChevronDown size={15} /></button></div><div className="selection-grid">{selected.map((item) => <SkinCard item={item} selected onRemove={() => toggleItem(item)} key={item.id} />)}{Array.from({ length: Math.max(0, 6 - selected.length) }).map((_, index) => <button className="empty-slot" key={index} onClick={() => toggleItem(items.find((item) => !selected.includes(item)) || items[0])}><CirclePlus size={19} /><span>ДОБАВИТЬ</span></button>)}</div><div className="builder-note"><span><Sparkles size={15} /> Эти предметы соберутся в один контракт</span><span>Минимум 4 · максимум 10</span></div></div><aside className="summary panel"><span className="eyebrow">CONTRACT / READY</span><h2>КОНТРАКТ</h2><div className="summary-rows"><div><span>СТОИМОСТЬ</span><strong>{money(total)}</strong></div><div><span>ПРЕДМЕТОВ</span><strong>{selected.length} / 10</strong></div><div><span>ВОЗМОЖНЫХ РЕЗУЛЬТАТОВ</span><strong>—</strong></div></div><button className="primary" disabled={selected.length < 4}>ЗАКЛЮЧИТЬ КОНТРАК <ArrowRight size={17} /></button><small>После подтверждения выбранные предметы будут использованы в контракте.</small></aside></section>
       <section className="content-section"><div className="section-title"><div><span className="eyebrow">OUTPUT RANGE</span><h2>ВОЗМОЖНЫЕ РЕЗУЛЬТАТЫ</h2></div><button className="text-button">ПОКАЗАТЬ ВСЕ <ArrowRight size={15} /></button></div><div className="result-grid">{results.map((item) => <SkinCard item={item} key={item.id} />)}</div></section>
@@ -48,6 +54,7 @@ function App() {
       <section className="content-section history-section"><div className="section-title"><div><span className="eyebrow">AUDIT TRAIL / PUBLIC VIEW</span><h2>ПОСЛЕДНИЕ КОНТРАКТЫ</h2></div><button className="text-button">ИСТОРИЯ <ArrowRight size={15} /></button></div><div className="history-empty"><span>—</span><div><strong>История появится после первого завершённого контракта</strong><small>Здесь будут только user-facing данные операции.</small></div></div></section>
       <section className="content-section transparency"><div className="section-title"><div><span className="eyebrow">TRANSPARENCY / CONTROL</span><h2>ПРОЗРАЧНОСТЬ</h2><p className="section-subtitle">Всё необходимое для понимания ваших операций.</p></div></div><div className="transparency-grid">{[['ПРАВИЛА КОНТРАКТОВ','Как создаётся и подтверждается контракт.'],['ИСТОРИЯ','Ваши завершённые операции.'],['ПРОВЕРКА ОПЕРАЦИИ','Проверка контракта по ID.'],['БЕЗОПАСНОСТЬ','Защита аккаунта и операций.']].map(([title, text]) => <button className="info-card" key={title}><strong>{title}</strong><span>{text}</span><ArrowRight size={15} /></button>)}</div></section>
     </main><footer><span>CONTRACTER © 2026</span><span>Внутренняя валюта: CC · 18+</span><span>TRANSPARENCY / SECURITY / TERMS</span></footer>
+  {loginOpen && <div className="login-backdrop"><form className="login-modal" onSubmit={submitLogin}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h2>ВОЙТИ</h2><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{loginError && <p className="login-error">{loginError}</p>}<button className="primary" type="submit">ПРОДОЛЖИТЬ <ArrowRight size={16} /></button><button className="close-login" type="button" onClick={() => setLoginOpen(false)}>ОТМЕНА</button></form></div>}
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

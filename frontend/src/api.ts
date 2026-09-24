@@ -8,6 +8,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 export const api = {
+  login: (login: string, password: string) => request<{ user_id: string }>('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) }),
   balance: () => request<Balance>('/me/balance'),
   inventory: () => request<ApiPage<InventoryItem>>('/me/inventory'),
   catalogSkus: () => request<ApiPage<unknown>>('/catalog/skus'),
