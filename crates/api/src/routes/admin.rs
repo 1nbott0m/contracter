@@ -13,6 +13,41 @@ pub struct AdminMeResponse {
     pub totp_verified: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AdminUserResponse {
+    pub user_id: Uuid,
+    pub login: String,
+    pub created_at: String,
+    pub disabled: bool,
+    pub is_admin: bool,
+}
+
+pub async fn users(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<impl IntoResponse, ApiError> {
+    if !auth::is_active_administrator(state.database(), caller.user_public_id).await? {
+        return Err(ApiError::Forbidden(
+            "Administrator access required".to_owned(),
+        ));
+    }
+    let users = db::admin_users(state.database().pool())
+        .await
+        .map_err(application::auth::AuthError::from)?;
+    Ok(Json(
+        users
+            .into_iter()
+            .map(|user| AdminUserResponse {
+                user_id: user.user_id.get(),
+                login: user.login,
+                created_at: user.created_at.to_rfc3339(),
+                disabled: user.disabled,
+                is_admin: user.is_admin,
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
 /// Returns the caller's administrator membership. This endpoint never
 /// accepts a user id from the client and reveals no admin records to a
 /// non-admin caller.
