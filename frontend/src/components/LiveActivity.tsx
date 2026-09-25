@@ -68,7 +68,7 @@ export function LiveActivity({ session, client = api, apiStatus = 'unverified' }
       <span className="live-dot" aria-hidden="true" />
       <b>LIVE</b>
       <span className="live-copy">{apiCopy[apiStatus]}</span>
-      <StatusChip tone={connection === 'connected' ? 'success' : connection === 'unavailable' ? 'danger' : 'info'}>{connectionCopy[connection]}</StatusChip>
+      <StatusChip className="live-count" tone={connection === 'connected' ? 'success' : connection === 'unavailable' ? 'danger' : 'info'}>{connectionCopy[connection]}</StatusChip>
       {connection === 'unavailable' && <button type="button" onClick={() => void checkConnection(true)} aria-label="Повторить подключение"><RefreshCw size={12} /> Повторить</button>}
     </div>
     <div className="live-feed" aria-live="polite">
