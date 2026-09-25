@@ -58,6 +58,9 @@ def api_json(key: str, hash_name: str) -> object:
     except urllib.error.URLError as error:
         print(f"skipping unavailable item {hash_name!r}: {error.reason}", file=sys.stderr)
         return []
+    except TimeoutError:
+        print(f"skipping timed-out item {hash_name!r}", file=sys.stderr)
+        return []
     if isinstance(payload, dict) and payload.get("success") is False:
         raise SystemExit(f"Market.CSGO rejected request: {payload.get('error', 'unknown error')}")
     return payload
