@@ -54,3 +54,7 @@ SET is_active = true, deactivated_at = NULL;
 isolation, market idempotency, контракт, inventory/history и `/admin`. При любом
 расхождении сначала сохранить HTTP-код и тело ошибки, затем исправлять backend,
 а не обходить защиту во frontend.
+
+Steam OpenID пока не включён в production: callback намеренно не объявлен, пока не
+готовы безопасная проверка ответа Steam, привязка Steam ID и создание сессии. Не
+добавляйте кнопку, которая только имитирует вход.
