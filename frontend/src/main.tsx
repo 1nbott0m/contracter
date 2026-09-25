@@ -35,6 +35,7 @@ function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; logi
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const registered = new URLSearchParams(window.location.search).get('registered') === '1';
   const submitLogin = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoginError('');
@@ -50,17 +51,22 @@ function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; logi
     }
   };
 
-  return <form className="login-modal route-login" onSubmit={submitLogin}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Войти</h1><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{loginError && <p className="login-error">{loginError}</p>}<button className="primary" type="submit">ПРОДОЛЖИТЬ <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/register')}>Нет аккаунта? Зарегистрироваться</button></form>;
+  return <form className="login-modal route-login" onSubmit={submitLogin}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Войти</h1>{registered && <p className="auth-success" role="status">Аккаунт создан. Теперь войдите с выбранным паролем.</p>}<label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{loginError && <p className="login-error">{loginError}</p>}<button className="primary" type="submit">ПРОДОЛЖИТЬ <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/register')}>Нет аккаунта? Зарегистрироваться</button></form>;
 }
 
 function RegisterPage({ navigate }: { navigate: Navigate }) {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
+    if (password !== passwordConfirmation) {
+      setError('Пароли не совпадают. Проверьте оба поля.');
+      return;
+    }
     setSubmitting(true);
     try {
       await api.register('', login.trim(), password);
@@ -71,7 +77,7 @@ function RegisterPage({ navigate }: { navigate: Navigate }) {
       setSubmitting(false);
     }
   };
-  return <form className="login-modal route-login" onSubmit={submit}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Регистрация</h1><p className="auth-note">Создайте аккаунт бесплатно. После регистрации вы сразу сможете войти в CONTRACTER.</p><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required minLength={3} /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>{error && <p className="login-error">{error}</p>}<button className="primary" type="submit" disabled={submitting}>{submitting ? 'СОЗДАНИЕ…' : 'СОЗДАТЬ АККАУНТ'} <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/login')}>Уже есть аккаунт? Войти</button></form>;
+  return <form className="login-modal route-login" onSubmit={submit}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Регистрация</h1><p className="auth-note">Создайте аккаунт бесплатно. После регистрации вы сразу сможете войти в CONTRACTER.</p><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required minLength={3} /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label><label>ПОВТОРИТЕ ПАРОЛЬ<input type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} autoComplete="new-password" minLength={8} required /></label>{error && <p className="login-error" role="alert">{error}</p>}<button className="primary" type="submit" disabled={submitting}>{submitting ? 'СОЗДАНИЕ…' : 'СОЗДАТЬ АККАУНТ'} <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/login')}>Уже есть аккаунт? Войти</button></form>;
 }
 
 function AdminPage({ navigate, session }: { navigate: Navigate; session: ReturnType<typeof useSession>['state'] }) {
