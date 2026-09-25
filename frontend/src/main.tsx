@@ -27,6 +27,7 @@ import { PrivacyPage } from './pages/PrivacyPage';
 import { SupportPage } from './pages/SupportPage';
 import { useRouter, type Navigate } from './router';
 import { useSession } from './hooks/useSession';
+import { ErrorBoundary } from './error-boundary';
 
 function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; login: (login: string, password: string) => Promise<boolean> }) {
   const [login, setLogin] = useState('');
@@ -85,4 +86,4 @@ export function App() {
 }
 
 export const appRoot = createRoot(document.getElementById('root')!);
-appRoot.render(<App />);
+appRoot.render(<ErrorBoundary><App /></ErrorBoundary>);

@@ -12,8 +12,11 @@ export function GlobalSearch({ navigate, client = api }: { navigate: Navigate; c
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const show = () => {
+    previousFocusRef.current = triggerRef.current;
     setOpen(true);
     if (status === 'idle' || status === 'error') {
       setStatus('loading');
@@ -27,6 +30,7 @@ export function GlobalSearch({ navigate, client = api }: { navigate: Navigate; c
     setOpen(false);
     setQuery('');
     setActiveIndex(0);
+    queueMicrotask(() => previousFocusRef.current?.focus());
   };
 
   useEffect(() => {
@@ -34,11 +38,14 @@ export function GlobalSearch({ navigate, client = api }: { navigate: Navigate; c
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         show();
+      } else if (open && event.key === 'Escape') {
+        event.preventDefault();
+        close();
       }
     };
     window.addEventListener('keydown', onShortcut);
     return () => window.removeEventListener('keydown', onShortcut);
-  });
+  }, [open, status]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -55,10 +62,7 @@ export function GlobalSearch({ navigate, client = api }: { navigate: Navigate; c
     close();
   };
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      close();
-    } else if (event.key === 'ArrowDown' && results.length > 0) {
+    if (event.key === 'ArrowDown' && results.length > 0) {
       event.preventDefault();
       setActiveIndex((index) => (index + 1) % results.length);
     } else if (event.key === 'ArrowUp' && results.length > 0) {
@@ -71,7 +75,7 @@ export function GlobalSearch({ navigate, client = api }: { navigate: Navigate; c
   };
 
   return <>
-    <button className="search global-search-trigger" type="button" aria-label="Открыть глобальный поиск" onClick={show}><Search size={16} /><span>Поиск скина</span><kbd>⌘K</kbd></button>
+    <button ref={triggerRef} className="search global-search-trigger" type="button" aria-label="Открыть глобальный поиск" aria-haspopup="dialog" aria-expanded={open} onClick={show}><Search size={16} /><span>Поиск скина</span><kbd>⌘K</kbd></button>
     {open && <div className="global-search-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <section className="global-search-dialog panel" role="dialog" aria-modal="true" aria-label="Глобальный поиск">
         <div className="global-search-input"><Search size={18} /><input ref={inputRef} type="search" role="searchbox" aria-label="Поиск по маркету" value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} onKeyDown={onKeyDown} placeholder="AK-47, AWP, название скина" /><button type="button" onClick={close} aria-label="Закрыть поиск"><X size={17} /></button></div>

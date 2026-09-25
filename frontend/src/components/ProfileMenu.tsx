@@ -8,6 +8,7 @@ export function ProfileMenu({ session, navigate, logout }: { session: SessionSta
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const outside = (event: MouseEvent) => {
@@ -16,6 +17,18 @@ export function ProfileMenu({ session, navigate, logout }: { session: SessionSta
     document.addEventListener('mousedown', outside);
     return () => document.removeEventListener('mousedown', outside);
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
+      queueMicrotask(() => triggerRef.current?.focus());
+    };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [open]);
 
   if (session.status !== 'authenticated') {
     const label = session.status === 'loading' ? 'Проверяем сессию' : session.status === 'expired' ? 'Сессия истекла' : 'Войти';
@@ -40,7 +53,7 @@ export function ProfileMenu({ session, navigate, logout }: { session: SessionSta
   };
 
   return <div className="profile-menu" ref={rootRef}>
-    <button className="profile-button" type="button" aria-label="Открыть меню профиля" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span className="avatar">{accountLogin.slice(0, 1).toUpperCase()}</span><span>{accountLogin}</span><ChevronDown size={13} /></button>
-    {open && <div className="profile-popover" role="menu"><button role="menuitem" type="button" onClick={() => go('/profile')}><User size={15} /> Профиль</button><button role="menuitem" type="button" onClick={() => go('/inventory')}><Package size={15} /> Инвентарь</button><button role="menuitem" type="button" onClick={() => go('/history')}><History size={15} /> История</button><button role="menuitem" type="button" disabled={pending} onClick={() => void signOut()}><LogOut size={15} /> {pending ? 'Выходим…' : 'Выйти'}</button>{error && <p role="alert">{error}</p>}</div>}
+    <button ref={triggerRef} id="profile-menu-trigger" className="profile-button" type="button" aria-label="Открыть меню профиля" aria-haspopup="menu" aria-controls={open ? 'profile-menu-items' : undefined} aria-expanded={open} onClick={() => setOpen((value) => !value)}><span className="avatar">{accountLogin.slice(0, 1).toUpperCase()}</span><span>{accountLogin}</span><ChevronDown size={13} /></button>
+    {open && <div id="profile-menu-items" className="profile-popover" role="menu" aria-labelledby="profile-menu-trigger"><button role="menuitem" type="button" onClick={() => go('/profile')}><User size={15} /> Профиль</button><button role="menuitem" type="button" onClick={() => go('/inventory')}><Package size={15} /> Инвентарь</button><button role="menuitem" type="button" onClick={() => go('/history')}><History size={15} /> История</button><button role="menuitem" type="button" disabled={pending} onClick={() => void signOut()}><LogOut size={15} /> {pending ? 'Выходим…' : 'Выйти'}</button>{error && <p role="alert">{error}</p>}</div>}
   </div>;
 }

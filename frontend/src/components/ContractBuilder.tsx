@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CirclePlus, Sparkles, X } from 'lucide-react';
 import type { InventoryItem, SkinDefinition } from '../types';
 import { ContractSummary, type ContractSubmitState } from './ContractSummary';
@@ -48,6 +48,8 @@ export function ContractBuilder({
   const [revealState, setRevealState] = useState<ContractRevealState>({ status: 'submitting' });
   const submitGeneration = useRef(0);
   const submitting = useRef(false);
+  const inspectorTrigger = useRef<HTMLButtonElement | null>(null);
+  const inspectorClose = useRef<HTMLButtonElement | null>(null);
   const selected = controlledSelected === undefined ? internalSelected : distinctSelection(controlledSelected);
   const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
 
@@ -63,6 +65,27 @@ export function ContractBuilder({
     updateSelection([...selected, item]);
   };
   const remove = (item: InventoryItem) => updateSelection(selected.filter((candidate) => candidate.id !== item.id));
+  const inspect = (item: InventoryItem, trigger: HTMLButtonElement) => {
+    inspectorTrigger.current = trigger;
+    setInspected(item);
+  };
+  const closeInspector = () => {
+    setInspected(null);
+    queueMicrotask(() => inspectorTrigger.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!inspected) return;
+    inspectorClose.current?.focus();
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      closeInspector();
+    };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [inspected]);
+
   const submit = async () => {
     if (selected.length < MIN_CONTRACT_ITEMS || selected.length > MAX_CONTRACT_ITEMS || submitting.current) return;
     const generation = ++submitGeneration.current;
@@ -103,7 +126,7 @@ export function ContractBuilder({
             {selected.map((item) => (
               <div className="contract-slot filled-slot" data-testid="contract-slot" key={item.id}>
                 <SkinCard item={item} selected onRemove={() => remove(item)} onAdd={() => remove(item)} selectionDisabled={selectionFrozen} />
-                <button className="inspect-item" type="button" onClick={() => setInspected(item)} aria-label={`Подробнее о ${item.weapon} | ${item.skin}`}>ПОДРОБНЕЕ</button>
+                <button className="inspect-item" type="button" onClick={(event) => inspect(item, event.currentTarget)} aria-label={`Подробнее о ${item.weapon} | ${item.skin}`}>ПОДРОБНЕЕ</button>
               </div>
             ))}
             {Array.from({ length: MAX_CONTRACT_ITEMS - selected.length }, (_, index) => (
@@ -122,7 +145,7 @@ export function ContractBuilder({
         {items.length > 0
           ? <div className="inventory-grid">{items.map((item) => {
               const isSelected = selectedIds.has(item.id);
-              return <div className="inventory-choice" key={item.id}><SkinCard item={item} selected={isSelected} onAdd={() => isSelected ? remove(item) : add(item)} selectionDisabled={selectionFrozen || (!isSelected && selected.length >= MAX_CONTRACT_ITEMS)} /><button className="inspect-item" type="button" onClick={() => setInspected(item)} aria-label={`Подробнее о ${item.weapon} | ${item.skin}`}>ПОДРОБНЕЕ</button></div>;
+              return <div className="inventory-choice" key={item.id}><SkinCard item={item} selected={isSelected} onAdd={() => isSelected ? remove(item) : add(item)} selectionDisabled={selectionFrozen || (!isSelected && selected.length >= MAX_CONTRACT_ITEMS)} /><button className="inspect-item" type="button" onClick={(event) => inspect(item, event.currentTarget)} aria-label={`Подробнее о ${item.weapon} | ${item.skin}`}>ПОДРОБНЕЕ</button></div>;
             })}</div>
           : <div className="inventory-empty"><strong>Нет доступных предметов</strong><span>Инвентарь пуст или недоступен. Обновите страницу после входа.</span></div>}
       </section>
@@ -141,7 +164,7 @@ export function ContractBuilder({
         }}
       />
 
-      {inspected && <div className="item-inspector-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setInspected(null); }}><section className="item-inspector panel" role="dialog" aria-modal="true" aria-label={`${inspected.weapon} | ${inspected.skin}`}><button className="inspector-close" type="button" onClick={() => setInspected(null)} aria-label="Закрыть"><X size={16} /></button><div className="inspector-art"><SkinImage src={resolveSkinImage(inspected)} alt={`${inspected.weapon} | ${inspected.skin}`} accent={inspected.color} /></div><span className="eyebrow">{inspected.rarity}</span><h2>{inspected.weapon} | {inspected.skin}</h2><p>{inspected.wear}</p></section></div>}
+      {inspected && <div className="item-inspector-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeInspector(); }}><section className="item-inspector panel" role="dialog" aria-modal="true" aria-label={`${inspected.weapon} | ${inspected.skin}`}><button ref={inspectorClose} className="inspector-close" type="button" onClick={closeInspector} aria-label="Закрыть"><X size={16} /></button><div className="inspector-art"><SkinImage src={resolveSkinImage(inspected)} alt={`${inspected.weapon} | ${inspected.skin}`} accent={inspected.color} /></div><span className="eyebrow">{inspected.rarity}</span><h2>{inspected.weapon} | {inspected.skin}</h2><p>{inspected.wear}</p></section></div>}
     </>
   );
 }
