@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: contracter-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/contracter_test
