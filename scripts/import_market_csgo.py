@@ -67,7 +67,7 @@ def api_json(key: str, hash_name: str) -> object:
 
 
 def rows_from_payload(payload: object, sku_public_id: str, hash_name: str) -> list[dict[str, str]]:
-    """Accept the documented response's common list shapes without guessing prices."""
+    """Normalize Market.CSGO's data[name].history [[unix_time, rub], ...]."""
     if isinstance(payload, dict):
         candidates = (
             payload.get("history")
@@ -78,6 +78,32 @@ def rows_from_payload(payload: object, sku_public_id: str, hash_name: str) -> li
         )
     else:
         candidates = payload
+    if isinstance(candidates, dict):
+        details = candidates.get(hash_name)
+        if not isinstance(details, dict):
+            return []
+        history = details.get("history")
+        if not isinstance(history, list):
+            return []
+        rows: list[dict[str, str]] = []
+        for index, point in enumerate(history):
+            if not isinstance(point, list) or len(point) < 2:
+                continue
+            timestamp, price = point[0], point[1]
+            try:
+                price_rub = Decimal(str(price))
+                source_timestamp = datetime.fromtimestamp(float(timestamp), tz=timezone.utc).isoformat()
+            except (ArithmeticError, ValueError, TypeError, OverflowError):
+                continue
+            if price_rub <= 0:
+                continue
+            rows.append({
+                "sku_public_id": sku_public_id,
+                "external_event_key": f"market-csgo:{hash_name}:{timestamp}:{index}",
+                "source_timestamp": source_timestamp,
+                "price_rub": format(price_rub, "f"),
+            })
+        return rows
     if not isinstance(candidates, list):
         return []
     rows: list[dict[str, str]] = []
