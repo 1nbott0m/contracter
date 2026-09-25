@@ -27,7 +27,7 @@ def required(name: str) -> str:
 
 
 def psql(database_url: str, sql: str, *defines: tuple[str, str]) -> str:
-    command = ["psql", "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", database_url]
+    command = ["psql", "-X", "-A", "-t", "-F", "\t", "-v", "ON_ERROR_STOP=1", database_url]
     for key, value in defines:
         command.extend(["--set", f"{key}={value}"])
     result = subprocess.run(command, input=sql, text=True, capture_output=True, check=False)
