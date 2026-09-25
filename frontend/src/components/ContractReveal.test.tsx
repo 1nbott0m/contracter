@@ -44,12 +44,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('uses the selected canonical artwork and withholds the result until the server succeeds', () => {
+it('uses the selected canonical artwork and lets users skip the reveal without inventing a result', () => {
   const { rerender } = render(<ContractReveal open selected={selected} state={{ status: 'submitting' }} onClose={vi.fn()} onNew={vi.fn()} />);
 
   expect(screen.getByRole('dialog', { name: 'Фиксация контракта' })).toBeTruthy();
   expect(screen.getAllByRole('img').map((image) => image.getAttribute('src'))).toEqual(selected.map((item) => item.image));
   expect(screen.queryByText('Server Result')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Пропустить анимацию' })).toBeTruthy();
 
   rerender(<ContractReveal open selected={selected} state={{ status: 'success', contractId: 'contract-1', result }} onClose={vi.fn()} onNew={vi.fn()} />);
   expect(screen.getByText('Server Result')).toBeTruthy();

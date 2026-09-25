@@ -104,6 +104,7 @@ export function ContractReveal({ open, selected, state, onClose, onNew }: Contra
 
   if (!open) return null;
   const showResult = state.status === 'success' && stage === 4;
+  const skipReveal = () => setStage(state.status === 'success' ? 4 : 3);
 
   return <div className="reveal-backdrop" role="presentation">
     <section className={`reveal-panel cinematic-reveal ${showResult ? 'is-result' : state.status === 'error' ? 'is-error' : 'is-processing'}`} role="dialog" aria-modal="true" aria-label="Фиксация контракта">
@@ -140,6 +141,7 @@ export function ContractReveal({ open, selected, state, onClose, onNew }: Contra
         <div className="reveal-core" aria-hidden="true"><span className="core-ring" /><span className="core-mark">{String(stage + 1).padStart(2, '0')}</span></div>
         <div className="reveal-progress" aria-hidden="true"><span /></div>
         <p>Сервер фиксирует выбранные предметы. Результат появится только после успешного ответа.</p>
+        <button className="reveal-skip" type="button" onClick={skipReveal}>Пропустить анимацию</button>
       </>}
     </section>
   </div>;
