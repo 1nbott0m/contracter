@@ -9,3 +9,4 @@ footer.site-footer span{font-size:8px;line-height:1.6;letter-spacing:.02em}
 .brand-mark span{position:relative;z-index:1;color:#071116;font-size:18px;line-height:1;font-weight:950;letter-spacing:-.12em}
 .admin-actions{display:flex;align-items:center;gap:18px;margin-top:28px}.admin-actions .primary{margin:0;padding:0 20px}.admin-page{max-width:680px}
 @media(max-width:700px){footer.site-footer{grid-template-columns:1fr;gap:18px}}
+.admin-dashboard{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:10px;width:100%;margin:28px 0}.admin-metric{padding:16px;display:flex;flex-direction:column;gap:8px}.admin-metric small{color:#89929e;font-size:9px;letter-spacing:.08em}.admin-metric strong{font-size:24px;color:#58d6e7}@media(max-width:700px){.admin-dashboard{grid-template-columns:repeat(2,1fr)}}
