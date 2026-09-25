@@ -11,6 +11,16 @@ INSERT INTO rarities (code, rank, is_covert) VALUES
     ('classified', 4, false),
     ('covert', 5, true)
 ON CONFLICT (code) DO UPDATE SET rank = EXCLUDED.rank, is_covert = EXCLUDED.is_covert;
+INSERT INTO wear_bands (code, lower_bound, upper_bound, includes_upper_bound) VALUES
+    ('factory_new', 0.00000000, 0.07000000, false),
+    ('minimal_wear', 0.07000000, 0.15000000, false),
+    ('field_tested', 0.15000000, 0.38000000, false),
+    ('well_worn', 0.38000000, 0.45000000, false),
+    ('battle_scarred', 0.45000000, 1.00000000, true)
+ON CONFLICT (code) DO UPDATE SET
+    lower_bound = EXCLUDED.lower_bound,
+    upper_bound = EXCLUDED.upper_bound,
+    includes_upper_bound = EXCLUDED.includes_upper_bound;
 INSERT INTO collections (slug, display_name) VALUES ('the-spy-tech-collection', 'The Spy Tech Collection') ON CONFLICT (slug) DO UPDATE SET display_name = EXCLUDED.display_name;
 INSERT INTO catalog_items (collection_id, rarity_code, stable_name, min_float, max_float, canonical_skin_id, weapon_name, skin_name, canonical_image_url, available_wears) SELECT id, 'covert', 'AUTOEXEC', '0', '1', 'skin-6370d1af59f7', 'AK-47', 'AUTOEXEC', 'https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIGz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyLwlcK3wiNQu6WRabF5L_WLC2Svwu97v95lRi67gVN16mzSwtigdn2QPAElXpskQOQIthC8xIXiM-7k4gHfgoMWySyo2y4b8G81tI8PUinm', '["factory_new","minimal_wear","field_tested","well_worn","battle_scarred"]'::jsonb FROM collections WHERE slug = 'the-spy-tech-collection' ON CONFLICT (canonical_skin_id) WHERE canonical_skin_id IS NOT NULL DO UPDATE SET rarity_code=EXCLUDED.rarity_code, min_float=EXCLUDED.min_float, max_float=EXCLUDED.max_float, canonical_skin_id=EXCLUDED.canonical_skin_id, weapon_name=EXCLUDED.weapon_name, skin_name=EXCLUDED.skin_name, canonical_image_url=EXCLUDED.canonical_image_url, available_wears=EXCLUDED.available_wears;
 INSERT INTO skus (catalog_item_id, wear_band_id) SELECT ci.id, wb.id FROM catalog_items ci JOIN collections c ON c.id=ci.collection_id JOIN wear_bands wb ON wb.code='factory_new' WHERE ci.canonical_skin_id='skin-6370d1af59f7' ON CONFLICT (catalog_item_id, wear_band_id) DO UPDATE SET enabled=true;
