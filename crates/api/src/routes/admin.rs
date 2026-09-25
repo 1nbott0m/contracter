@@ -89,6 +89,15 @@ pub async fn audit(
     let events = db::list_admin_audit(state.database().pool())
         .await
         .map_err(application::auth::AuthError::from)?;
+    db::record_admin_audit(
+        state.database().pool(),
+        caller.user_public_id,
+        "admin.audit.read",
+        None,
+        json!({}),
+    )
+    .await
+    .map_err(application::auth::AuthError::from)?;
     Ok(Json(
         events
             .into_iter()
