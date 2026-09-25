@@ -129,7 +129,10 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
         }
       });
     return () => { active = false; };
-  }, [client, developmentFallbackEnabled, setApiStatus]);
+  // The client is an injected transport wrapper; its object identity may
+  // change during a parent render without changing the authenticated data.
+  // Avoid replaying inventory/catalog requests for that presentation change.
+  }, [developmentFallbackEnabled]);
 
   const possibleResults = useMemo(
     () => usingDevelopmentFallback ? developmentResults : possibleResultsFromCatalog(selected, catalog, valuations),
