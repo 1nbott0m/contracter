@@ -86,12 +86,14 @@ function AdminPage({ navigate, session }: { navigate: Navigate; session: ReturnT
   const [secret, setSecret] = useState('');
   const [code, setCode] = useState('');
   const [totpError, setTotpError] = useState('');
+  const [dashboard, setDashboard] = useState<Awaited<ReturnType<typeof api.adminDashboard>> | null>(null);
   useEffect(() => {
     if (session.status !== 'authenticated' || !session.account.is_admin) return;
     setVerified('checking');
     void api.adminMe().then((result) => { setTotpVerified(result.totp_verified); setVerified('ok'); }).catch((error) => {
       setVerified(error instanceof Error && 'status' in error && (error as { status?: number }).status === 403 ? 'denied' : 'error');
     });
+    void api.adminDashboard().then(setDashboard).catch(() => setDashboard(null));
   }, [session]);
   if (session.status === 'loading') return <section className="route-state"><h1>Проверяем доступ</h1><p>Загружаем роль аккаунта.</p></section>;
   if (session.status !== 'authenticated') return <section className="route-state"><h1>Войдите в аккаунт</h1><p>Панель администратора доступна только авторизованным пользователям.</p><button className="primary" type="button" onClick={() => navigate('/login?returnTo=/admin')}>Войти <ArrowRight size={16} /></button></section>;

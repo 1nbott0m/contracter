@@ -1,5 +1,6 @@
 use application::auth;
 use axum::{Json, extract::State, response::IntoResponse};
+use db;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -30,5 +31,37 @@ pub async fn me(
         user_id: caller.user_public_id.get(),
         is_admin,
         totp_verified,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct DashboardResponse {
+    pub users: i64,
+    pub active_sessions: i64,
+    pub contracts: i64,
+    pub inventory_items: i64,
+    pub market_purchases: i64,
+    pub ledger_transactions: i64,
+}
+
+pub async fn dashboard(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<impl IntoResponse, ApiError> {
+    if !auth::is_active_administrator(state.database(), caller.user_public_id).await? {
+        return Err(ApiError::Forbidden(
+            "Administrator access required".to_owned(),
+        ));
+    }
+    let stats = db::admin_dashboard_stats(state.database().pool())
+        .await
+        .map_err(application::auth::AuthError::from)?;
+    Ok(Json(DashboardResponse {
+        users: stats.users,
+        active_sessions: stats.active_sessions,
+        contracts: stats.contracts,
+        inventory_items: stats.inventory_items,
+        market_purchases: stats.market_purchases,
+        ledger_transactions: stats.ledger_transactions,
     }))
 }

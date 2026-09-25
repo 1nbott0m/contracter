@@ -81,6 +81,7 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/auth/totp/verify", post(admin_totp::verify))
         .route("/me", get(account::me))
         .route("/admin/me", get(admin::me))
+        .route("/admin/dashboard", get(admin::dashboard))
         .route("/admin/totp/provision", post(admin_totp::provision))
         .route("/me/balance", get(account::balance))
         .route("/me/inventory", get(inventory::list))

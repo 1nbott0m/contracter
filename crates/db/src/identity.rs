@@ -199,6 +199,23 @@ where
         .await?)
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminDashboardStats {
+    pub users: i64,
+    pub active_sessions: i64,
+    pub contracts: i64,
+    pub inventory_items: i64,
+    pub market_purchases: i64,
+    pub ledger_transactions: i64,
+}
+
+pub async fn admin_dashboard_stats<'e, E>(executor: E) -> Result<AdminDashboardStats, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM user_sessions WHERE revoked_at IS NULL AND expires_at > clock_timestamp()) AS active_sessions, (SELECT count(*) FROM contracts) AS contracts, (SELECT count(*) FROM inventory_items) AS inventory_items, (SELECT count(*) FROM market_purchase_events) AS market_purchases, (SELECT count(*) FROM ledger_transactions) AS ledger_transactions").fetch_one(executor).await?)
+}
+
 /// Creates a session for an enabled user, returning the session's public
 /// id. Only the token's hash is stored; the raw token stays with the
 /// caller.
