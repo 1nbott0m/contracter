@@ -45,11 +45,15 @@ cargo run -p server --bin contracter-server
 
 ### Импорт цен Market.CSGO
 
-Импорт выполняется отдельным server-side Cron Job, а не HTTP-маршрутом. Для
-Render используйте blueprint-файл [`render.market-import.yaml`](render.market-import.yaml)
-и Dockerfile [`Dockerfile.market-import`](Dockerfile.market-import). Это отдельный
-контейнер с `python3` и `psql`; публичный API-контейнер намеренно остаётся
-минимальным и importer в нём не запускается.
+Импорт выполняется отдельной server-side job, а не HTTP-маршрутом. Бесплатный
+вариант для публичного GitHub-репозитория уже подготовлен в
+[`.github/workflows/market-import.yml`](.github/workflows/market-import.yml):
+GitHub Actions запускает importer каждые 6 часов. В GitHub Repository Settings →
+Secrets and variables → Actions добавьте `MARKET_CSGO_API_KEY` и
+`MARKET_IMPORT_DATABASE_URL`, затем workflow можно запустить вручную кнопкой
+`Run workflow`. Render Cron Job для этого не нужен. Файлы
+`render.market-import.yaml` и `Dockerfile.market-import` оставлены как платный
+вариант для тех, кто позже захочет запускать job в Render.
 
 ```bash
 MARKET_CSGO_API_KEY='...' \

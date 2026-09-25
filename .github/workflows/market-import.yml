@@ -1,0 +1,27 @@
+name: Publish Market.CSGO valuations
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  import-market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout importer
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y postgresql-client
+
+      - name: Import and publish confirmed valuations
+        env:
+          MARKET_CSGO_API_KEY: ${{ secrets.MARKET_CSGO_API_KEY }}
+          MARKET_IMPORT_DATABASE_URL: ${{ secrets.MARKET_IMPORT_DATABASE_URL }}
+          MARKET_RUB_TO_CC_RATE: "1"
+        run: python3 scripts/import_market_csgo.py --publish
