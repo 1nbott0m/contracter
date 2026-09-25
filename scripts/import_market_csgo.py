@@ -27,7 +27,7 @@ def required(name: str) -> str:
 
 
 def psql(database_url: str, sql: str, *defines: tuple[str, str]) -> str:
-    command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", database_url]
+    command = ["psql", "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", database_url]
     for key, value in defines:
         command.extend(["--set", f"{key}={value}"])
     result = subprocess.run(command, input=sql, text=True, capture_output=True, check=False)
@@ -113,14 +113,18 @@ def main() -> int:
         all_rows.extend(rows_from_payload(api_json(key, hash_name), sku, hash_name))
     if not all_rows:
         raise SystemExit("Market.CSGO returned no usable completed-sale rows; nothing was written")
-    payload = json.dumps(all_rows, separators=(",", ":"))
-    inserted = psql(
-        database_url,
-        "SELECT ingest_market_sale_evidence('market_csgo', :'rows'::jsonb, :'rate'::numeric);",
-        ("rows", payload),
-        ("rate", rate),
-    )
-    print(f"inserted sale evidence rows: {inserted}")
+    inserted_total = 0
+    # Keep each psql variable comfortably below shell/argument-size limits.
+    for offset in range(0, len(all_rows), 100):
+        payload = json.dumps(all_rows[offset : offset + 100], separators=(",", ":"))
+        inserted = psql(
+            database_url,
+            "SELECT ingest_market_sale_evidence('market_csgo', :'rows'::jsonb, :'rate'::numeric);",
+            ("rows", payload),
+            ("rate", rate),
+        )
+        inserted_total += int(inserted or "0")
+    print(f"inserted sale evidence rows: {inserted_total}")
     if args.publish:
         snapshot = psql(
             database_url,
