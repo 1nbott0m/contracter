@@ -27,7 +27,11 @@ export function ContractDetailsPage({ contractId, session, navigate, client = ap
       setState({ status: 'error', error: error instanceof Error ? error.message : 'Сводка недоступна' });
     });
     return () => { active = false; };
-  }, [client, contractId, reload, session.status]);
+  // The API client is injectable for tests and embedded consumers. Depend on
+  // the request inputs rather than the containing object identity: callers may
+  // create a fresh facade on every render, which must not restart an in-flight
+  // history lookup and leave the page stuck in its loading state.
+  }, [contractId, reload, session.status]);
 
   if (session.status !== 'authenticated') {
     return <section className="route-state"><span className="eyebrow">ACCOUNT / PRIVATE CONTRACT</span><h1>Контракт {contractId}</h1><p>Войдите, чтобы искать контракт только в истории этого аккаунта.</p><button className="primary route-state-action" type="button" onClick={() => navigate(`/login?returnTo=${encodeURIComponent(`/contracts/${contractId}`)}`)}>Войти <ArrowRight size={16} /></button></section>;
