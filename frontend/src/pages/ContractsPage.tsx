@@ -11,6 +11,7 @@ import type { ApiStatus } from '../components/AppShell';
 import { ContractBuilder, type CommittedContract } from '../components/ContractBuilder';
 import { items as developmentItems, results as developmentResults } from '../mocks/dev-data';
 import type { InventoryItem, SkinDefinition } from '../types';
+import { readContractSelectionIds, writeContractSelectionIds } from './InventoryPage';
 
 type ContractsApi = Pick<typeof api,
   | 'inventory'
@@ -105,7 +106,8 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
         setApiStatus('live');
         setUsingDevelopmentFallback(false);
         setItems(mapped);
-        setSelected([]);
+        const restored = new Set(readContractSelectionIds());
+        setSelected(mapped.filter((item) => restored.has(item.id) && !item.locked).slice(0, 10));
         setCatalog(catalogPage.items);
         setValuations(valuationPage.items);
       })
@@ -131,6 +133,11 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
     () => usingDevelopmentFallback ? developmentResults : possibleResultsFromCatalog(selected, catalog, valuations),
     [catalog, selected, usingDevelopmentFallback, valuations],
   );
+
+  const updateSelection = (next: InventoryItem[]) => {
+    setSelected(next);
+    writeContractSelectionIds(next.map((item) => item.id));
+  };
 
   const commitContract = async (chosen: readonly InventoryItem[]): Promise<CommittedContract> => {
     const submittedSnapshot = Object.freeze(chosen.map((item) => item.publicId || item.id));
@@ -185,7 +192,7 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
       <ContractBuilder
         items={items}
         selected={selected}
-        onSelectionChange={setSelected}
+        onSelectionChange={updateSelection}
         possibleResults={possibleResults}
         possibleResultsAreDevelopmentData={usingDevelopmentFallback}
         onSubmit={commitContract}

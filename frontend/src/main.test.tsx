@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 beforeEach(() => {
   vi.resetModules();
@@ -8,6 +8,11 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/contracts');
   document.body.innerHTML = '<div id="root"></div>';
   document.title = '';
+});
+
+afterEach(async () => {
+  const { appRoot } = await import('./main');
+  appRoot.unmount();
 });
 
 it('distinguishes an unauthenticated 401 from an unavailable API', async () => {
@@ -39,8 +44,8 @@ it('uses the session hook for login and logout behavior', async () => {
   fireEvent.change(screen.getByLabelText('ПАРОЛЬ'), { target: { value: 'secret' } });
   fireEvent.click(screen.getByRole('button', { name: /ПРОДОЛЖИТЬ/ }));
   await waitFor(() => expect(window.location.pathname).toBe('/contracts'));
-  fireEvent.click(screen.getByRole('link', { name: 'Открыть профиль' }));
-  fireEvent.click(await screen.findByRole('button', { name: /Выйти/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть меню профиля' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: /Выйти/ }));
   await waitFor(() => expect(window.location.pathname).toBe('/login'));
   expect(fetchMock.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/auth/login'))).toBe(true);
   expect(fetchMock.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/auth/logout'))).toBe(true);

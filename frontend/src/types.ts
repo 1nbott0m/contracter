@@ -38,8 +38,20 @@ export type HistoryItem = {
 };
 
 export type MarketItem = SkinDefinition & {
+  skuId: string;
   stock?: number | null;
   available?: boolean;
+  valuationUpdatedAt?: string | null;
+};
+
+export type InventoryFilterValues = {
+  search: string;
+  weapon: string;
+  rarity: string;
+  wear: string;
+  minPrice: string;
+  maxPrice: string;
+  sort: 'newest' | 'name' | 'price-asc' | 'price-desc';
 };
 
 export type AsyncState<T> =

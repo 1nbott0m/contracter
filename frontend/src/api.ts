@@ -1,4 +1,4 @@
-import type { InventoryItem as SkinInventoryItem } from './types';
+import type { InventoryItem as SkinInventoryItem, MarketItem } from './types';
 
 export type ApiPage<T> = { items: T[]; next_cursor?: string | null };
 export type ApiErrorEnvelope = {
@@ -245,5 +245,25 @@ export function inventoryItemToSkin(item: ApiInventoryItem, catalog?: CatalogSku
     isSouvenir: item.is_souvenir,
     locked: item.locked,
     acquiredAt: item.acquired_at,
+  };
+}
+
+/** Join public catalog presentation to the current public market valuation. */
+export function catalogSkuToMarketItem(sku: CatalogSku, valuation?: MarketValuation): MarketItem {
+  const [stableWeapon, ...stableSkinParts] = sku.stable_name.split(' | ');
+  const image = sku.canonical_image_url || null;
+  return {
+    id: sku.sku_id,
+    skuId: sku.sku_id,
+    weapon: sku.weapon?.trim() || (stableSkinParts.length > 0 ? stableWeapon : 'CS2'),
+    skin: sku.skin_name?.trim() || stableSkinParts.join(' | ') || sku.stable_name,
+    wear: sku.wear_band.replace(/_/g, ' '),
+    price: valuation ? valuation.price_microcredits / 1_000_000 : null,
+    color: '#58d6e7',
+    rarity: sku.rarity,
+    image: image || '',
+    canonicalImageUrl: image,
+    available: valuation?.available === true,
+    valuationUpdatedAt: valuation?.updated_at ?? null,
   };
 }

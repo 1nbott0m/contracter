@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiInventoryItem, CatalogSku, MarketValuation, QuoteResponse } from '../api';
+import { CONTRACT_SELECTION_STORAGE_KEY } from './InventoryPage';
 import { ContractsPage } from './ContractsPage';
 
 const inventory: ApiInventoryItem[] = Array.from({ length: 4 }, (_, index) => ({
@@ -61,7 +62,25 @@ const quote: QuoteResponse = {
   outcomes: [],
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  sessionStorage.clear();
+});
+
+it('restores inventory items added to the contract from the inventory route', async () => {
+  sessionStorage.setItem(CONTRACT_SELECTION_STORAGE_KEY, JSON.stringify(['item-2']));
+  const client = {
+    inventory: vi.fn(async () => ({ items: inventory })),
+    catalogSkus: vi.fn(async () => ({ items: catalog })),
+    marketValuations: vi.fn(async () => ({ items: valuations })),
+    allocateQuote: vi.fn(), createQuote: vi.fn(), acceptQuote: vi.fn(), history: vi.fn(),
+  };
+
+  render(<ContractsPage setApiStatus={vi.fn()} client={client} />);
+
+  await waitFor(() => expect(screen.getByText('1 / 10 ПРЕДМЕТОВ')).toBeTruthy());
+  expect(screen.getAllByRole('button', { name: 'Убрать Weapon 2 | Skin 2 из контракта' }).length).toBeGreaterThan(0);
+});
 
 it('does not replay an ambiguous quote create against a stale allocation', async () => {
   const createQuote = vi.fn()

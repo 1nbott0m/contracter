@@ -1,6 +1,7 @@
 import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
-import { Search } from 'lucide-react';
 import { Logo } from './Logo';
+import { GlobalSearch } from './GlobalSearch';
+import { ProfileMenu } from './ProfileMenu';
 import type { AppRoute, Navigate } from '../router';
 import type { SessionState } from '../session';
 
@@ -11,6 +12,8 @@ type AppShellProps = {
   navigate: Navigate;
   apiStatus?: ApiStatus;
   sessionState?: SessionState;
+  logout?: () => Promise<boolean>;
+  balanceMicrocredits?: number | null;
   children: ReactNode;
 };
 
@@ -42,14 +45,10 @@ function AppLink({ href, navigate, children, className, ariaLabel, current }: {
   return <a href={href} onClick={onClick} className={className} aria-label={ariaLabel} aria-current={current ? 'page' : undefined}>{children}</a>;
 }
 
-export function AppShell({ route, navigate, apiStatus = 'unverified', sessionState, children }: AppShellProps) {
+export function AppShell({ route, navigate, apiStatus = 'unverified', sessionState = { status: 'unauthenticated' }, logout = async () => false, balanceMicrocredits = null, children }: AppShellProps) {
   const activeRoute = activePrimaryRoute(route);
   const pageClass = `page-${route.id}`;
   const mainRef = useRef<HTMLElement>(null);
-  const accountLogin = sessionState?.status === 'authenticated' && typeof sessionState.account.login === 'string'
-    ? sessionState.account.login.trim()
-    : '';
-
   useEffect(() => {
     const heading = mainRef.current?.querySelector<HTMLElement>('h1');
     document.title = heading?.textContent ? `${heading.textContent} · CONTRACTER` : 'CONTRACTER';
@@ -76,11 +75,9 @@ export function AppShell({ route, navigate, apiStatus = 'unverified', sessionSta
         {primaryNavigation.map((item) => <AppLink href={item.href} navigate={navigate} current={activeRoute === item.id} key={item.id}>{item.label}</AppLink>)}
       </nav>
       <div className="header-actions">
-        <AppLink href="/market" navigate={navigate} className="search" ariaLabel="Поиск скина"><Search size={16} /> Поиск скина</AppLink>
-        <span className="balance">БАЛАНС НЕДОСТУПЕН</span>
-        <AppLink href="/profile" navigate={navigate} className="profile-button" ariaLabel="Открыть профиль">
-          <span className="avatar">{accountLogin ? accountLogin.slice(0, 1).toUpperCase() : '—'}</span><span>{accountLogin || (sessionState?.status === 'expired' ? 'СЕССИЯ ИСТЕКЛА' : 'ВОЙТИ')}</span>
-        </AppLink>
+        <GlobalSearch navigate={navigate} />
+        <span className="balance">{balanceMicrocredits === null ? 'БАЛАНС НЕДОСТУПЕН' : `${(balanceMicrocredits / 1_000_000).toLocaleString('ru-RU')} CC`}</span>
+        <ProfileMenu session={sessionState} navigate={navigate} logout={logout} />
       </div>
     </header>
 
