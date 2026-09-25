@@ -65,7 +65,9 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
       });
     }
     return () => { active = false; };
-  }, [client, onBalanceChange, retryAttempt, session.status, setApiStatus]);
+  // Loading is scoped to the session and an explicit retry. The injected API
+  // wrapper may be recreated by an embedding surface without changing data.
+  }, [retryAttempt, session.status]);
 
   const source = state.status === 'success' || state.status === 'empty' ? state.data || [] : [];
   const hasPublishedPrices = source.some((item) => item.price !== null);

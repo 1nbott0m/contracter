@@ -53,7 +53,9 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
         setApiStatus?.('fallback');
       });
     return () => { active = false; };
-  }, [client, retryAttempt, session.status, setApiStatus]);
+  // Loading is scoped to the session and an explicit retry, not to a wrapper
+  // object recreated by a parent render.
+  }, [retryAttempt, session.status]);
 
   const source = state.status === 'success' || state.status === 'empty' ? state.data || [] : [];
   const weapons = useMemo(() => [...new Set(source.map((item) => item.weapon))].sort(), [source]);
