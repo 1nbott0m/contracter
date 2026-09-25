@@ -31,10 +31,11 @@ pub use history::{
 };
 pub use identity::{
     Account, ActiveSession, UserCredential, administrator_totp_secret, create_user_session,
-    find_account_by_public_id, find_active_user_session, find_user_credential_by_login,
-    find_user_credit_balance, is_active_administrator, mark_session_totp_verified,
-    register_invited_user, register_public_user, revoke_all_user_sessions, revoke_user_session,
-    session_totp_verified, set_administrator_totp_secret,
+    find_account_by_public_id, find_active_user_session, find_user_by_steam_id,
+    find_user_credential_by_login, find_user_credit_balance, is_active_administrator,
+    mark_session_totp_verified, register_invited_user, register_public_user, register_steam_user,
+    revoke_all_user_sessions, revoke_user_session, session_totp_verified,
+    set_administrator_totp_secret,
 };
 pub use ids::*;
 pub use inventory::{

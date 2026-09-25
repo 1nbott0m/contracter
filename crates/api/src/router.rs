@@ -74,6 +74,8 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
     let api_v1 = Router::new()
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
+        .route("/auth/steam/start", get(auth::steam_start))
+        .route("/auth/steam/callback", get(auth::steam_callback))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/logout-all", post(auth::logout_all))
         .route("/auth/totp/verify", post(admin_totp::verify))

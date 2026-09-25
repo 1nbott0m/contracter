@@ -187,6 +187,21 @@ pub async fn register_public(
         )
 }
 
+pub async fn register_steam(database: &Database, steam_id: &str) -> Result<PublicId, AuthError> {
+    let login = format!("steam_{steam_id}");
+    let random_password = SecretToken::generate().reveal().to_owned();
+    let password_hash = hash_password(random_password).await?;
+    db::register_steam_user(database.pool(), &login, &password_hash, steam_id)
+        .await
+        .map_err(
+            |error| match (error.database_code().as_deref(), error.constraint()) {
+                (Some("23505"), Some("users_steam_id_key")) => AuthError::LoginTaken,
+                (Some("23505"), Some("users_login_key")) => AuthError::LoginTaken,
+                _ => AuthError::Database(error),
+            },
+        )
+}
+
 pub async fn is_active_administrator(
     database: &Database,
     user_public_id: PublicId,
@@ -328,6 +343,24 @@ pub async fn login(
         db::create_user_session(database.pool(), user_id, &token.hash(), config.session_ttl)
             .await?;
 
+    Ok(IssuedSession {
+        token,
+        session_public_id,
+        user_public_id,
+        ttl: config.session_ttl,
+    })
+}
+
+pub async fn issue_session_for_user(
+    database: &Database,
+    config: AuthConfig,
+    user_id: UserId,
+    user_public_id: PublicId,
+) -> Result<IssuedSession, AuthError> {
+    let token = SecretToken::generate();
+    let session_public_id =
+        db::create_user_session(database.pool(), user_id, &token.hash(), config.session_ttl)
+            .await?;
     Ok(IssuedSession {
         token,
         session_public_id,

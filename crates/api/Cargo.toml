@@ -15,6 +15,7 @@ ipnet.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tracing.workspace = true
 thiserror.workspace = true
 

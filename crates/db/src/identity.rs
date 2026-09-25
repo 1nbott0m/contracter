@@ -111,6 +111,38 @@ where
         .await?)
 }
 
+pub async fn find_user_by_steam_id<'e, E>(
+    executor: E,
+    steam_id: &str,
+) -> Result<Option<(UserId, PublicId)>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_as("SELECT user_id, user_public_id FROM find_user_by_steam_id($1)")
+            .bind(steam_id)
+            .fetch_optional(executor)
+            .await?,
+    )
+}
+
+pub async fn register_steam_user<'e, E>(
+    executor: E,
+    login: &str,
+    password_hash: &str,
+    steam_id: &str,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT register_steam_user($1,$2,$3)")
+        .bind(login)
+        .bind(password_hash)
+        .bind(steam_id)
+        .fetch_one(executor)
+        .await?)
+}
+
 pub async fn administrator_totp_secret<'e, E>(
     executor: E,
     user_public_id: PublicId,
