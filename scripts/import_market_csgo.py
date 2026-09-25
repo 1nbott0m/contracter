@@ -69,7 +69,13 @@ def api_json(key: str, hash_name: str) -> object:
 def rows_from_payload(payload: object, sku_public_id: str, hash_name: str) -> list[dict[str, str]]:
     """Accept the documented response's common list shapes without guessing prices."""
     if isinstance(payload, dict):
-        candidates = payload.get("data") or payload.get("items") or payload.get("result") or []
+        candidates = (
+            payload.get("history")
+            or payload.get("data")
+            or payload.get("items")
+            or payload.get("result")
+            or []
+        )
     else:
         candidates = payload
     if not isinstance(candidates, list):
@@ -115,7 +121,7 @@ def main() -> int:
         database_url,
         """SELECT skus.public_id,
                          catalog_items.weapon_name || ' | ' || catalog_items.skin_name ||
-                         ' (' || replace(wear_bands.code, '_', ' ') || ')'
+                         ' (' || initcap(replace(wear_bands.code, '_', ' ')) || ')'
                   FROM skus
                   JOIN catalog_items ON catalog_items.id = skus.catalog_item_id
                   JOIN wear_bands ON wear_bands.id = skus.wear_band_id
