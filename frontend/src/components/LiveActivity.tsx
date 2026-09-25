@@ -5,6 +5,7 @@ import type { SessionState } from '../session';
 import type { AsyncState } from '../types';
 import { readContractPresentation } from './ContractReveal';
 import { resolveSkinImage, SkinImage } from './SkinImage';
+import { StatusChip } from './StatusChip';
 
 export type ApiStatus = 'unverified' | 'connecting' | 'live' | 'auth' | 'fallback';
 
@@ -67,7 +68,7 @@ export function LiveActivity({ session, client = api, apiStatus = 'unverified' }
       <span className="live-dot" aria-hidden="true" />
       <b>LIVE</b>
       <span className="live-copy">{apiCopy[apiStatus]}</span>
-      <span className="live-count">{connectionCopy[connection]}</span>
+      <StatusChip tone={connection === 'connected' ? 'success' : connection === 'unavailable' ? 'danger' : 'info'}>{connectionCopy[connection]}</StatusChip>
       {connection === 'unavailable' && <button type="button" onClick={() => void checkConnection(true)} aria-label="Повторить подключение"><RefreshCw size={12} /> Повторить</button>}
     </div>
     <div className="live-feed" aria-live="polite">

@@ -26,3 +26,8 @@ body { background: radial-gradient(circle at 78% 0, #172137 0, transparent 30rem
 .skin-art { background: linear-gradient(145deg, var(--ct-surface-raised), var(--ct-canvas)); }
 .mobile-navigation { background: #0d111af2; border-color: var(--ct-line); }
 .app-main { scroll-margin-top: 90px; }
+.status-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 10px; border: 1px solid var(--ct-line); border-radius: 999px; color: var(--ct-text-muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.status-chip-success { border-color: #63e6a755; color: var(--ct-success); }
+.status-chip-warning { border-color: #ffca7055; color: var(--ct-warning); }
+.status-chip-danger { border-color: #ff718855; color: var(--ct-danger); }
+.status-chip-info { border-color: #57e3f355; color: var(--ct-cyan); }
