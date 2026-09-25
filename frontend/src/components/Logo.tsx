@@ -8,5 +8,5 @@ export function Logo({ navigate }: { navigate: Navigate }) {
     navigate('/contracts');
   };
 
-  return <a href="/contracts" onClick={returnToContracts} className="brand" aria-label="CONTRACTER — Контракты"><span className="brand-mark" aria-hidden="true"><span>AK</span><i /></span><span className="brand-label">CONTRACTER</span></a>;
+  return <a href="/contracts" onClick={returnToContracts} className="brand" aria-label="CONTRACTER — Контракты"><span className="brand-mark" aria-hidden="true"><span>C</span></span><span className="brand-label">CONTRACTER</span></a>;
 }

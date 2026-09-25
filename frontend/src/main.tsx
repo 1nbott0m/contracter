@@ -9,6 +9,7 @@ import './reveal-cinematic.css';
 import './visual-polish.css';
 import './image-states.css';
 import './accessibility.css';
+import './layout-fixes.css';
 import './contract-builder.css';
 import './commerce.css';
 import './information.css';
@@ -53,7 +54,6 @@ function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; logi
 }
 
 function RegisterPage({ navigate }: { navigate: Navigate }) {
-  const [invitationToken, setInvitationToken] = useState('');
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -63,7 +63,7 @@ function RegisterPage({ navigate }: { navigate: Navigate }) {
     setError('');
     setSubmitting(true);
     try {
-      await api.register(invitationToken.trim(), login.trim(), password);
+      await api.register('', login.trim(), password);
       navigate('/login?registered=1', { replace: true });
     } catch {
       setError('Не удалось зарегистрироваться. Проверьте invitation token, логин и пароль.');
@@ -71,7 +71,11 @@ function RegisterPage({ navigate }: { navigate: Navigate }) {
       setSubmitting(false);
     }
   };
-  return <form className="login-modal route-login" onSubmit={submit}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Регистрация</h1><p className="auth-note">Регистрация доступна только по приглашению.</p><label>INVITATION TOKEN<input value={invitationToken} onChange={(event) => setInvitationToken(event.target.value)} autoComplete="off" required /></label><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>{error && <p className="login-error">{error}</p>}<button className="primary" type="submit" disabled={submitting}>{submitting ? 'СОЗДАНИЕ…' : 'СОЗДАТЬ АККАУНТ'} <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/login')}>Уже есть аккаунт? Войти</button></form>;
+  return <form className="login-modal route-login" onSubmit={submit}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Регистрация</h1><p className="auth-note">Создайте аккаунт бесплатно. После регистрации вы сразу сможете войти в CONTRACTER.</p><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required minLength={3} /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>{error && <p className="login-error">{error}</p>}<button className="primary" type="submit" disabled={submitting}>{submitting ? 'СОЗДАНИЕ…' : 'СОЗДАТЬ АККАУНТ'} <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/login')}>Уже есть аккаунт? Войти</button></form>;
+}
+
+function AdminPage({ navigate }: { navigate: Navigate }) {
+  return <section className="admin-page route-state"><span className="eyebrow">CONTRACTER / CONTROL ROOM</span><h1>Панель администратора</h1><p>Доступ к этой странице определяется ролью аккаунта на сервере. Если у аккаунта нет роли администратора, API отклонит операции с кодом 403.</p><div className="admin-actions"><button className="primary" type="button" onClick={() => navigate('/contracts')}>Вернуться к контрактам <ArrowRight size={16} /></button><button className="text-button" type="button" onClick={() => navigate('/transparency')}>Открыть проверку честности</button></div></section>;
 }
 
 export function App() {
@@ -103,6 +107,7 @@ export function App() {
   else if (route.id === 'terms') page = <TermsPage />;
   else if (route.id === 'privacy') page = <PrivacyPage />;
   else if (route.id === 'support') page = <SupportPage navigate={navigate} />;
+  else if (route.id === 'admin') page = <AdminPage navigate={navigate} />;
   else if (route.id === 'not-found') page = <NotFoundPage navigate={navigate} />;
   else page = <VerificationPage session={session.state} navigate={navigate} />;
 

@@ -11,7 +11,8 @@ export type StaticRouteId =
   | 'transparency'
   | 'terms'
   | 'privacy'
-  | 'support';
+  | 'support'
+  | 'admin';
 
 export type AppRoute =
   | { id: StaticRouteId; pathname: string }
@@ -32,6 +33,7 @@ const staticRoutes = new Map<string, StaticRouteId>([
   ['/terms', 'terms'],
   ['/privacy', 'privacy'],
   ['/support', 'support'],
+  ['/admin', 'admin'],
 ]);
 
 function normalizePathname(pathname: string) {
