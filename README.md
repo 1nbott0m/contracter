@@ -30,6 +30,12 @@ market и quote используют целые micro-CC; API помечает �
 курсу из подтверждённого события провайдера. Клиент не задаёт курс или сумму
 зачисления CC.
 
+Для server-side импорта завершённых продаж Market.CSGO ключ хранится только в
+Render Environment под именем `MARKET_CSGO_API_KEY`. Он не должен попадать во
+frontend, Git или логи. `MARKET_RUB_TO_CC_RATE` задаёт явный курс пересчёта
+внешней цены в CC; публикация valuation всё равно требует валидных данных
+sale evidence и минимум 20 продаж на SKU.
+
 ```bash
 DATABASE_URL='postgres://USER@HOST:PORT/contracter?sslmode=require' \
 cargo run -p server --bin contracter-server

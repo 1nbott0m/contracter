@@ -21,3 +21,7 @@ services:
         sync: false
       - key: QUOTE_SEED_KEY
         sync: false
+      - key: MARKET_CSGO_API_KEY
+        sync: false
+      - key: MARKET_RUB_TO_CC_RATE
+        value: "1"
