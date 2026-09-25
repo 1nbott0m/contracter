@@ -61,7 +61,11 @@ export function LiveActivity({ session, client = api, apiStatus = 'unverified' }
       if (active) setActivity({ status: 'error', error: 'История аккаунта недоступна' });
     });
     return () => { active = false; };
-  }, [client, session.status]);
+  // The app-level API client is stable, but injected clients in tests and
+  // embedded surfaces may be recreated on every render. History belongs to
+  // the authenticated session, not to the identity of that wrapper object;
+  // keeping the dependency to session status prevents duplicate requests.
+  }, [session.status]);
 
   return <section className="live-activity" aria-label="Статус сервиса и активность" data-online-state={connection}>
     <div className="live-status">

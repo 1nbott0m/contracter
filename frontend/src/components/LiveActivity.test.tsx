@@ -66,3 +66,20 @@ it('labels an empty authenticated history instead of substituting demo activity'
   expect(await screen.findByText('В истории аккаунта пока нет подтверждённых операций')).toBeTruthy();
   expect(screen.queryByRole('img')).toBeNull();
 });
+
+it('does not refetch account history when an injected client wrapper changes identity', async () => {
+  const history = vi.fn(async () => []);
+  const { rerender } = render(<LiveActivity session={account} client={{
+    serviceHealth: vi.fn(async () => ({ status: 'live' as const })),
+    history,
+  }} />);
+
+  await screen.findByText('В истории аккаунта пока нет подтверждённых операций');
+  expect(history).toHaveBeenCalledTimes(1);
+
+  rerender(<LiveActivity session={account} client={{
+    serviceHealth: vi.fn(async () => ({ status: 'live' as const })),
+    history,
+  }} />);
+  await waitFor(() => expect(history).toHaveBeenCalledTimes(1));
+});
