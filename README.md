@@ -43,6 +43,28 @@ cargo run -p server --bin contracter-server
 
 `TEST_DATABASE_URL` предназначен только для отдельной тестовой БД. Никогда не направляйте проверки на shared или production БД: integration fixtures намеренно создают записи.
 
+### Импорт цен Market.CSGO
+
+Импорт выполняется отдельной server-side job, а не HTTP-маршрутом:
+
+```bash
+MARKET_CSGO_API_KEY='...' \
+MARKET_IMPORT_DATABASE_URL='postgres://.../contracter?sslmode=require' \
+MARKET_RUB_TO_CC_RATE='1' \
+python3 scripts/import_market_csgo.py
+```
+
+Первый запуск только сохраняет новые sale evidence и ничего не публикует.
+После проверки количества валидных продаж запускайте с `--publish`:
+
+```bash
+MARKET_CSGO_API_KEY='...' MARKET_IMPORT_DATABASE_URL='postgres://...' \
+MARKET_RUB_TO_CC_RATE='1' python3 scripts/import_market_csgo.py --publish
+```
+
+Для job нужен DB-пользователь с `EXECUTE` на функциях миграции `0043`, но не
+доступ к HTTP runtime. Ключ и DB URL не выводятся и не должны попадать в Git.
+
 ## Работа в Zed
 
 Откройте корень репозитория в Zed. Rust Analyzer использует workspace из `Cargo.toml`; дополнительных настроек редактора не требуется.
