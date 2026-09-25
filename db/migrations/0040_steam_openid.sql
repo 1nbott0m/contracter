@@ -14,4 +14,8 @@ BEGIN
  RETURN v_public_id;
 END $$;
 REVOKE ALL ON FUNCTION find_user_by_steam_id(text), register_steam_user(text,text,text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION find_user_by_steam_id(text), register_steam_user(text,text,text) TO contracter_runtime;
+DO $block$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime') THEN
+    GRANT EXECUTE ON FUNCTION find_user_by_steam_id(text), register_steam_user(text,text,text) TO contracter_runtime;
+  END IF;
+END $block$;

@@ -25,4 +25,8 @@ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public AS $$
  SELECT EXISTS (SELECT 1 FROM user_sessions WHERE public_id=p_session_public_id AND revoked_at IS NULL AND expires_at>clock_timestamp() AND totp_verified_at IS NOT NULL);
 $$;
 REVOKE ALL ON FUNCTION administrator_totp_secret(uuid), set_administrator_totp_secret(uuid,bytea), mark_session_totp_verified(uuid), session_totp_verified(uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION administrator_totp_secret(uuid), set_administrator_totp_secret(uuid,bytea), mark_session_totp_verified(uuid), session_totp_verified(uuid) TO contracter_runtime;
+DO $block$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime') THEN
+    GRANT EXECUTE ON FUNCTION administrator_totp_secret(uuid), set_administrator_totp_secret(uuid,bytea), mark_session_totp_verified(uuid), session_totp_verified(uuid) TO contracter_runtime;
+  END IF;
+END $block$;

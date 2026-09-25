@@ -27,7 +27,11 @@ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public AS $$
  FROM admin_audit_events e JOIN administrators a ON a.id=e.administrator_id ORDER BY e.created_at DESC LIMIT 200;
 $$;
 REVOKE ALL ON FUNCTION record_admin_audit(uuid,text,uuid,jsonb), list_admin_audit_events() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION record_admin_audit(uuid,text,uuid,jsonb), list_admin_audit_events() TO contracter_runtime;
+DO $block$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime') THEN
+    GRANT EXECUTE ON FUNCTION record_admin_audit(uuid,text,uuid,jsonb), list_admin_audit_events() TO contracter_runtime;
+  END IF;
+END $block$;
 CREATE OR REPLACE FUNCTION prevent_admin_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'admin audit events are append-only'; END $$;
 DROP TRIGGER IF EXISTS admin_audit_events_immutable ON admin_audit_events;
