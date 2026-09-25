@@ -108,7 +108,11 @@ export function isDevelopmentFallbackEnabled(
   return environment.DEV && environment.VITE_ENABLE_DEV_FALLBACK === 'true';
 }
 
-const base = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8080').replace(/\/$/, '');
+// Keep local development explicit while making a production build usable even
+// when a hosting provider forgot to inject VITE_API_URL.  Never ship a
+// browser bundle that silently points users at their own localhost.
+const configuredBase = import.meta.env.VITE_API_URL;
+const base = (configuredBase || (import.meta.env.DEV ? 'http://127.0.0.1:8080' : 'https://contracter.onrender.com')).replace(/\/$/, '');
 
 export type ServiceHealth = { status: 'live' };
 
