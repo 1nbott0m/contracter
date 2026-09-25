@@ -143,6 +143,15 @@ pub async fn dashboard(
     let stats = db::admin_dashboard_stats(state.database().pool())
         .await
         .map_err(application::auth::AuthError::from)?;
+    db::record_admin_audit(
+        state.database().pool(),
+        caller.user_public_id,
+        "admin.dashboard.read",
+        None,
+        json!({}),
+    )
+    .await
+    .map_err(application::auth::AuthError::from)?;
     Ok(Json(DashboardResponse {
         users: stats.users,
         active_sessions: stats.active_sessions,
