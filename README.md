@@ -45,7 +45,11 @@ cargo run -p server --bin contracter-server
 
 ### Импорт цен Market.CSGO
 
-Импорт выполняется отдельной server-side job, а не HTTP-маршрутом:
+Импорт выполняется отдельным server-side Cron Job, а не HTTP-маршрутом. Для
+Render используйте blueprint-файл [`render.market-import.yaml`](render.market-import.yaml)
+и Dockerfile [`Dockerfile.market-import`](Dockerfile.market-import). Это отдельный
+контейнер с `python3` и `psql`; публичный API-контейнер намеренно остаётся
+минимальным и importer в нём не запускается.
 
 ```bash
 MARKET_CSGO_API_KEY='...' \

@@ -1,0 +1,18 @@
+# Optional Render Cron Job for confirmed Market.CSGO valuation publication.
+# Create this as a separate service in Render; do not run the importer in the
+# public API container. The job needs the same Aiven DATABASE_URL and the
+# Market.CSGO key, both stored as Render secrets.
+services:
+  - type: cron
+    name: contracter-market-import
+    runtime: docker
+    dockerfilePath: ./Dockerfile.market-import
+    dockerContext: .
+    schedule: "0 */6 * * *"
+    envVars:
+      - key: MARKET_CSGO_API_KEY
+        sync: false
+      - key: MARKET_IMPORT_DATABASE_URL
+        sync: false
+      - key: MARKET_RUB_TO_CC_RATE
+        value: "1"

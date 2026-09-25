@@ -1,0 +1,10 @@
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y postgresql-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY scripts/import_market_csgo.py /app/scripts/import_market_csgo.py
+
+ENTRYPOINT ["python3", "/app/scripts/import_market_csgo.py", "--publish"]
