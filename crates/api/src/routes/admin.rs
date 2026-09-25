@@ -1,4 +1,5 @@
 use application::auth;
+use application::auth::AuthenticatedUser;
 use axum::{Json, extract::State, response::IntoResponse};
 use db;
 use serde::Serialize;
@@ -22,15 +23,29 @@ pub struct AdminUserResponse {
     pub disabled: bool,
     pub is_admin: bool,
 }
-pub async fn users(
-    State(state): State<AppState>,
-    CurrentUser(caller): CurrentUser,
-) -> Result<impl IntoResponse, ApiError> {
+
+async fn require_verified_admin(
+    state: &AppState,
+    caller: AuthenticatedUser,
+) -> Result<(), ApiError> {
     if !auth::is_active_administrator(state.database(), caller.user_public_id).await? {
         return Err(ApiError::Forbidden(
             "Administrator access required".to_owned(),
         ));
     }
+    if !auth::session_totp_verified(state.database(), caller).await? {
+        return Err(ApiError::Forbidden(
+            "Administrator TOTP verification required".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub async fn users(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<impl IntoResponse, ApiError> {
+    require_verified_admin(&state, caller).await?;
     db::record_admin_audit(
         state.database().pool(),
         caller.user_public_id,
@@ -70,11 +85,7 @@ pub async fn audit(
     State(state): State<AppState>,
     CurrentUser(caller): CurrentUser,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !auth::is_active_administrator(state.database(), caller.user_public_id).await? {
-        return Err(ApiError::Forbidden(
-            "Administrator access required".to_owned(),
-        ));
-    }
+    require_verified_admin(&state, caller).await?;
     let events = db::list_admin_audit(state.database().pool())
         .await
         .map_err(application::auth::AuthError::from)?;
@@ -128,11 +139,7 @@ pub async fn dashboard(
     State(state): State<AppState>,
     CurrentUser(caller): CurrentUser,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !auth::is_active_administrator(state.database(), caller.user_public_id).await? {
-        return Err(ApiError::Forbidden(
-            "Administrator access required".to_owned(),
-        ));
-    }
+    require_verified_admin(&state, caller).await?;
     let stats = db::admin_dashboard_stats(state.database().pool())
         .await
         .map_err(application::auth::AuthError::from)?;
