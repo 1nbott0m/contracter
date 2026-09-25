@@ -48,6 +48,13 @@ jobs:
       - name: Compile every workspace target and feature
         run: cargo check --workspace --all-targets --all-features
 
+      - name: Verify frontend tests and production build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test -- --run
+          npm run build
+
       - name: Verify workspace and PostgreSQL integration
         run: |
           psql postgresql://postgres:postgres@localhost:5432/postgres \
