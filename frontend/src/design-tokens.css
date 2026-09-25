@@ -33,3 +33,9 @@ body { background: radial-gradient(circle at 78% 0, #172137 0, transparent 30rem
 .status-chip-info { border-color: #57e3f355; color: var(--ct-cyan); }
 .reveal-skip { align-self: center; margin-top: 8px; border: 1px solid var(--ct-line); border-radius: 999px; background: transparent; color: var(--ct-text-muted); padding: 9px 14px; font-size: 10px; font-weight: 800; letter-spacing: .08em; cursor: pointer; }
 .reveal-skip:hover { border-color: var(--ct-cyan); color: var(--ct-cyan); }
+.commerce-filters input, .commerce-filters select { border-color: var(--ct-line); background: var(--ct-surface); border-radius: var(--ct-control-radius); }
+.commerce-filters input:focus, .commerce-filters select:focus { border-color: var(--ct-cyan); box-shadow: 0 0 0 3px #57e3f322; }
+.market-card, .history-card { border-color: var(--ct-line); border-radius: var(--ct-panel-radius); }
+.market-card, .history-card, .commerce-state { box-shadow: 0 18px 52px #0004; }
+.commerce-state { border-color: var(--ct-line); border-radius: var(--ct-panel-radius); }
+.market-buy, .inventory-contract-action { border-radius: var(--ct-control-radius); }
