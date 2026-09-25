@@ -24,6 +24,11 @@ pub struct CatalogItem {
     pub enabled: bool,
     pub is_stattrak: bool,
     pub is_souvenir: bool,
+    pub canonical_skin_id: Option<String>,
+    pub weapon_name: Option<String>,
+    pub skin_name: Option<String>,
+    pub canonical_image_url: Option<String>,
+    pub available_wears: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -60,7 +65,8 @@ where
 {
     Ok(sqlx::query_as(
         "SELECT id, public_id, collection_id, rarity_code, stable_name, \
-                min_float, max_float, enabled, is_stattrak, is_souvenir \
+                min_float, max_float, enabled, is_stattrak, is_souvenir, \
+                canonical_skin_id, weapon_name, skin_name, canonical_image_url, available_wears \
          FROM catalog_items WHERE public_id = $1",
     )
     .bind(public_id)
@@ -135,6 +141,11 @@ pub struct CatalogSku {
     pub max_float: Decimal,
     pub is_stattrak: bool,
     pub is_souvenir: bool,
+    pub canonical_skin_id: Option<String>,
+    pub weapon_name: Option<String>,
+    pub skin_name: Option<String>,
+    pub canonical_image_url: Option<String>,
+    pub available_wears: serde_json::Value,
 }
 
 /// A collection as the public catalog exposes it.
@@ -227,7 +238,7 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     Ok(sqlx::query_as(
-        "SELECT skus.public_id AS sku_public_id,                 catalog_items.public_id AS catalog_item_public_id,                 collections.public_id AS collection_public_id,                 collections.slug AS collection_slug,                 collections.display_name AS collection_display_name,                 catalog_items.stable_name,                 catalog_items.rarity_code,                 rarities.rank AS rarity_rank,                 wear_bands.code AS wear_band_code,                 catalog_items.min_float,                 catalog_items.max_float,                 catalog_items.is_stattrak,                 catalog_items.is_souvenir          FROM skus          JOIN catalog_items ON catalog_items.id = skus.catalog_item_id          JOIN collections ON collections.id = catalog_items.collection_id          JOIN rarities ON rarities.code = catalog_items.rarity_code          JOIN wear_bands ON wear_bands.id = skus.wear_band_id          WHERE collections.enabled AND catalog_items.enabled AND skus.enabled            AND ($1::uuid IS NULL OR collections.public_id = $1)            AND ($2::text IS NULL OR catalog_items.rarity_code = $2)            AND ($3::uuid IS NULL OR catalog_items.public_id = $3)            AND ($4::uuid IS NULL OR skus.public_id > $4)          ORDER BY skus.public_id          LIMIT $5",
+        "SELECT skus.public_id AS sku_public_id, catalog_items.public_id AS catalog_item_public_id, collections.public_id AS collection_public_id, collections.slug AS collection_slug, collections.display_name AS collection_display_name, catalog_items.stable_name, catalog_items.rarity_code, rarities.rank AS rarity_rank, wear_bands.code AS wear_band_code, catalog_items.min_float, catalog_items.max_float, catalog_items.is_stattrak, catalog_items.is_souvenir, catalog_items.canonical_skin_id, catalog_items.weapon_name, catalog_items.skin_name, catalog_items.canonical_image_url, catalog_items.available_wears FROM skus JOIN catalog_items ON catalog_items.id = skus.catalog_item_id JOIN collections ON collections.id = catalog_items.collection_id JOIN rarities ON rarities.code = catalog_items.rarity_code JOIN wear_bands ON wear_bands.id = skus.wear_band_id WHERE collections.enabled AND catalog_items.enabled AND skus.enabled AND ($1::uuid IS NULL OR collections.public_id = $1) AND ($2::text IS NULL OR catalog_items.rarity_code = $2) AND ($3::uuid IS NULL OR catalog_items.public_id = $3) AND ($4::uuid IS NULL OR skus.public_id > $4) ORDER BY skus.public_id LIMIT $5",
     )
     .bind(collection_public_id)
     .bind(rarity_code)

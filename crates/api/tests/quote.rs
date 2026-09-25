@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use api::{AppState, RouterConfig, SECURE_SESSION_COOKIE, build_router};
 use application::auth::{AuthConfig, SecretToken};
+use application::seed_protection::EnvironmentSeedProtector;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
@@ -11,13 +12,17 @@ use serde_json::Value;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+const TEST_SEED_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+
 async fn test_state() -> AppState {
     let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let database = Database::connect(&DatabaseConfig::new(url).expect("valid database URL"))
         .await
         .expect("connect to isolated PostgreSQL");
     database.migrate().await.expect("apply migrations");
-    AppState::new(database, AuthConfig::default())
+    AppState::new(database, AuthConfig::default()).with_seed_protector(std::sync::Arc::new(
+        EnvironmentSeedProtector::from_base64url(TEST_SEED_KEY).expect("valid test seed key"),
+    ))
 }
 
 fn router(state: &AppState) -> axum::Router {
@@ -63,10 +68,32 @@ struct QuoteFixture {
 
 async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
     let pool = state.database().pool();
+    sqlx::query(
+        "INSERT INTO contract_statuses (code, is_terminal, description) \
+         VALUES ('completed', true, 'test fixture') ON CONFLICT (code) DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .expect("insert contract status fixture");
+    sqlx::query(
+        "INSERT INTO quote_statuses (code, is_terminal, description) \
+         VALUES ('accepted', true, 'test fixture') ON CONFLICT (code) DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .expect("insert quote status fixture");
+    sqlx::query(
+        "INSERT INTO inventory_event_kinds (code, description) VALUES \
+            ('contract_input', 'test fixture'), ('contract_output', 'test fixture') \
+         ON CONFLICT (code) DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .expect("insert inventory event kinds fixture");
     let suffix = Uuid::new_v4().simple().to_string();
     sqlx::query(
         "INSERT INTO rarities (code, rank, is_covert) VALUES ('quote_http', 9701, false) \
-         ON CONFLICT (code) DO NOTHING",
+         ON CONFLICT DO NOTHING",
     )
     .execute(pool)
     .await
@@ -149,7 +176,7 @@ async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
         "INSERT INTO valuation_snapshot_items ( \
             snapshot_id, sku_id, verified_price_microcredits, source_code, window_days, \
             valid_sale_count, evidence_cutoff_at, evidence_digest \
-         ) VALUES ($1, $2, 1000000, 'quote_http', 7, 20, clock_timestamp(), \
+         ) VALUES ($1, $2, 20000000, 'quote_http', 7, 20, clock_timestamp(), \
                    decode(repeat('88', 32), 'hex')) RETURNING id",
     )
     .bind(snapshot_id)
@@ -162,6 +189,20 @@ async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
         .execute(pool)
         .await
         .expect("publish quote API snapshot");
+    sqlx::query("UPDATE risk_state SET valuation_snapshot_id = $1 WHERE singleton")
+        .bind(snapshot_id)
+        .execute(pool)
+        .await
+        .expect("activate quote API risk snapshot");
+    sqlx::query(
+        "UPDATE risk_state SET liquid_reserve_microcredits = 1000000000000, \
+                outstanding_quote_exposure_microcredits = 8500000, \
+                stressed_liability_microcredits = 0 \
+         WHERE singleton",
+    )
+    .execute(pool)
+    .await
+    .expect("seed quote API risk exposure");
 
     let version = i32::try_from(Uuid::new_v4().as_fields().0 % 500_000_000 + 1_500_000_000)
         .expect("policy version fits i32");
@@ -200,11 +241,11 @@ async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
             stock_policy_version_id, risk_policy_version_id, signing_key_id, status_code, \
             formula_version, client_seed, nonce, verified_input_value_microcredits, \
             expected_buyback_microcredits, quote_total_microcredits, adjustment_microcredits, \
-            maximum_exposure_microcredits, ordered_outcome_digest, signature, created_at, expires_at \
+            maximum_exposure_microcredits, ordered_outcome_digest, signature, selected_outcome_position, created_at, expires_at \
          ) SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'active', 'quote-http-v1', \
-                  decode(repeat('99', 32), 'hex'), 7, 10000000, 8500000, 10000000, 0, \
-                  8500000, decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 64), 'hex'), \
-                  c.now, c.now + interval '30 seconds' FROM c RETURNING id",
+                  decode(repeat('99', 32), 'hex'), 7, 20000000, 8500000, 20000000, 0, \
+                  8500000, decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 64), 'hex'), 1, \
+                  c.now, c.now + interval '15 seconds' FROM c RETURNING id",
     )
     .bind(quote_public_id)
     .bind(user_id)
@@ -237,16 +278,37 @@ async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
     .await
     .expect("position quoted input item");
     sqlx::query(
+        "INSERT INTO inventory_items (public_id, sku_id, canonical_float) \
+         SELECT gen_random_uuid(), $1, 0.10000000 FROM generate_series(1, 9)",
+    )
+    .bind(sku_id)
+    .execute(pool)
+    .await
+    .expect("insert remaining quoted input items");
+    sqlx::query(
+        "INSERT INTO inventory_positions (inventory_item_id, owner_user_id) \
+         SELECT id, $2 FROM ( \
+             SELECT id FROM inventory_items WHERE sku_id = $1 ORDER BY id DESC LIMIT 10 \
+         ) AS inputs \
+         ON CONFLICT (inventory_item_id) DO NOTHING",
+    )
+    .bind(sku_id)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .expect("position remaining quoted input items");
+    sqlx::query(
         "INSERT INTO quote_inputs (quote_id, position, inventory_item_id, \
                                    valuation_snapshot_item_id, locked_position_version) \
-         VALUES ($1, 1, $2, $3, 1)",
+         SELECT $1, row_number() OVER (ORDER BY id)::int, id, $3, 1 \
+           FROM (SELECT id FROM inventory_items WHERE sku_id = $2 ORDER BY id DESC LIMIT 10) AS inputs",
     )
     .bind(quote_id)
-    .bind(input_id)
+    .bind(sku_id)
     .bind(snapshot_item_id)
     .execute(pool)
     .await
-    .expect("insert quote API input");
+    .expect("insert quote API inputs");
 
     let outcome_public_id = Uuid::new_v4();
     let outcome_id: i64 = sqlx::query_scalar(
@@ -268,8 +330,8 @@ async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
     sqlx::query(
         "INSERT INTO quote_outcomes ( \
             quote_id, position, sku_id, candidate_inventory_item_id, valuation_snapshot_item_id, \
-            probability_numerator, probability_denominator, output_float, buyback_microcredits \
-         ) VALUES ($1, 1, $2, $3, $4, 1, 2, 0.33333333, 850000)",
+            probability_numerator, probability_denominator, output_float, buyback_microcredits, is_selected \
+         ) VALUES ($1, 1, $2, $3, $4, 1, 2, 0.33333333, 850000, true)",
     )
     .bind(quote_id)
     .bind(sku_id)
@@ -278,6 +340,65 @@ async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
     .execute(pool)
     .await
     .expect("insert quote API outcome");
+    sqlx::query(
+        "INSERT INTO quote_risk_exposures \
+            (quote_id, maximum_buyback_microcredits, maximum_rebate_microcredits, total_exposure_microcredits) \
+         VALUES ($1, 8500000, 0, 8500000)",
+    )
+    .bind(quote_id)
+    .execute(pool)
+    .await
+    .expect("insert quote API risk exposure");
+    sqlx::query(
+        "UPDATE seed_allocations SET allocated_at = clock_timestamp(), \
+                expires_at = clock_timestamp() + interval '15 seconds' \
+         WHERE id = $1",
+    )
+    .bind(allocation_id)
+    .execute(pool)
+    .await
+    .expect("refresh quote API allocation window");
+    sqlx::query(
+        "UPDATE tradeup_quotes SET created_at = clock_timestamp(), \
+                expires_at = (SELECT expires_at FROM seed_allocations WHERE id = $2) \
+         WHERE id = $1",
+    )
+    .bind(quote_id)
+    .bind(allocation_id)
+    .execute(pool)
+    .await
+    .expect("refresh quote API quote window");
+    sqlx::query(
+        "INSERT INTO inventory_item_locks (inventory_item_id, quote_id, expires_at) \
+         SELECT inventory_item_id, quote_id, clock_timestamp() + interval '30 seconds' \
+           FROM quote_inputs WHERE quote_id = $1",
+    )
+    .bind(quote_id)
+    .execute(pool)
+    .await
+    .expect("lock quote API inputs");
+    sqlx::query(
+        "INSERT INTO quote_candidate_reservations \
+            (quote_id, quote_outcome_id, inventory_item_id, sku_id, reserved_until) \
+         VALUES ($1, (SELECT id FROM quote_outcomes WHERE quote_id = $1 AND position = 1), \
+                 $2, $3, clock_timestamp() + interval '30 seconds')",
+    )
+    .bind(quote_id)
+    .bind(outcome_id)
+    .bind(sku_id)
+    .execute(pool)
+    .await
+    .expect("reserve quote API outcome");
+    sqlx::query(
+        "INSERT INTO warehouse_stock (sku_id, available_units, reserved_units) \
+         VALUES ($1, 1, 1) \
+         ON CONFLICT (sku_id) DO UPDATE SET available_units = greatest(warehouse_stock.available_units, 1), \
+             reserved_units = warehouse_stock.reserved_units + 1",
+    )
+    .bind(sku_id)
+    .execute(pool)
+    .await
+    .expect("reserve quote API warehouse stock");
 
     QuoteFixture {
         quote_public_id,
@@ -334,6 +455,191 @@ async fn quote_acceptance_requires_an_authenticated_session_before_touching_the_
 
 #[tokio::test]
 #[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn quote_acceptance_is_owner_bound_and_idempotent_over_http() {
+    let state = test_state().await;
+    let (owner_id, owner_cookie) = user_session(&state).await;
+    let (_, stranger_cookie) = user_session(&state).await;
+    let fixture = seed_active_quote(&state, owner_id).await;
+    let key = Uuid::new_v4();
+    sqlx::query(
+        "WITH c AS (SELECT clock_timestamp() AS now) UPDATE seed_allocations SET allocated_at = c.now, expires_at = c.now + interval '15 seconds' FROM c \
+         WHERE user_id = $1 AND released_at IS NULL",
+    )
+    .bind(owner_id)
+    .execute(state.database().pool())
+    .await
+    .expect("refresh acceptance allocation window");
+
+    let request = |cookie: &str, key: Uuid| {
+        Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/v1/me/quote/{}/accept",
+                fixture.quote_public_id
+            ))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, cookie)
+            .body(Body::from(
+                serde_json::json!({"idempotency_key": key}).to_string(),
+            ))
+            .unwrap()
+    };
+
+    let stranger = router(&state)
+        .oneshot(request(&stranger_cookie, key))
+        .await
+        .unwrap();
+    assert_eq!(stranger.status(), StatusCode::NOT_FOUND);
+
+    sqlx::query(
+        "WITH c AS (SELECT clock_timestamp() AS now) UPDATE seed_allocations SET allocated_at = c.now, expires_at = c.now + interval '15 seconds' FROM c \
+         WHERE user_id = $1 AND released_at IS NULL",
+    )
+    .bind(owner_id)
+    .execute(state.database().pool())
+    .await
+    .expect("refresh owner allocation before acceptance");
+    sqlx::query(
+        "WITH c AS (SELECT clock_timestamp() AS now) UPDATE tradeup_quotes SET status_code = 'active', created_at = c.now, expires_at = c.now + interval '15 seconds' FROM c WHERE public_id = $1",
+    )
+    .bind(fixture.quote_public_id)
+    .execute(state.database().pool())
+    .await
+    .expect("refresh owner quote before acceptance");
+    sqlx::query(
+        "UPDATE inventory_item_locks SET expires_at = clock_timestamp() + interval '30 seconds' WHERE quote_id = (SELECT id FROM tradeup_quotes WHERE public_id = $1)",
+    )
+    .bind(fixture.quote_public_id)
+    .execute(state.database().pool())
+    .await
+    .expect("refresh owner input locks");
+    sqlx::query(
+        "UPDATE quote_candidate_reservations SET reserved_until = clock_timestamp() + interval '30 seconds' WHERE quote_id = (SELECT id FROM tradeup_quotes WHERE public_id = $1)",
+    )
+    .bind(fixture.quote_public_id)
+    .execute(state.database().pool())
+    .await
+    .expect("refresh owner outcome reservation");
+    sqlx::query(
+        "UPDATE risk_state SET valuation_snapshot_id = (SELECT valuation_snapshot_id FROM tradeup_quotes WHERE public_id = $1), liquid_reserve_microcredits = 1000000000000 WHERE singleton",
+    )
+    .bind(fixture.quote_public_id)
+    .execute(state.database().pool())
+    .await
+    .expect("refresh risk snapshot immediately before acceptance");
+    sqlx::query(
+        "UPDATE risk_state SET valuation_snapshot_id = (SELECT valuation_snapshot_id FROM tradeup_quotes WHERE public_id = $1), liquid_reserve_microcredits = 1000000000000 WHERE singleton",
+    )
+    .bind(fixture.quote_public_id)
+    .execute(state.database().pool())
+    .await
+    .expect("refresh risk snapshot before acceptance");
+    sqlx::query(
+        "UPDATE tradeup_quotes SET valuation_snapshot_id = (SELECT valuation_snapshot_id FROM risk_state WHERE singleton) WHERE public_id = $1",
+    )
+    .bind(fixture.quote_public_id)
+    .execute(state.database().pool())
+    .await
+    .expect("align quote risk snapshot");
+
+    let first = router(&state)
+        .oneshot(request(&owner_cookie, key))
+        .await
+        .unwrap();
+    let first_body = body_json(first).await;
+    assert_eq!(
+        first_body["error"]["code"],
+        Value::Null,
+        "first acceptance failed: {first_body:?}"
+    );
+    let contract_id = first_body["contract_id"].as_str().unwrap().to_owned();
+
+    let retry = router(&state)
+        .oneshot(request(&owner_cookie, key))
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), StatusCode::OK);
+    assert_eq!(body_json(retry).await["contract_id"], contract_id);
+
+    let conflicting = router(&state)
+        .oneshot(request(&owner_cookie, Uuid::new_v4()))
+        .await
+        .unwrap();
+    assert_eq!(conflicting.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn owner_allocates_an_encrypted_seed_without_secret_material_in_the_response() {
+    let state = test_state().await;
+    let (owner_id, owner_cookie) = user_session(&state).await;
+
+    let first_response = router(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/me/quote-allocations")
+                .header(header::COOKIE, owner_cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_body = body_json(first_response).await;
+    let first_id = Uuid::parse_str(first_body["allocation_id"].as_str().unwrap()).unwrap();
+    assert_eq!(first_body["commitment"].as_array().unwrap().len(), 32);
+    assert!(first_body.get("server_seed").is_none());
+    assert!(first_body.get("nonce").is_none());
+    assert!(first_body.get("ciphertext").is_none());
+
+    let stored: (i32, i32, bool) = sqlx::query_as(
+        "SELECT octet_length(envelope.nonce), octet_length(envelope.ciphertext), \
+                allocation.released_at IS NULL \
+         FROM seed_allocations allocation \
+         JOIN seed_secret_envelopes envelope ON envelope.commitment_id = allocation.commitment_id \
+         WHERE allocation.public_id = $1 AND allocation.user_id = $2",
+    )
+    .bind(first_id)
+    .bind(owner_id)
+    .fetch_one(state.database().pool())
+    .await
+    .expect("encrypted seed envelope is stored");
+    assert_eq!(stored, (24, 48, true));
+
+    let second_response = router(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/me/quote-allocations")
+                .header(header::COOKIE, owner_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_response.status(), StatusCode::CONFLICT);
+    let second_body = body_json(second_response).await;
+    assert_eq!(second_body["error"]["code"], "CONFLICT");
+    let serialized_error = serde_json::to_string(&second_body).unwrap();
+    for forbidden in ["sql", "constraint", "seed", "nonce", "ciphertext"] {
+        assert!(
+            !serialized_error.to_lowercase().contains(forbidden),
+            "conflict response leaked {forbidden}"
+        );
+    }
+
+    let first_is_active: bool =
+        sqlx::query_scalar("SELECT released_at IS NULL FROM seed_allocations WHERE public_id = $1")
+            .bind(first_id)
+            .fetch_one(state.database().pool())
+            .await
+            .expect("first allocation remains the active concurrency gate");
+    assert!(first_is_active);
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
 async fn owner_reads_exact_active_quote_without_internal_or_secret_fields() {
     let state = test_state().await;
     let (owner_id, owner_cookie) = user_session(&state).await;
@@ -356,9 +662,10 @@ async fn owner_reads_exact_active_quote_without_internal_or_secret_fields() {
 
     assert_eq!(body["quote_id"], fixture.quote_public_id.to_string());
     assert_eq!(body["formula_version"], "quote-http-v1");
-    assert_eq!(body["input_value_microcredits"], 10_000_000);
+    assert_eq!(body["currency_code"], "CC");
+    assert_eq!(body["input_value_microcredits"], 20_000_000);
     assert_eq!(body["expected_buyback_microcredits"], 8_500_000);
-    assert_eq!(body["total_microcredits"], 10_000_000);
+    assert_eq!(body["total_microcredits"], 20_000_000);
     assert_eq!(body["inputs"][0]["position"], 1);
     assert_eq!(
         body["inputs"][0]["item_id"],
@@ -366,6 +673,7 @@ async fn owner_reads_exact_active_quote_without_internal_or_secret_fields() {
     );
     assert_eq!(body["inputs"][0]["canonical_float"], "0.10000000");
     assert_eq!(body["outcomes"][0]["position"], 1);
+    assert_eq!(body["outcomes"][0]["currency_code"], "CC");
     assert_eq!(
         body["outcomes"][0]["item_id"],
         fixture.outcome_public_id.to_string()

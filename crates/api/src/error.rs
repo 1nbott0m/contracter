@@ -159,6 +159,7 @@ impl From<application::market::MarketError> for ApiError {
 
         match error {
             MarketError::InvalidCursor => Self::BadRequest(error.to_string()),
+            MarketError::OperationRejected => Self::Conflict(error.to_string()),
             MarketError::Database(ref cause) => internal(cause, "a market database call failed"),
         }
     }
@@ -167,11 +168,21 @@ impl From<application::market::MarketError> for ApiError {
 impl From<application::quote::QuoteError> for ApiError {
     fn from(error: application::quote::QuoteError) -> Self {
         match error {
+            application::quote::QuoteError::InvalidRequest => {
+                Self::UnprocessableEntity(error.to_string())
+            }
+            application::quote::QuoteError::CreationUnavailable => {
+                Self::service_unavailable(error.to_string())
+            }
             application::quote::QuoteError::NotFound => Self::not_found(error.to_string()),
             application::quote::QuoteError::Inconsistent => {
                 internal(&error, "inconsistent quote data")
             }
             application::quote::QuoteError::NotAcceptable => Self::Conflict(error.to_string()),
+            application::quote::QuoteError::ActiveAllocation => Self::Conflict(error.to_string()),
+            application::quote::QuoteError::SeedProtection(ref cause) => {
+                internal(cause, "quote seed protection failed")
+            }
             application::quote::QuoteError::Database(ref cause) => {
                 internal(cause, "a quote database call failed")
             }

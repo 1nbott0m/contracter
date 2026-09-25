@@ -15,6 +15,19 @@ fn signer_signs_a_digest_that_its_public_key_verifies() {
 }
 
 #[test]
+fn signer_rejects_tampered_digest_and_signature() {
+    let signer = EnvironmentQuoteSigner::from_base64url(TEST_PRIVATE_KEY).unwrap();
+    let digest = [0xA5; 32];
+    let signature = signer.sign(&digest);
+    let mut tampered_digest = digest;
+    tampered_digest[0] ^= 1;
+    assert!(!signer.verify(&tampered_digest, &signature));
+    let mut tampered_signature = signature;
+    tampered_signature[0] ^= 1;
+    assert!(!signer.verify(&digest, &tampered_signature));
+}
+
+#[test]
 fn signer_rejects_a_key_with_the_wrong_length() {
     let error = EnvironmentQuoteSigner::from_base64url("AA").unwrap_err();
 

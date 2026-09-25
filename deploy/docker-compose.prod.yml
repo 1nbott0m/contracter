@@ -1,0 +1,51 @@
+services:
+  app:
+    build: ..
+    env_file: ./production.env
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      QUOTE_SIGNING_KEY_FILE: /run/secrets/quote_signing_key
+      QUOTE_SEED_KEY_FILE: /run/secrets/quote_seed_key
+    secrets: [database_url, quote_signing_key, quote_seed_key]
+    expose: ["8080", "9090"]
+    networks: [private]
+    restart: unless-stopped
+  postgres:
+    image: postgres:16-alpine
+    env_file: ./postgres.env
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_owner_password
+    secrets: [postgres_owner_password]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [private]
+    restart: unless-stopped
+  caddy:
+    image: caddy:2-alpine
+    env_file: ./production.env
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [private]
+    depends_on: [app]
+    restart: unless-stopped
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes: [./prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    expose: ["9090"]
+    networks: [private]
+    restart: unless-stopped
+
+networks:
+  private:
+    internal: true
+volumes:
+  pgdata: {}
+  caddy_data: {}
+  caddy_config: {}
+secrets:
+  database_url: {file: ./secrets/database_url}
+  postgres_owner_password: {file: ./secrets/postgres_owner_password}
+  quote_signing_key: {file: ./secrets/quote_signing_key}
+  quote_seed_key: {file: ./secrets/quote_seed_key}

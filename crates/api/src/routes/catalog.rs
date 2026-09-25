@@ -82,6 +82,11 @@ pub struct SkuResponse {
     pub max_float: String,
     pub is_stattrak: bool,
     pub is_souvenir: bool,
+    pub canonical_skin_id: Option<String>,
+    pub weapon: Option<String>,
+    pub skin_name: Option<String>,
+    pub canonical_image_url: Option<String>,
+    pub available_wears: serde_json::Value,
 }
 
 /// `GET /api/v1/catalog/collections` -- the public collection list.
@@ -130,6 +135,11 @@ pub async fn skus(
         max_float: row.max_float.to_string(),
         is_stattrak: row.is_stattrak,
         is_souvenir: row.is_souvenir,
+        canonical_skin_id: row.canonical_skin_id,
+        weapon: row.weapon_name,
+        skin_name: row.skin_name,
+        canonical_image_url: row.canonical_image_url,
+        available_wears: row.available_wears,
     })))
 }
 

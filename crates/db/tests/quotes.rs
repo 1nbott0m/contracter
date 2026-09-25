@@ -127,7 +127,7 @@ async fn seed_quote(
         "INSERT INTO valuation_snapshot_items ( \
             snapshot_id, sku_id, verified_price_microcredits, source_code, window_days, \
             valid_sale_count, evidence_cutoff_at, evidence_digest \
-         ) VALUES ($1, $2, 1000000, 'quote_test', 7, 20, clock_timestamp(), \
+         ) VALUES ($1, $2, 20000000, 'quote_test', 7, 20, clock_timestamp(), \
                    decode(repeat('88', 32), 'hex')) RETURNING id",
     )
     .bind(snapshot_id)

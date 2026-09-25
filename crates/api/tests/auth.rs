@@ -163,6 +163,7 @@ async fn register_login_me_and_balance_work_end_to_end() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
+    assert_eq!(body["currency_code"], "CC");
     assert_eq!(
         body["balance_microcredits"], 0,
         "a fresh account has no ledger account yet and reads as zero, not an error"

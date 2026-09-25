@@ -6,7 +6,10 @@ license.workspace = true
 
 [dependencies]
 rust_decimal.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "macros", "uuid", "chrono", "json", "rust_decimal"] }
 thiserror.workspace = true
 tokio.workspace = true
+serde_json.workspace = true
 uuid = { version = "1", features = ["v4"] }

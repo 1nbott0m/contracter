@@ -1,20 +1,23 @@
 use application::auth::{self, SecretToken};
 use axum::{
     Json,
+    extract::Query,
     extract::State,
     http::{HeaderMap, StatusCode, header::SET_COOKIE},
-    response::IntoResponse,
+    response::{IntoResponse, Redirect},
 };
+use db;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{error::ApiError, extract::CurrentUser, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
-    /// The raw invitation token. Registration is invitation-only by
-    /// design; there is no open signup.
-    pub invitation_token: String,
+    /// Optional legacy invitation token. When absent, public signup is used.
+    #[serde(default)]
+    pub invitation_token: Option<String>,
     pub login: String,
     pub password: String,
 }
@@ -49,14 +52,19 @@ pub async fn register(
     State(state): State<AppState>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let invitation = SecretToken::new(request.invitation_token);
-    let user_id = auth::register(
-        state.database(),
-        &invitation,
-        &request.login,
-        &request.password,
-    )
-    .await?;
+    let user_id = match request.invitation_token {
+        Some(token) if !token.trim().is_empty() => {
+            let invitation = SecretToken::new(token);
+            auth::register(
+                state.database(),
+                &invitation,
+                &request.login,
+                &request.password,
+            )
+            .await?
+        }
+        _ => auth::register_public(state.database(), &request.login, &request.password).await?,
+    };
 
     Ok((
         StatusCode::CREATED,
@@ -125,4 +133,75 @@ pub async fn logout_all(
     let mut headers = HeaderMap::new();
     headers.insert(SET_COOKIE, state.session_cookie_policy().clear());
     Ok((headers, Json(LogoutAllResponse { revoked_sessions })))
+}
+
+pub async fn steam_start() -> Redirect {
+    Redirect::temporary(
+        "https://steamcommunity.com/openid/login?openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0&openid.mode=checkid_setup&openid.return_to=https%3A%2F%2Fcontracter.onrender.com%2Fapi%2Fv1%2Fauth%2Fsteam%2Fcallback&openid.realm=https%3A%2F%2Fcontracter.onrender.com&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select",
+    )
+}
+
+pub async fn steam_callback(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let Some(claimed_id) = params.get("openid.claimed_id") else {
+        return Err(ApiError::Unauthorized("Steam verification failed".into()));
+    };
+    let Some(steam_id) = claimed_id
+        .rsplit('/')
+        .next()
+        .filter(|id| id.chars().all(|c| c.is_ascii_digit()) && id.len() >= 10)
+    else {
+        return Err(ApiError::Unauthorized("Steam verification failed".into()));
+    };
+    let mut form = params.clone();
+    form.insert("openid.mode".into(), "check_authentication".into());
+    let response = reqwest::Client::new()
+        .post("https://steamcommunity.com/openid/login")
+        .form(&form)
+        .send()
+        .await
+        .map_err(|_| ApiError::Unauthorized("Steam verification failed".into()))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|_| ApiError::Unauthorized("Steam verification failed".into()))?;
+    if !body.lines().any(|line| line.trim() == "is_valid:true") {
+        return Err(ApiError::Unauthorized("Steam verification failed".into()));
+    }
+    let user = db::find_user_by_steam_id(state.database().pool(), steam_id)
+        .await
+        .map_err(application::auth::AuthError::from)?;
+    let (user_id, user_public_id) = match user {
+        Some(pair) => pair,
+        None => {
+            let public_id = auth::register_steam(state.database(), steam_id).await?;
+            let (user_id, _) = db::find_user_by_steam_id(state.database().pool(), steam_id)
+                .await
+                .map_err(application::auth::AuthError::from)?
+                .ok_or_else(|| {
+                    ApiError::Unauthorized("Steam account could not be created".into())
+                })?;
+            (user_id, public_id)
+        }
+    };
+    let session = auth::issue_session_for_user(
+        state.database(),
+        state.auth_config(),
+        user_id,
+        user_public_id,
+    )
+    .await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        SET_COOKIE,
+        state
+            .session_cookie_policy()
+            .set(session.token.reveal(), session.ttl),
+    );
+    Ok((
+        headers,
+        Redirect::temporary("https://contracter-1t9.pages.dev/contracts"),
+    ))
 }

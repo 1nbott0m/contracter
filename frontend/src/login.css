@@ -1,0 +1,12 @@
+.profile-button{display:flex;align-items:center;gap:8px;background:none;border:0;color:#89929e;font-size:9px;letter-spacing:.08em;cursor:pointer;padding:0}.profile-button:hover{color:#58d6e7}.profile-button .avatar{margin:0}
+.login-backdrop{position:fixed;inset:0;background:#090a0cdd;display:grid;place-items:center;z-index:10}
+.login-modal{width:min(380px,calc(100vw - 36px));background:#12151a;border:1px solid #34404a;padding:28px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 80px #000b}
+.login-modal h2{margin:4px 0 10px}
+.login-modal label{color:#89929e;font-size:9px;letter-spacing:.1em;display:flex;flex-direction:column;gap:6px}
+.login-modal input{background:#0d0f12;border:1px solid #242932;color:#f4f5f7;height:38px;padding:0 10px;outline:none}
+.login-modal input:focus{border-color:#b8f35b}
+.login-error{color:#e06c75;font-size:10px;margin:0}
+.auth-note{color:#89929e;font-size:11px;line-height:1.5;margin:0 0 6px}
+.auth-success{color:#63d69a;font-size:11px;line-height:1.5;margin:0 0 6px}
+.auth-switch{width:100%;justify-content:center;height:auto;padding:8px 0;font-size:9px}
+.close-login{background:none;border:0;color:#89929e;font-size:9px;letter-spacing:.1em;cursor:pointer;padding:7px}

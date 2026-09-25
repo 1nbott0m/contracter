@@ -266,9 +266,14 @@ async fn give_item(state: &AppState, owner: i64, retired: bool, locked: bool) ->
     let pool = state.database().pool();
 
     // `rarities.rank` is globally UNIQUE, and this fixture commits rather
-    // than rolling back, so a rank near the other suites' 90-95 block
-    // would make an unrelated test fail on a duplicate key. Sitting far
-    // outside every range in use keeps that from happening again.
+    // than rolling back. Keep its rank outside every range used by the
+    // reference data and the other suites.
+    // The API tests run concurrently against one integration database. Lock
+    // this tiny shared fixture so the globally unique rank cannot race.
+    sqlx::query("SELECT pg_advisory_xact_lock(9501)")
+        .execute(pool)
+        .await
+        .expect("lock rarity fixture");
     sqlx::query(
         "INSERT INTO rarities (code, rank, is_covert) VALUES ('http_catalog', 9501, false) \
          ON CONFLICT (code) DO NOTHING",

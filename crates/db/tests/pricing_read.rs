@@ -25,6 +25,13 @@ async fn isolated_transaction(database: &Database) -> Transaction<'_, Postgres> 
         .await
         .expect("serialize pricing integration fixtures");
     transaction
+        .execute(
+            "TRUNCATE TABLE price_halts, current_valuations, valuation_snapshot_items, \
+             valuation_snapshots, price_daily_aggregates RESTART IDENTITY CASCADE",
+        )
+        .await
+        .expect("clear pricing integration fixtures");
+    transaction
 }
 
 async fn seed_lookups(transaction: &mut Transaction<'_, Postgres>) {

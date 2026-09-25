@@ -2,10 +2,12 @@ mod catalog;
 mod config;
 mod contracts;
 mod database;
+mod history;
 mod identity;
 mod ids;
 mod inventory;
 mod ledger;
+mod market_orders;
 mod pricing;
 mod quotes;
 mod scarcity;
@@ -23,10 +25,18 @@ pub use contracts::{
     list_contract_inputs,
 };
 pub use database::{Database, DatabaseError, MIGRATOR};
+pub use history::{
+    ContractHistoryRow, InventoryEventHistoryRow, LedgerHistoryRow, list_contract_history,
+    list_inventory_event_history, list_ledger_history,
+};
 pub use identity::{
-    Account, ActiveSession, UserCredential, create_user_session, find_account_by_public_id,
-    find_active_user_session, find_user_credential_by_login, find_user_credit_balance,
-    register_invited_user, revoke_all_user_sessions, revoke_user_session,
+    Account, ActiveSession, AdminAuditRow, AdminDashboardStats, AdminUserRow, UserCredential,
+    admin_dashboard_stats, admin_users, administrator_totp_secret, create_user_session,
+    find_account_by_public_id, find_active_user_session, find_user_by_steam_id,
+    find_user_credential_by_login, find_user_credit_balance, is_active_administrator,
+    list_admin_audit, mark_session_totp_verified, record_admin_audit, register_invited_user,
+    register_public_user, register_steam_user, revoke_all_user_sessions, revoke_user_session,
+    session_totp_verified, set_administrator_totp_secret,
 };
 pub use ids::*;
 pub use inventory::{
@@ -38,6 +48,7 @@ pub use ledger::{
     find_credit_adjustment, find_ledger_account, find_ledger_balance, post_credit_adjustment,
     reconcile_ledger_balances,
 };
+pub use market_orders::{MarketOrderResult, buyback_market_item, purchase_market_item};
 pub use pricing::{
     CurrentValuation, CurrentValuationDrift, MarketPriceHalt, MarketValuation, PriceHalt,
     PublishedValuationSnapshotDrift, SnapshotValuation, ValuationSnapshot, find_current_valuation,
@@ -46,8 +57,12 @@ pub use pricing::{
     reconcile_current_valuations, reconcile_published_valuation_snapshots,
 };
 pub use quotes::{
-    QuoteInput, QuoteOutcome, TradeupQuote, find_active_quote_for_user, find_tradeup_quote,
-    list_quote_inputs, list_quote_outcomes,
+    CreateQuoteInput, CreateQuoteOutcome, CreateTradeupQuote, QuoteCandidateProjection,
+    QuoteCanonicalOutcome, QuoteInput, QuoteOutcome, QuoteProposalProjection,
+    SeedAllocationRequest, SeedEnvelope, TradeupQuote, allocate_seed_for_user,
+    create_tradeup_quote_for_user, find_active_quote_for_user, find_tradeup_quote,
+    list_quote_inputs, list_quote_outcomes, read_quote_candidate_projection,
+    read_quote_canonical_outcomes, read_quote_proposal_projection, read_seed_envelope_for_user,
 };
 pub use scarcity::{
     CollectionScarcity, CollectionScarcityDrift, CollectionScarcitySnapshotItem,

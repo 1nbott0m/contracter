@@ -11,3 +11,9 @@ target/
 *.log
 *.tmp
 coverage/
+deploy/secrets/
+backups/
+load/results/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo

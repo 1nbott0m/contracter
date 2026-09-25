@@ -13,14 +13,18 @@ use axum::{
     routing::{get, post},
 };
 use tower::ServiceBuilder;
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     catch_panic::CatchPanicLayer, cors::CorsLayer, limit::RequestBodyLimitLayer, trace::TraceLayer,
 };
 
 use crate::{
+    client_ip::ClientIpKeyExtractor,
     error::ApiError,
     request_id::request_id_middleware,
-    routes::{account, auth, catalog, health, inventory, market, quote},
+    routes::{
+        account, admin, admin_totp, auth, catalog, health, history, inventory, market, quote,
+    },
     state::AppState,
 };
 
@@ -31,6 +35,10 @@ pub struct RouterConfig {
     pub request_timeout: Duration,
     pub max_body_bytes: usize,
     pub cors_allowed_origins: Vec<String>,
+    /// Requests per second limiter burst. `None` is used by in-process tests;
+    /// production wiring must set a finite value.
+    pub rate_limit_burst: Option<u32>,
+    pub trusted_proxies: crate::TrustedProxyConfig,
 }
 
 impl Default for RouterConfig {
@@ -39,6 +47,8 @@ impl Default for RouterConfig {
             request_timeout: Duration::from_secs(10),
             max_body_bytes: 256 * 1024,
             cors_allowed_origins: Vec::new(),
+            rate_limit_burst: None,
+            trusted_proxies: crate::TrustedProxyConfig::default(),
         }
     }
 }
@@ -64,12 +74,30 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
     let api_v1 = Router::new()
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
+        .route("/auth/steam/start", get(auth::steam_start))
+        .route("/auth/steam/callback", get(auth::steam_callback))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/logout-all", post(auth::logout_all))
+        .route("/auth/totp/verify", post(admin_totp::verify))
         .route("/me", get(account::me))
+        .route("/admin/me", get(admin::me))
+        .route("/admin/dashboard", get(admin::dashboard))
+        .route("/admin/users", get(admin::users))
+        .route("/admin/audit", get(admin::audit))
+        .route("/admin/totp/provision", post(admin_totp::provision))
         .route("/me/balance", get(account::balance))
         .route("/me/inventory", get(inventory::list))
         .route("/me/inventory/{item_id}", get(inventory::detail))
+        .route("/me/quote-allocations", post(quote::allocate))
+        .route("/me/quotes", post(quote::create))
+        .route("/me/market/purchases/{sku_id}", post(market::purchase))
+        .route("/me/market/buybacks/{item_id}", post(market::buyback))
+        .route("/me/history/contracts", get(history::contracts))
+        .route("/me/history/ledger", get(history::ledger))
+        .route(
+            "/me/history/inventory-events",
+            get(history::inventory_events),
+        )
         .route("/me/quote", get(quote::active))
         .route("/me/quote/{quote_id}/accept", post(quote::accept))
         .layer(axum::middleware::from_fn(private_response_headers))
@@ -94,6 +122,17 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
                 .timeout(config.request_timeout),
         );
 
+    if let Some(burst) = config.rate_limit_burst {
+        let mut governor_builder = GovernorConfigBuilder::default()
+            .key_extractor(ClientIpKeyExtractor::new(config.trusted_proxies.clone()));
+        let governor = governor_builder
+            .per_second(1)
+            .burst_size(burst.max(1))
+            .finish()
+            .expect("rate limiter configuration must be valid");
+        router = router.layer(GovernorLayer::new(governor));
+    }
+
     // CORS wraps outside timeout/body-limit/panic handling so error
     // responses (503 on timeout, 500 on panic, etc.) still carry the
     // headers a browser needs to read them via fetch, not just 2xx ones.
@@ -103,7 +142,20 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
 
     router
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(security_response_headers))
         .layer(axum::middleware::from_fn(request_id_middleware))
+}
+
+/// Deployment terminates TLS at the trusted edge; every response advertises
+/// the HTTPS-only browser policy so public, private, health, and error routes
+/// cannot drift apart.
+async fn security_response_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        axum::http::header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+    response
 }
 
 /// Marks every `/api/v1` response as private and cookie-dependent.
@@ -186,13 +238,19 @@ fn build_cors_layer(allowed_origins: &[String]) -> Option<CorsLayer> {
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
+    use std::{convert::Infallible, net::SocketAddr, time::Duration};
 
-    use axum::{body::Body, http::Request, http::StatusCode, routing::get};
+    use axum::{body::Body, extract::ConnectInfo, http::Request, http::StatusCode, routing::get};
     use tower::ServiceExt;
 
-    use super::{CatchPanicLayer, RequestBodyLimitLayer, ServiceBuilder, handle_panic};
+    use super::{
+        CatchPanicLayer, RequestBodyLimitLayer, RouterConfig, ServiceBuilder, build_router,
+        handle_panic,
+    };
     use crate::request_id::{REQUEST_ID_HEADER, request_id_middleware};
+    use crate::{AppState, TrustedProxyConfig};
+    use application::auth::AuthConfig;
+    use db::{Database, DatabaseConfig};
 
     /// Exercises the exact `handle_panic` callback wired into the real
     /// router, not a stand-in -- a panicking handler must become a
@@ -260,5 +318,140 @@ mod tests {
 
         let response = service.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Removing the production governor layer, changing its key extractor, or
+    /// accidentally leaving production wiring unlimited must make this fail.
+    #[tokio::test]
+    async fn configured_rate_limit_returns_429_for_the_same_peer() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable")
+                .unwrap()
+                .with_acquire_timeout(Duration::from_millis(1)),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig {
+                rate_limit_burst: Some(1),
+                ..RouterConfig::default()
+            },
+        );
+        let peer: SocketAddr = "127.0.0.1:41000".parse().unwrap();
+        let request = || {
+            let mut request = Request::builder()
+                .uri("/health/live")
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request
+        };
+
+        assert_eq!(
+            router.clone().oneshot(request()).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router.oneshot(request()).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_rate_limit_separates_clients_behind_a_trusted_proxy() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable")
+                .unwrap()
+                .with_acquire_timeout(Duration::from_millis(1)),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig {
+                rate_limit_burst: Some(1),
+                trusted_proxies: TrustedProxyConfig::parse("172.30.0.0/24").unwrap(),
+                ..RouterConfig::default()
+            },
+        );
+        let peer: SocketAddr = "172.30.0.2:41000".parse().unwrap();
+        let request = |client: &str| {
+            let mut request = Request::builder()
+                .uri("/health/live")
+                .header("x-forwarded-for", client)
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request
+        };
+
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request("203.0.113.7"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request("203.0.113.8"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router
+                .oneshot(request("203.0.113.7"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_rate_limit_ignores_forwarding_headers_from_untrusted_peers() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable")
+                .unwrap()
+                .with_acquire_timeout(Duration::from_millis(1)),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig {
+                rate_limit_burst: Some(1),
+                trusted_proxies: TrustedProxyConfig::parse("172.30.0.0/24").unwrap(),
+                ..RouterConfig::default()
+            },
+        );
+        let peer: SocketAddr = "198.51.100.4:41000".parse().unwrap();
+        let request = |forged: &str| {
+            let mut request = Request::builder()
+                .uri("/health/live")
+                .header("x-forwarded-for", forged)
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request
+        };
+
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request("203.0.113.7"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router
+                .oneshot(request("203.0.113.8"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 }

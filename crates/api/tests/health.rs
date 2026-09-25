@@ -61,6 +61,28 @@ async fn liveness_returns_200_with_stable_json_and_no_db_dependency() {
 }
 
 #[tokio::test]
+async fn every_response_advertises_the_production_https_policy() {
+    let router = router_with(unreachable_db_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/health/live")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::STRICT_TRANSPORT_SECURITY)
+            .unwrap(),
+        "max-age=31536000; includeSubDomains"
+    );
+}
+
+#[tokio::test]
 async fn readiness_reports_503_and_a_sanitized_envelope_when_the_database_is_unreachable() {
     let router = router_with(unreachable_db_state());
     let request = Request::builder()

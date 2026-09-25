@@ -79,6 +79,195 @@ where
     )
 }
 
+/// Creates a user without an invitation. Registration is intentionally
+/// separate from invitation redemption so the legacy, single-use invitation
+/// path remains available for deployments that need it.
+pub async fn register_public_user<'e, E>(
+    executor: E,
+    login: &str,
+    password_hash: &str,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT register_public_user($1, $2)")
+        .bind(login)
+        .bind(password_hash)
+        .fetch_one(executor)
+        .await?)
+}
+
+/// Returns whether the account has an active administrator membership.
+pub async fn is_active_administrator<'e, E>(
+    executor: E,
+    user_public_id: PublicId,
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT is_active_administrator($1)")
+        .bind(user_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn find_user_by_steam_id<'e, E>(
+    executor: E,
+    steam_id: &str,
+) -> Result<Option<(UserId, PublicId)>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_as("SELECT user_id, user_public_id FROM find_user_by_steam_id($1)")
+            .bind(steam_id)
+            .fetch_optional(executor)
+            .await?,
+    )
+}
+
+pub async fn register_steam_user<'e, E>(
+    executor: E,
+    login: &str,
+    password_hash: &str,
+    steam_id: &str,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT register_steam_user($1,$2,$3)")
+        .bind(login)
+        .bind(password_hash)
+        .bind(steam_id)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn administrator_totp_secret<'e, E>(
+    executor: E,
+    user_public_id: PublicId,
+) -> Result<Option<Vec<u8>>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT administrator_totp_secret($1)")
+        .bind(user_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn set_administrator_totp_secret<'e, E>(
+    executor: E,
+    user_public_id: PublicId,
+    blob: &[u8],
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_scalar("SELECT set_administrator_totp_secret($1, $2)")
+            .bind(user_public_id)
+            .bind(blob)
+            .fetch_one(executor)
+            .await?,
+    )
+}
+
+pub async fn mark_session_totp_verified<'e, E>(
+    executor: E,
+    session_public_id: PublicId,
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT mark_session_totp_verified($1)")
+        .bind(session_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn session_totp_verified<'e, E>(
+    executor: E,
+    session_public_id: PublicId,
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT session_totp_verified($1)")
+        .bind(session_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminDashboardStats {
+    pub users: i64,
+    pub active_sessions: i64,
+    pub contracts: i64,
+    pub inventory_items: i64,
+    pub market_purchases: i64,
+    pub ledger_transactions: i64,
+}
+
+pub async fn admin_dashboard_stats<'e, E>(executor: E) -> Result<AdminDashboardStats, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM user_sessions WHERE revoked_at IS NULL AND expires_at > clock_timestamp()) AS active_sessions, (SELECT count(*) FROM contracts) AS contracts, (SELECT count(*) FROM inventory_items) AS inventory_items, (SELECT count(*) FROM market_purchase_events) AS market_purchases, (SELECT count(*) FROM ledger_transactions) AS ledger_transactions").fetch_one(executor).await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminUserRow {
+    pub user_id: PublicId,
+    pub login: String,
+    pub created_at: DateTime<Utc>,
+    pub disabled: bool,
+    pub is_admin: bool,
+}
+
+pub async fn admin_users<'e, E>(executor: E) -> Result<Vec<AdminUserRow>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT u.public_id AS user_id, u.login, u.created_at, (u.disabled_at IS NOT NULL) AS disabled, COALESCE(a.is_active AND a.deactivated_at IS NULL, false) AS is_admin FROM users u LEFT JOIN administrators a ON a.user_id=u.id ORDER BY u.created_at DESC LIMIT 500").fetch_all(executor).await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminAuditRow {
+    pub public_id: PublicId,
+    pub administrator_public_id: PublicId,
+    pub action_code: String,
+    pub target_public_id: Option<PublicId>,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn record_admin_audit<'e, E>(
+    executor: E,
+    admin_public_id: PublicId,
+    action: &str,
+    target: Option<PublicId>,
+    metadata: serde_json::Value,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT record_admin_audit($1,$2,$3,$4)")
+        .bind(admin_public_id)
+        .bind(action)
+        .bind(target)
+        .bind(metadata)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn list_admin_audit<'e, E>(executor: E) -> Result<Vec<AdminAuditRow>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT public_id, administrator_public_id, action_code, target_public_id, metadata, created_at FROM list_admin_audit_events()").fetch_all(executor).await?)
+}
+
 /// Creates a session for an enabled user, returning the session's public
 /// id. Only the token's hash is stored; the raw token stays with the
 /// caller.

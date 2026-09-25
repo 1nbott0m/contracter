@@ -35,6 +35,30 @@ fn unreachable_db_state() -> AppState {
     AppState::new(Database::connect_lazy(&config), AuthConfig::default())
 }
 
+#[tokio::test]
+async fn market_writes_require_an_authenticated_session_before_touching_the_database() {
+    let state = unreachable_db_state();
+    for uri in [
+        format!("/api/v1/me/market/purchases/{}/", Uuid::new_v4()),
+        format!("/api/v1/me/market/buybacks/{}", Uuid::new_v4()),
+    ] {
+        let response = router(&state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri.trim_end_matches('/'))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"idempotency_key": Uuid::new_v4()}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
 async fn body_json(response: axum::response::Response) -> Value {
     let bytes = to_bytes(response.into_body(), 1024 * 1024)
         .await
@@ -52,7 +76,7 @@ async fn seed_market_sku(
     let suffix = Uuid::new_v4().simple().to_string();
     sqlx::query(
         "INSERT INTO rarities (code, rank, is_covert) \
-         VALUES ('http_market', 9601, false) ON CONFLICT (code) DO NOTHING",
+         VALUES ('http_market', 9601, false) ON CONFLICT DO NOTHING",
     )
     .execute(pool)
     .await
@@ -198,6 +222,7 @@ async fn market_valuations_expose_only_boolean_availability_and_hide_halted_or_d
         .find(|item| item["sku_id"] == available_sku.to_string())
         .expect("available SKU is listed");
     assert_eq!(available["price_microcredits"], 1_234_567);
+    assert_eq!(available["currency_code"], "CC");
     assert_eq!(available["available"], true);
     assert!(available.get("available_units").is_none());
     assert!(available.get("reserved_units").is_none());

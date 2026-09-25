@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main, codex/quote-write-v2]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contracter-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/contracter_test
+  TEST_DATABASE_URL_INTEGRATION: postgresql://postgres:postgres@localhost:5432/contracter_integration
+
+jobs:
+  verify:
+    name: Rust and PostgreSQL verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: contracter_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d contracter_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compile every workspace target and feature
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Verify frontend tests and production build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test -- --run
+          npm run build
+
+      - name: Verify workspace and PostgreSQL integration
+        run: |
+          psql postgresql://postgres:postgres@localhost:5432/postgres \
+            -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE anonymous NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_admin_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_readonly NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
+          psql postgresql://postgres:postgres@localhost:5432/postgres \
+            -v ON_ERROR_STOP=1 -c 'CREATE DATABASE contracter_integration OWNER anonymous'
+          ./scripts/verify.sh
+
+      - name: Validate production deployment manifests
+        run: |
+          mkdir -p deploy/secrets
+          printf '%s\n' 'postgresql://contracter_runtime@postgres:5432/contracter' > deploy/secrets/database_url
+          printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' > deploy/secrets/quote_signing_key
+          printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' > deploy/secrets/quote_seed_key
+          printf '%s\n' 'temporary-ci-password' > deploy/secrets/postgres_owner_password
+          cp deploy/production.env.example deploy/production.env
+          cp deploy/postgres.env.example deploy/postgres.env
+          docker compose -f deploy/docker-compose.prod.yml config --quiet
+          rm -rf deploy/secrets deploy/production.env deploy/postgres.env
