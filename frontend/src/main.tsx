@@ -94,9 +94,12 @@ function AdminPage({ navigate, session }: { navigate: Navigate; session: ReturnT
     void api.adminMe().then((result) => { setTotpVerified(result.totp_verified); setVerified('ok'); }).catch((error) => {
       setVerified(error instanceof Error && 'status' in error && (error as { status?: number }).status === 403 ? 'denied' : 'error');
     });
+  }, [session]);
+  useEffect(() => {
+    if (session.status !== 'authenticated' || !session.account.is_admin || !totpVerified) return;
     void api.adminDashboard().then(setDashboard).catch(() => setDashboard(null));
     void api.adminUsers().then(setAdminUsers).catch(() => setAdminUsers([]));
-  }, [session]);
+  }, [session, totpVerified]);
   if (session.status === 'loading') return <section className="route-state"><h1>Проверяем доступ</h1><p>Загружаем роль аккаунта.</p></section>;
   if (session.status !== 'authenticated') return <section className="route-state"><h1>Войдите в аккаунт</h1><p>Панель администратора доступна только авторизованным пользователям.</p><button className="primary" type="button" onClick={() => navigate('/login?returnTo=/admin')}>Войти <ArrowRight size={16} /></button></section>;
   if (!session.account.is_admin || verified === 'denied') return <section className="route-state"><h1>Доступ закрыт</h1><p>У аккаунта «{session.account.login}» нет активной роли администратора.</p><button className="primary" type="button" onClick={() => navigate('/contracts')}>Вернуться к контрактам <ArrowRight size={16} /></button></section>;
