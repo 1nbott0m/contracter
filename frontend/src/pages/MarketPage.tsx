@@ -67,6 +67,7 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
   }, [client, onBalanceChange, session.status, setApiStatus]);
 
   const source = state.status === 'success' || state.status === 'empty' ? state.data || [] : [];
+  const hasPublishedPrices = source.some((item) => item.price !== null);
   const rarities = useMemo(() => [...new Set(source.map((item) => item.rarity))].sort(), [source]);
   const wears = useMemo(() => [...new Set(source.map((item) => item.wear))].sort(), [source]);
   const filtered = useMemo(() => {
@@ -124,6 +125,7 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
     {state.status === 'loading' && <div className="commerce-state" role="status"><RefreshCw className="spin" size={18} /> Загружаем маркет…</div>}
     {state.status === 'error' && <div className="commerce-state" role="alert"><strong>Маркет недоступен</strong><span>Данные не заменены демонстрационными значениями.</span><button type="button" onClick={retryLoad}>Повторить</button></div>}
     {state.status === 'empty' && <div className="commerce-state"><strong>Предложений нет</strong><span>API вернул пустой каталог.</span></div>}
+    {source.length > 0 && !hasPublishedPrices && <div className="commerce-state market-pricing-notice" role="status"><strong>Цены CC ещё не опубликованы</strong><span>Каталог уже загружен с сервера. Покупки включатся после публикации подтверждённых оценок.</span></div>}
     {(state.status === 'success' || state.status === 'empty') && filtered.length === 0 && source.length > 0 && <div className="commerce-state"><strong>Ничего не найдено</strong><span>Измените поисковый запрос или фильтры.</span></div>}
     {filtered.length > 0 && <section className="market-grid" aria-label="Предложения маркета">{filtered.map((item) => {
       const purchaseState = purchases[item.skuId] || { status: 'idle' as const };

@@ -77,3 +77,17 @@ it('uses one idempotency key while a purchase is retried and refreshes balance a
   expect(client.inventory).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(onBalanceChange).toHaveBeenLastCalledWith(10_000_000));
 });
+
+it('explains when the server catalog is ready but CC prices are not published', async () => {
+  const client = {
+    catalogSkus: vi.fn(async () => ({ items: catalog.slice(0, 1) })),
+    marketValuations: vi.fn(async () => ({ items: [] })),
+    balance: vi.fn(),
+    inventory: vi.fn(),
+    marketPurchase: vi.fn(),
+  };
+  render(<MarketPage session={{ status: 'unauthenticated' }} navigate={vi.fn()} client={client} />);
+
+  expect(await screen.findByText('Цены CC ещё не опубликованы')).toBeTruthy();
+  expect(screen.getByText('Каталог уже загружен с сервера. Покупки включатся после публикации подтверждённых оценок.')).toBeTruthy();
+});
