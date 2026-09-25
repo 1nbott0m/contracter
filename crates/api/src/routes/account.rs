@@ -10,6 +10,7 @@ pub struct AccountResponse {
     pub user_id: Uuid,
     pub login: String,
     pub created_at: String,
+    pub is_admin: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,6 +34,7 @@ pub async fn me(
         user_id: account.user_public_id.get(),
         login: account.login,
         created_at: account.created_at.to_rfc3339(),
+        is_admin: auth::is_active_administrator(state.database(), caller.user_public_id).await?,
     }))
 }
 

@@ -66,7 +66,7 @@ function RegisterPage({ navigate }: { navigate: Navigate }) {
       await api.register('', login.trim(), password);
       navigate('/login?registered=1', { replace: true });
     } catch {
-      setError('Не удалось зарегистрироваться. Проверьте invitation token, логин и пароль.');
+      setError('Не удалось зарегистрироваться. Проверьте логин и пароль или попробуйте другой логин.');
     } finally {
       setSubmitting(false);
     }
@@ -74,8 +74,20 @@ function RegisterPage({ navigate }: { navigate: Navigate }) {
   return <form className="login-modal route-login" onSubmit={submit}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Регистрация</h1><p className="auth-note">Создайте аккаунт бесплатно. После регистрации вы сразу сможете войти в CONTRACTER.</p><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required minLength={3} /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>{error && <p className="login-error">{error}</p>}<button className="primary" type="submit" disabled={submitting}>{submitting ? 'СОЗДАНИЕ…' : 'СОЗДАТЬ АККАУНТ'} <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/login')}>Уже есть аккаунт? Войти</button></form>;
 }
 
-function AdminPage({ navigate }: { navigate: Navigate }) {
-  return <section className="admin-page route-state"><span className="eyebrow">CONTRACTER / CONTROL ROOM</span><h1>Панель администратора</h1><p>Доступ к этой странице определяется ролью аккаунта на сервере. Если у аккаунта нет роли администратора, API отклонит операции с кодом 403.</p><div className="admin-actions"><button className="primary" type="button" onClick={() => navigate('/contracts')}>Вернуться к контрактам <ArrowRight size={16} /></button><button className="text-button" type="button" onClick={() => navigate('/transparency')}>Открыть проверку честности</button></div></section>;
+function AdminPage({ navigate, session }: { navigate: Navigate; session: ReturnType<typeof useSession>['state'] }) {
+  const [verified, setVerified] = useState<'idle' | 'checking' | 'ok' | 'denied' | 'error'>('idle');
+  useEffect(() => {
+    if (session.status !== 'authenticated' || !session.account.is_admin) return;
+    setVerified('checking');
+    void api.adminMe().then(() => setVerified('ok')).catch((error) => {
+      setVerified(error instanceof Error && 'status' in error && (error as { status?: number }).status === 403 ? 'denied' : 'error');
+    });
+  }, [session]);
+  if (session.status === 'loading') return <section className="route-state"><h1>Проверяем доступ</h1><p>Загружаем роль аккаунта.</p></section>;
+  if (session.status !== 'authenticated') return <section className="route-state"><h1>Войдите в аккаунт</h1><p>Панель администратора доступна только авторизованным пользователям.</p><button className="primary" type="button" onClick={() => navigate('/login?returnTo=/admin')}>Войти <ArrowRight size={16} /></button></section>;
+  if (!session.account.is_admin || verified === 'denied') return <section className="route-state"><h1>Доступ закрыт</h1><p>У аккаунта «{session.account.login}» нет активной роли администратора.</p><button className="primary" type="button" onClick={() => navigate('/contracts')}>Вернуться к контрактам <ArrowRight size={16} /></button></section>;
+  if (verified === 'error') return <section className="route-state"><h1>Панель временно недоступна</h1><p>Сервер не подтвердил административную сессию. Повторите попытку позже.</p></section>;
+  return <section className="admin-page route-state"><span className="eyebrow">CONTRACTER / CONTROL ROOM</span><h1>Панель администратора</h1><p>Административная роль подтверждена сервером. Аккаунт: <strong>{session.account.login}</strong>.</p><div className="admin-status">{verified === 'checking' ? 'ПРОВЕРКА РОЛИ…' : 'ADMIN ACCESS ACTIVE'}</div><div className="admin-actions"><button className="primary" type="button" onClick={() => navigate('/transparency')}>Проверка честности <ArrowRight size={16} /></button><button className="text-button" type="button" onClick={() => navigate('/market')}>Открыть маркет</button></div></section>;
 }
 
 export function App() {
@@ -107,7 +119,7 @@ export function App() {
   else if (route.id === 'terms') page = <TermsPage />;
   else if (route.id === 'privacy') page = <PrivacyPage />;
   else if (route.id === 'support') page = <SupportPage navigate={navigate} />;
-  else if (route.id === 'admin') page = <AdminPage navigate={navigate} />;
+  else if (route.id === 'admin') page = <AdminPage navigate={navigate} session={session.state} />;
   else if (route.id === 'not-found') page = <NotFoundPage navigate={navigate} />;
   else page = <VerificationPage session={session.state} navigate={navigate} />;
 

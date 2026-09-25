@@ -32,7 +32,8 @@ pub use history::{
 pub use identity::{
     Account, ActiveSession, UserCredential, create_user_session, find_account_by_public_id,
     find_active_user_session, find_user_credential_by_login, find_user_credit_balance,
-    register_invited_user, revoke_all_user_sessions, revoke_user_session,
+    is_active_administrator, register_invited_user, register_public_user, revoke_all_user_sessions,
+    revoke_user_session,
 };
 pub use ids::*;
 pub use inventory::{

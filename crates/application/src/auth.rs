@@ -163,6 +163,34 @@ pub async fn register(
     )
 }
 
+/// Registers a user through the public signup flow. No invitation or
+/// privileged input is accepted; the database still enforces all identity
+/// constraints and the application validates the expensive inputs first.
+pub async fn register_public(
+    database: &Database,
+    login: &str,
+    password: &str,
+) -> Result<PublicId, AuthError> {
+    validate_login(login)?;
+    validate_password(password)?;
+    let password_hash = hash_password(password.to_owned()).await?;
+    db::register_public_user(database.pool(), login, &password_hash)
+        .await
+        .map_err(
+            |error| match (error.database_code().as_deref(), error.constraint()) {
+                (Some("23505"), Some("users_login_key")) => AuthError::LoginTaken,
+                _ => AuthError::Database(error),
+            },
+        )
+}
+
+pub async fn is_active_administrator(
+    database: &Database,
+    user_public_id: PublicId,
+) -> Result<bool, AuthError> {
+    Ok(db::is_active_administrator(database.pool(), user_public_id).await?)
+}
+
 /// Verifies credentials and issues a session. A wrong password and an
 /// unknown login are indistinguishable to the caller, and cost the same
 /// Argon2id verification either way so timing does not reveal which.

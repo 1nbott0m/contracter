@@ -79,6 +79,38 @@ where
     )
 }
 
+/// Creates a user without an invitation. Registration is intentionally
+/// separate from invitation redemption so the legacy, single-use invitation
+/// path remains available for deployments that need it.
+pub async fn register_public_user<'e, E>(
+    executor: E,
+    login: &str,
+    password_hash: &str,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT register_public_user($1, $2)")
+        .bind(login)
+        .bind(password_hash)
+        .fetch_one(executor)
+        .await?)
+}
+
+/// Returns whether the account has an active administrator membership.
+pub async fn is_active_administrator<'e, E>(
+    executor: E,
+    user_public_id: PublicId,
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT is_active_administrator($1)")
+        .bind(user_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
 /// Creates a session for an enabled user, returning the session's public
 /// id. Only the token's hash is stored; the raw token stays with the
 /// caller.

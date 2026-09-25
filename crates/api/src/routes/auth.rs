@@ -12,9 +12,9 @@ use crate::{error::ApiError, extract::CurrentUser, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
-    /// The raw invitation token. Registration is invitation-only by
-    /// design; there is no open signup.
-    pub invitation_token: String,
+    /// Optional legacy invitation token. When absent, public signup is used.
+    #[serde(default)]
+    pub invitation_token: Option<String>,
     pub login: String,
     pub password: String,
 }
@@ -49,14 +49,19 @@ pub async fn register(
     State(state): State<AppState>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let invitation = SecretToken::new(request.invitation_token);
-    let user_id = auth::register(
-        state.database(),
-        &invitation,
-        &request.login,
-        &request.password,
-    )
-    .await?;
+    let user_id = match request.invitation_token {
+        Some(token) if !token.trim().is_empty() => {
+            let invitation = SecretToken::new(token);
+            auth::register(
+                state.database(),
+                &invitation,
+                &request.login,
+                &request.password,
+            )
+            .await?
+        }
+        _ => auth::register_public(state.database(), &request.login, &request.password).await?,
+    };
 
     Ok((
         StatusCode::CREATED,
