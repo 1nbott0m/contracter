@@ -31,6 +31,7 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
   const [filters, setFilters] = useState<InventoryFilterValues>(DEFAULT_INVENTORY_FILTERS);
   const [selectedIds, setSelectedIds] = useState(readContractSelectionIds);
   const [lastAdded, setLastAdded] = useState<InventoryItem | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState(0);
 
   useEffect(() => {
     if (session.status !== 'authenticated') return;
@@ -52,7 +53,7 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
         setApiStatus?.('fallback');
       });
     return () => { active = false; };
-  }, [client, session.status, setApiStatus]);
+  }, [client, retryAttempt, session.status, setApiStatus]);
 
   const source = state.status === 'success' || state.status === 'empty' ? state.data || [] : [];
   const weapons = useMemo(() => [...new Set(source.map((item) => item.weapon))].sort(), [source]);
@@ -95,7 +96,7 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
     <InventoryFilters value={filters} weapons={weapons} rarities={rarities} wears={wears} onChange={setFilters} />
     {lastAdded && <p className="inventory-add-status" role="status">{lastAdded.weapon} | {lastAdded.skin} добавлен в контракт.</p>}
     {state.status === 'loading' && <div className="commerce-state" role="status"><RefreshCw className="spin" size={18} /> Загружаем инвентарь…</div>}
-    {state.status === 'error' && <div className="commerce-state" role="alert"><strong>Инвентарь недоступен</strong><span>Предметы не заменены демонстрационными значениями.</span><button type="button" onClick={() => window.location.reload()}>Повторить</button></div>}
+    {state.status === 'error' && <div className="commerce-state" role="alert"><strong>Инвентарь недоступен</strong><span>Предметы не заменены демонстрационными значениями.</span><button type="button" onClick={() => setRetryAttempt((attempt) => attempt + 1)}>Повторить</button></div>}
     {state.status === 'empty' && <div className="commerce-state"><strong>Инвентарь пуст</strong><span>API не вернул принадлежащих аккаунту предметов.</span></div>}
     {(state.status === 'success' || state.status === 'empty') && source.length > 0 && filtered.length === 0 && <div className="commerce-state"><strong>Ничего не найдено</strong><span>Измените фильтры.</span></div>}
     {filtered.length > 0 && <section className="inventory-page-grid" aria-label="Предметы инвентаря">{filtered.map((item) => {

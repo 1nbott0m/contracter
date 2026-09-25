@@ -33,6 +33,7 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
   const [sort, setSort] = useState<MarketSort>('name');
   const [balance, setBalance] = useState<number | null>(null);
   const [purchases, setPurchases] = useState<Record<string, PurchaseState>>({});
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const purchaseKeys = useRef(new Map<string, string>());
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
       });
     }
     return () => { active = false; };
-  }, [client, onBalanceChange, session.status, setApiStatus]);
+  }, [client, onBalanceChange, retryAttempt, session.status, setApiStatus]);
 
   const source = state.status === 'success' || state.status === 'empty' ? state.data || [] : [];
   const hasPublishedPrices = source.some((item) => item.price !== null);
@@ -85,7 +86,7 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
       });
   }, [availability, rarity, search, sort, source, wear]);
 
-  const retryLoad = () => window.location.reload();
+  const retryLoad = () => setRetryAttempt((attempt) => attempt + 1);
   const purchase = async (item: MarketItem) => {
     if (session.status !== 'authenticated') {
       navigate('/login');
