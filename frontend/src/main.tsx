@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight } from 'lucide-react';
 import './styles.css';
+import './design-tokens.css';
 import './extra.css';
 import './login.css';
 import './ux.css';

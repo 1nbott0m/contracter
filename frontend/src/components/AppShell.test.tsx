@@ -21,6 +21,17 @@ it('renders shared chrome and marks the current primary route', () => {
   expect(screen.getByRole('navigation', { name: 'Мобильная навигация' })).toBeTruthy();
 });
 
+it('exposes the Contracter design shell hooks for shared visual tokens', () => {
+  render(
+    <AppShell route={matchRoute('/contracts')} navigate={vi.fn()} apiStatus="live">
+      <h1>Контракты</h1>
+    </AppShell>,
+  );
+
+  expect(screen.getByRole('banner').getAttribute('data-design-system')).toBe('contracter-neon');
+  expect(screen.getByRole('main').classList.contains('app-main')).toBe(true);
+});
+
 it('uses client-side navigation for ordinary shell links', () => {
   const navigate = vi.fn();
   render(

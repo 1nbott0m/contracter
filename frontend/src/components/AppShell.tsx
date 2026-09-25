@@ -65,7 +65,7 @@ export function AppShell({ route, navigate, apiStatus = 'unverified', sessionSta
   return <div className={`app-shell ${pageClass}`}>
     <LiveActivity session={sessionState} apiStatus={apiStatus} />
 
-    <header className="header">
+    <header className="header" data-design-system="contracter-neon">
       <Logo navigate={navigate} />
       <nav className="desktop-navigation" aria-label="Основная навигация">
         {primaryNavigation.map((item) => <AppLink href={item.href} navigate={navigate} current={activeRoute === item.id} key={item.id}>{item.label}</AppLink>)}
@@ -77,7 +77,7 @@ export function AppShell({ route, navigate, apiStatus = 'unverified', sessionSta
       </div>
     </header>
 
-    <main ref={mainRef} tabIndex={-1}>{children}</main>
+    <main ref={mainRef} className="app-main" tabIndex={-1}>{children}</main>
 
     <Footer navigate={navigate} />
 

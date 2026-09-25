@@ -1,0 +1,28 @@
+:root {
+  --ct-canvas: #080a0f;
+  --ct-surface: #10141d;
+  --ct-surface-raised: #171d28;
+  --ct-line: #293242;
+  --ct-text: #f6f8fb;
+  --ct-text-muted: #9ba7b8;
+  --ct-cyan: #57e3f3;
+  --ct-violet: #9b7cff;
+  --ct-success: #63e6a7;
+  --ct-warning: #ffca70;
+  --ct-danger: #ff7188;
+  --ct-panel-radius: 18px;
+  --ct-control-radius: 12px;
+}
+
+body { background: radial-gradient(circle at 78% 0, #172137 0, transparent 30rem), var(--ct-canvas); }
+.app-shell { color: var(--ct-text); }
+.header { border-bottom-color: var(--ct-line); background: #0d111ae6; border-radius: 0 0 var(--ct-panel-radius) var(--ct-panel-radius); }
+.panel { border-color: var(--ct-line); background: var(--ct-surface); border-radius: var(--ct-panel-radius); }
+.search { border-color: var(--ct-line); background: var(--ct-surface); border-radius: var(--ct-control-radius); }
+.primary { background: var(--ct-cyan); border-radius: var(--ct-control-radius); transition: transform .2s ease, box-shadow .2s ease, background .2s ease; }
+.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 28px #57e3f333; }
+.skin-card { border-color: var(--ct-line); background: var(--ct-surface); border-radius: var(--ct-control-radius); }
+.skin-card:hover { border-color: #52617a; box-shadow: 0 10px 30px #0005; }
+.skin-art { background: linear-gradient(145deg, var(--ct-surface-raised), var(--ct-canvas)); }
+.mobile-navigation { background: #0d111af2; border-color: var(--ct-line); }
+.app-main { scroll-margin-top: 90px; }
