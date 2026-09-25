@@ -13,6 +13,7 @@ import './contract-builder.css';
 import './commerce.css';
 import './information.css';
 import { AppShell, type ApiStatus } from './components/AppShell';
+import { api } from './api';
 import { ContractsPage } from './pages/ContractsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { MarketPage } from './pages/MarketPage';
@@ -48,7 +49,29 @@ function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; logi
     }
   };
 
-  return <form className="login-modal route-login" onSubmit={submitLogin}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Войти</h1><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{loginError && <p className="login-error">{loginError}</p>}<button className="primary" type="submit">ПРОДОЛЖИТЬ <ArrowRight size={16} /></button></form>;
+  return <form className="login-modal route-login" onSubmit={submitLogin}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Войти</h1><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{loginError && <p className="login-error">{loginError}</p>}<button className="primary" type="submit">ПРОДОЛЖИТЬ <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/register')}>Нет аккаунта? Зарегистрироваться</button></form>;
+}
+
+function RegisterPage({ navigate }: { navigate: Navigate }) {
+  const [invitationToken, setInvitationToken] = useState('');
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      await api.register(invitationToken.trim(), login.trim(), password);
+      navigate('/login?registered=1', { replace: true });
+    } catch {
+      setError('Не удалось зарегистрироваться. Проверьте invitation token, логин и пароль.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return <form className="login-modal route-login" onSubmit={submit}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Регистрация</h1><p className="auth-note">Регистрация доступна только по приглашению.</p><label>INVITATION TOKEN<input value={invitationToken} onChange={(event) => setInvitationToken(event.target.value)} autoComplete="off" required /></label><label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>{error && <p className="login-error">{error}</p>}<button className="primary" type="submit" disabled={submitting}>{submitting ? 'СОЗДАНИЕ…' : 'СОЗДАТЬ АККАУНТ'} <ArrowRight size={16} /></button><button className="text-button auth-switch" type="button" onClick={() => navigate('/login')}>Уже есть аккаунт? Войти</button></form>;
 }
 
 export function App() {
@@ -75,6 +98,7 @@ export function App() {
   else if (route.id === 'contract-details') page = <ContractDetailsPage contractId={route.params.contractId} session={session.state} navigate={navigate} />;
   else if (route.id === 'profile') page = <ProfilePage session={session.state} navigate={navigate} logout={session.logout} />;
   else if (route.id === 'login') page = <LoginPage navigate={navigate} login={session.login} />;
+  else if (route.id === 'register') page = <RegisterPage navigate={navigate} />;
   else if (route.id === 'transparency') page = <TransparencyPage session={session.state} navigate={navigate} />;
   else if (route.id === 'terms') page = <TermsPage />;
   else if (route.id === 'privacy') page = <PrivacyPage />;

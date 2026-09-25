@@ -7,6 +7,7 @@ export type StaticRouteId =
   | 'history'
   | 'profile'
   | 'login'
+  | 'register'
   | 'transparency'
   | 'terms'
   | 'privacy'
@@ -26,6 +27,7 @@ const staticRoutes = new Map<string, StaticRouteId>([
   ['/history', 'history'],
   ['/profile', 'profile'],
   ['/login', 'login'],
+  ['/register', 'register'],
   ['/transparency', 'transparency'],
   ['/terms', 'terms'],
   ['/privacy', 'privacy'],

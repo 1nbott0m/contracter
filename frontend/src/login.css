@@ -6,4 +6,6 @@
 .login-modal input{background:#0d0f12;border:1px solid #242932;color:#f4f5f7;height:38px;padding:0 10px;outline:none}
 .login-modal input:focus{border-color:#b8f35b}
 .login-error{color:#e06c75;font-size:10px;margin:0}
+.auth-note{color:#89929e;font-size:11px;line-height:1.5;margin:0 0 6px}
+.auth-switch{width:100%;justify-content:center;height:auto;padding:8px 0;font-size:9px}
 .close-login{background:none;border:0;color:#89929e;font-size:9px;letter-spacing:.1em;cursor:pointer;padding:7px}

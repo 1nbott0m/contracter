@@ -25,6 +25,7 @@ export class ApiRequestError extends Error {
 
 export type Account = { user_id: string; login: string; created_at: string };
 export type LoginResponse = { user_id: string };
+export type RegisterResponse = { user_id: string };
 /** Exact JSON shape returned by `GET /api/v1/me/inventory`. UUIDs and floats
  * remain strings: parsing them as numbers would lose identity/precision. */
 export type ApiInventoryItem = {
@@ -209,6 +210,11 @@ const jsonPost = <T>(path: string, body?: unknown) => request<T>(path, {
 export const api = {
   serviceHealth: () => requestTopLevel<ServiceHealth>('/health/live'),
   login: (login: string, password: string) => request<LoginResponse>('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) }),
+  register: (invitationToken: string, login: string, password: string) => request<RegisterResponse>('/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ invitation_token: invitationToken, login, password }),
+  }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   me: () => request<Account>('/me'),
   balance: () => request<Balance>('/me/balance'),
