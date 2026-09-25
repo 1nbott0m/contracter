@@ -6,6 +6,6 @@
 .fatal-error h1{margin:14px 0;font-size:clamp(2rem,5vw,3.5rem)}
 .fatal-error p{max-width:60ch;color:#89929e;line-height:1.7}
 @media(max-width:600px){:where(a,button,input,select,textarea){min-height:44px}.fatal-error{padding:32px 18px}}
-:where(html){scrollbar-color:var(--ct-line,#293242) var(--ct-canvas,#080a0f);scrollbar-width:thin}
+html{scrollbar-color:var(--ct-line,#293242) var(--ct-canvas,#080a0f);scrollbar-width:thin}
 ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-track{background:var(--ct-canvas,#080a0f)}::-webkit-scrollbar-thumb{background:var(--ct-line,#293242);border:3px solid var(--ct-canvas,#080a0f);border-radius:999px}::-webkit-scrollbar-thumb:hover{background:var(--ct-text-muted,#9ba7b8)}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}

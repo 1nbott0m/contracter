@@ -1,0 +1,20 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["src"],
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar"],
+  "ownership": {
+    "Select/Listbox": "native",
+    "Form": "application-owned",
+    "Scrollbar": "global application stylesheet"
+  },
+  "commands": {
+    "test": "npm test -- --run",
+    "build": "npm run build"
+  },
+  "requiredCommands": ["test", "build"],
+  "evidence": {
+    "test": "test-evidence.txt",
+    "build": "build-evidence.txt"
+  }
+}
