@@ -57,9 +57,6 @@ BEGIN
         IF v_rub <= 0 OR v_source_at > clock_timestamp() THEN
             CONTINUE;
         END IF;
-        IF v_rub * p_rub_to_cc_rate * 1000000 > 9223372036854775807::numeric THEN
-            RAISE EXCEPTION 'sale price exceeds microcredit storage bound' USING ERRCODE = '22003';
-        END IF;
         v_cc_micro := round(v_rub * p_rub_to_cc_rate * 1000000)::bigint;
         IF v_cc_micro <= 0 THEN CONTINUE; END IF;
         v_digest := public.digest(convert_to(row_data::text, 'UTF8'), 'sha256');
@@ -108,7 +105,7 @@ BEGIN
           FROM public.sale_evidence e
          WHERE e.source_code = p_source_code
            AND e.validity_reason_code = 'valid'
-           AND e.source_timestamp >= clock_timestamp() - make_interval(days => p_window_days::int)
+           AND e.source_timestamp >= clock_timestamp() - make_interval(days => p_window_days)
     ), trimmed AS (
         SELECT sku_id, sale_count,
                avg(gross_microcredits)::numeric AS mean_price,
