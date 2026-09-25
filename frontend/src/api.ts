@@ -27,6 +27,7 @@ export type Account = { user_id: string; login: string; created_at: string; is_a
 export type AdminMeResponse = { user_id: string; is_admin: boolean; totp_verified: boolean };
 export type TotpProvisionResponse = { secret: string; otpauth_uri: string };
 export type AdminDashboard = { users: number; active_sessions: number; contracts: number; inventory_items: number; market_purchases: number; ledger_transactions: number };
+export type AdminUser = { user_id: string; login: string; created_at: string; disabled: boolean; is_admin: boolean };
 export type LoginResponse = { user_id: string };
 export type RegisterResponse = { user_id: string };
 /** Exact JSON shape returned by `GET /api/v1/me/inventory`. UUIDs and floats
@@ -222,6 +223,7 @@ export const api = {
   me: () => request<Account>('/me'),
   adminMe: () => request<AdminMeResponse>('/admin/me'),
   adminDashboard: () => request<AdminDashboard>('/admin/dashboard'),
+  adminUsers: () => request<AdminUser[]>('/admin/users'),
   provisionTotp: () => jsonPost<TotpProvisionResponse>('/admin/totp/provision'),
   verifyTotp: (code: string) => jsonPost<void>('/auth/totp/verify', { code }),
   balance: () => request<Balance>('/me/balance'),
