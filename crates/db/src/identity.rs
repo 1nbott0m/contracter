@@ -232,6 +232,42 @@ where
     Ok(sqlx::query_as("SELECT u.public_id AS user_id, u.login, u.created_at, (u.disabled_at IS NOT NULL) AS disabled, COALESCE(a.is_active AND a.deactivated_at IS NULL, false) AS is_admin FROM users u LEFT JOIN administrators a ON a.user_id=u.id ORDER BY u.created_at DESC LIMIT 500").fetch_all(executor).await?)
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminAuditRow {
+    pub public_id: PublicId,
+    pub administrator_public_id: PublicId,
+    pub action_code: String,
+    pub target_public_id: Option<PublicId>,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn record_admin_audit<'e, E>(
+    executor: E,
+    admin_public_id: PublicId,
+    action: &str,
+    target: Option<PublicId>,
+    metadata: serde_json::Value,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT record_admin_audit($1,$2,$3,$4)")
+        .bind(admin_public_id)
+        .bind(action)
+        .bind(target)
+        .bind(metadata)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn list_admin_audit<'e, E>(executor: E) -> Result<Vec<AdminAuditRow>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT public_id, administrator_public_id, action_code, target_public_id, metadata, created_at FROM list_admin_audit_events()").fetch_all(executor).await?)
+}
+
 /// Creates a session for an enabled user, returning the session's public
 /// id. Only the token's hash is stored; the raw token stays with the
 /// caller.

@@ -2,6 +2,7 @@ use application::auth;
 use axum::{Json, extract::State, response::IntoResponse};
 use db;
 use serde::Serialize;
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::{error::ApiError, extract::CurrentUser, state::AppState};
@@ -21,7 +22,6 @@ pub struct AdminUserResponse {
     pub disabled: bool,
     pub is_admin: bool,
 }
-
 pub async fn users(
     State(state): State<AppState>,
     CurrentUser(caller): CurrentUser,
@@ -31,6 +31,15 @@ pub async fn users(
             "Administrator access required".to_owned(),
         ));
     }
+    db::record_admin_audit(
+        state.database().pool(),
+        caller.user_public_id,
+        "admin.users.read",
+        None,
+        json!({}),
+    )
+    .await
+    .map_err(application::auth::AuthError::from)?;
     let users = db::admin_users(state.database().pool())
         .await
         .map_err(application::auth::AuthError::from)?;
@@ -43,6 +52,42 @@ pub async fn users(
                 created_at: user.created_at.to_rfc3339(),
                 disabled: user.disabled,
                 is_admin: user.is_admin,
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminAuditResponse {
+    pub public_id: Uuid,
+    pub administrator_public_id: Uuid,
+    pub action_code: String,
+    pub target_public_id: Option<Uuid>,
+    pub metadata: serde_json::Value,
+    pub created_at: String,
+}
+pub async fn audit(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<impl IntoResponse, ApiError> {
+    if !auth::is_active_administrator(state.database(), caller.user_public_id).await? {
+        return Err(ApiError::Forbidden(
+            "Administrator access required".to_owned(),
+        ));
+    }
+    let events = db::list_admin_audit(state.database().pool())
+        .await
+        .map_err(application::auth::AuthError::from)?;
+    Ok(Json(
+        events
+            .into_iter()
+            .map(|event| AdminAuditResponse {
+                public_id: event.public_id.get(),
+                administrator_public_id: event.administrator_public_id.get(),
+                action_code: event.action_code,
+                target_public_id: event.target_public_id.map(|id| id.get()),
+                metadata: event.metadata,
+                created_at: event.created_at.to_rfc3339(),
             })
             .collect::<Vec<_>>(),
     ))
