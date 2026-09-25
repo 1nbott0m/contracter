@@ -2,10 +2,12 @@ import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import { Logo } from './Logo';
 import { GlobalSearch } from './GlobalSearch';
 import { ProfileMenu } from './ProfileMenu';
+import { Footer } from './Footer';
+import { LiveActivity, type ApiStatus } from './LiveActivity';
 import type { AppRoute, Navigate } from '../router';
 import type { SessionState } from '../session';
 
-export type ApiStatus = 'unverified' | 'connecting' | 'live' | 'auth' | 'fallback';
+export type { ApiStatus } from './LiveActivity';
 
 type AppShellProps = {
   route: AppRoute;
@@ -61,13 +63,7 @@ export function AppShell({ route, navigate, apiStatus = 'unverified', sessionSta
   }, [route.pathname]);
 
   return <div className={`app-shell ${pageClass}`}>
-    <div className="live-bar" aria-label="Статус сервиса">
-      <span className="live-dot" />
-      <b>LIVE</b>
-      <span className="live-copy">{apiStatus === 'live' ? 'API CONNECTED · ' : apiStatus === 'auth' ? 'AUTHENTICATION REQUIRED · ' : apiStatus === 'fallback' ? 'API UNAVAILABLE · ' : apiStatus === 'connecting' ? 'API CONNECTING · ' : 'API NOT CHECKED · '}LIVE ACTIVITY</span>
-      <span className="live-count">ONLINE: НЕДОСТУПНО</span>
-      <span className="live-empty">Новые подтверждённые операции пока недоступны</span>
-    </div>
+    <LiveActivity session={sessionState} apiStatus={apiStatus} />
 
     <header className="header">
       <Logo navigate={navigate} />
@@ -83,11 +79,7 @@ export function AppShell({ route, navigate, apiStatus = 'unverified', sessionSta
 
     <main ref={mainRef} tabIndex={-1}>{children}</main>
 
-    <footer>
-      <div><strong>CONTRACTER</strong><span><AppLink href="/contracts" navigate={navigate}>Контракты</AppLink> · <AppLink href="/market" navigate={navigate}>Маркет</AppLink> · <AppLink href="/inventory" navigate={navigate}>Инвентарь</AppLink> · <AppLink href="/history" navigate={navigate}>История</AppLink></span></div>
-      <div><strong>ИНФОРМАЦИЯ</strong><span><AppLink href="/transparency" navigate={navigate}>Прозрачность</AppLink> · <AppLink href="/support" navigate={navigate}>Поддержка</AppLink></span></div>
-      <div><strong>18+</strong><span><AppLink href="/terms" navigate={navigate}>Условия</AppLink> · <AppLink href="/privacy" navigate={navigate}>Privacy</AppLink><br />Независимый сервис, не аффилированный с Valve Corporation или Steam.</span></div>
-    </footer>
+    <Footer navigate={navigate} />
 
     <nav className="mobile-navigation" aria-label="Мобильная навигация">
       {primaryNavigation.map((item) => <AppLink href={item.href} navigate={navigate} current={activeRoute === item.id} ariaLabel={`${item.label}, мобильная навигация`} key={item.id}>{item.label}</AppLink>)}

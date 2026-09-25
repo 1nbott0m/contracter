@@ -5,15 +5,15 @@ import type { Navigate } from '../router';
 import type { SessionState } from '../session';
 
 type VerificationApi = Pick<typeof api, 'findMyContractHistoryEntry'>;
-type VerificationPageProps = { session: SessionState; navigate: Navigate; client?: VerificationApi };
+type VerificationPageProps = { session: SessionState; navigate: Navigate; client?: VerificationApi; embedded?: boolean };
 type LookupState = { status: 'idle' | 'loading' | 'missing' | 'error' } | { status: 'found'; entry: ContractHistoryItem };
 
-export function VerificationPage({ session, navigate, client = api }: VerificationPageProps) {
+export function VerificationPage({ session, navigate, client = api, embedded = false }: VerificationPageProps) {
   const [contractId, setContractId] = useState('');
   const [state, setState] = useState<LookupState>({ status: 'idle' });
 
   if (session.status !== 'authenticated') {
-    return <section className="route-state"><span className="eyebrow">TRANSPARENCY / ACCOUNT HISTORY</span><h1>Прозрачность</h1><p>Войдите, чтобы искать ID только среди контрактов этого аккаунта.</p>{session.status !== 'loading' && <button className="primary route-state-action" type="button" onClick={() => navigate('/login?returnTo=/transparency')}>Войти <ArrowRight size={16} /></button>}</section>;
+    return <section className={embedded ? 'verification-card panel' : 'route-state'}>{!embedded && <><span className="eyebrow">TRANSPARENCY / ACCOUNT HISTORY</span><h1>Прозрачность</h1></>}<p>Войдите, чтобы искать ID только среди контрактов этого аккаунта.</p>{session.status !== 'loading' && <button className="primary route-state-action" type="button" onClick={() => navigate('/login?returnTo=/transparency')}>Войти <ArrowRight size={16} /></button>}</section>;
   }
 
   const submit = async (event: FormEvent) => {
@@ -36,7 +36,7 @@ export function VerificationPage({ session, navigate, client = api }: Verificati
   };
 
   return <>
-    <section className="intro commerce-intro"><div><span className="eyebrow">TRANSPARENCY / ACCOUNT HISTORY</span><h1>Прозрачность</h1><p>Найдите контракт среди owner-scoped записей текущего аккаунта.</p></div></section>
+    {!embedded && <section className="intro commerce-intro"><div><span className="eyebrow">TRANSPARENCY / ACCOUNT HISTORY</span><h1>Прозрачность</h1><p>Найдите контракт среди owner-scoped записей текущего аккаунта.</p></div></section>}
     <section className="verification-card panel">
       <form onSubmit={submit}><label htmlFor="contract-history-id">ID контракта</label><div><input id="contract-history-id" value={contractId} onChange={(event) => setContractId(event.target.value)} autoComplete="off" required placeholder="UUID контракта" /><button className="primary" type="submit" disabled={state.status === 'loading'}><Search size={16} /> {state.status === 'loading' ? 'Ищем…' : 'Найти в моей истории'}</button></div></form>
       <p className="verification-boundary">Это не публичная или криптографическая проверка.</p>

@@ -104,6 +104,20 @@ describe('paginated API lists', () => {
 });
 
 describe('API failures and endpoint contracts', () => {
+  it('checks process connectivity on the top-level health route', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'live' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.serviceHealth()).resolves.toEqual({ status: 'live' });
+
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [RequestInfo | URL, RequestInit];
+    expect(new URL(String(url)).pathname).toBe('/health/live');
+    expect(init).toMatchObject({ credentials: 'include' });
+  });
+
   it('allocates, creates, and accepts a quote using only backend-supported fields', async () => {
     const allocation = { allocation_id: 'allocation-id', commitment: Array(32).fill(7) };
     const quote = {

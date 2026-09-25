@@ -11,6 +11,7 @@ import './image-states.css';
 import './accessibility.css';
 import './contract-builder.css';
 import './commerce.css';
+import './information.css';
 import { AppShell, type ApiStatus } from './components/AppShell';
 import { ContractsPage } from './pages/ContractsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -20,20 +21,12 @@ import { ProfilePage } from './pages/ProfilePage';
 import { HistoryPage } from './pages/HistoryPage';
 import { ContractDetailsPage } from './pages/ContractDetailsPage';
 import { VerificationPage } from './pages/VerificationPage';
-import { useRouter, type AppRoute, type Navigate } from './router';
+import { TransparencyPage } from './pages/TransparencyPage';
+import { TermsPage } from './pages/TermsPage';
+import { PrivacyPage } from './pages/PrivacyPage';
+import { SupportPage } from './pages/SupportPage';
+import { useRouter, type Navigate } from './router';
 import { useSession } from './hooks/useSession';
-
-const routeCopy: Partial<Record<AppRoute['id'], { eyebrow: string; title: string; text: string }>> = {
-  terms: { eyebrow: 'INFORMATION / TERMS', title: 'Условия использования', text: 'Актуальные условия сервиса будут опубликованы на этой странице.' },
-  privacy: { eyebrow: 'INFORMATION / PRIVACY', title: 'Политика конфиденциальности', text: 'Актуальная информация об обработке данных будет опубликована на этой странице.' },
-  support: { eyebrow: 'SERVICE / SUPPORT', title: 'Поддержка', text: 'Контакты и способы обращения будут опубликованы на этой странице.' },
-};
-
-function RoutePage({ route, navigate }: { route: AppRoute; navigate: Navigate }) {
-  const copy = routeCopy[route.id];
-  if (!copy) return null;
-  return <section className="route-state"><span className="eyebrow">{copy.eyebrow}</span><h1>{copy.title}</h1><p>{copy.text}</p></section>;
-}
 
 function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; login: (login: string, password: string) => Promise<boolean> }) {
   const [login, setLogin] = useState('');
@@ -81,9 +74,12 @@ export function App() {
   else if (route.id === 'contract-details') page = <ContractDetailsPage contractId={route.params.contractId} session={session.state} navigate={navigate} />;
   else if (route.id === 'profile') page = <ProfilePage session={session.state} navigate={navigate} logout={session.logout} />;
   else if (route.id === 'login') page = <LoginPage navigate={navigate} login={session.login} />;
-  else if (route.id === 'transparency') page = <VerificationPage session={session.state} navigate={navigate} />;
+  else if (route.id === 'transparency') page = <TransparencyPage session={session.state} navigate={navigate} />;
+  else if (route.id === 'terms') page = <TermsPage />;
+  else if (route.id === 'privacy') page = <PrivacyPage />;
+  else if (route.id === 'support') page = <SupportPage navigate={navigate} />;
   else if (route.id === 'not-found') page = <NotFoundPage navigate={navigate} />;
-  else page = <RoutePage route={route} navigate={navigate} />;
+  else page = <VerificationPage session={session.state} navigate={navigate} />;
 
   return <AppShell route={route} navigate={navigate} apiStatus={apiStatus} sessionState={session.state} logout={session.logout} balanceMicrocredits={balanceMicrocredits}>{page}</AppShell>;
 }

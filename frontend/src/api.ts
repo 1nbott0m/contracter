@@ -104,6 +104,8 @@ export function isDevelopmentFallbackEnabled(
 
 const base = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8080').replace(/\/$/, '');
 
+export type ServiceHealth = { status: 'live' };
+
 async function apiFailure(response: Response): Promise<ApiRequestError> {
   let envelope: ApiErrorEnvelope | undefined;
   try {
@@ -130,6 +132,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) throw await apiFailure(response);
   if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
+
+async function requestTopLevel<T>(path: string): Promise<T> {
+  const response = await fetch(`${base}${path}`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw await apiFailure(response);
   return response.json() as Promise<T>;
 }
 
@@ -196,6 +207,7 @@ const jsonPost = <T>(path: string, body?: unknown) => request<T>(path, {
 });
 
 export const api = {
+  serviceHealth: () => requestTopLevel<ServiceHealth>('/health/live'),
   login: (login: string, password: string) => request<LoginResponse>('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password }) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   me: () => request<Account>('/me'),
