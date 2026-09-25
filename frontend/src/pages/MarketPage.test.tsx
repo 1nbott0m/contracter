@@ -50,6 +50,8 @@ it('filters market results and keeps unavailable offers unpurchasable', async ()
   expect(screen.queryByText('Slate')).toBeNull();
   expect(screen.getByText('Fade')).toBeTruthy();
   expect((screen.getByRole('button', { name: 'Glock-18 | Fade недоступен для покупки' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Очистить поиск маркета' }));
+  expect(screen.getByText('Slate')).toBeTruthy();
 });
 
 it('uses one idempotency key while a purchase is retried and refreshes balance and inventory after confirmation', async () => {

@@ -34,6 +34,8 @@ it('filters owned items and persists an add-to-contract selection', async () => 
   expect(await screen.findByText('Slate')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Оружие'), { target: { value: 'AK-47' } });
   fireEvent.change(screen.getByLabelText('Цена до'), { target: { value: '3' } });
+  fireEvent.change(screen.getByPlaceholderText('Название скина'), { target: { value: 'slate' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Очистить поиск инвентаря' }));
 
   expect(screen.getByText('Slate')).toBeTruthy();
   expect(screen.queryByText('Fade')).toBeNull();

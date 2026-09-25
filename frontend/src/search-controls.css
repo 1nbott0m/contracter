@@ -1,0 +1,4 @@
+.commerce-search-field{position:relative;display:block}
+.commerce-search-field input{padding-right:38px!important}
+.commerce-search-clear{position:absolute;right:7px;top:50%;width:28px;height:28px;transform:translateY(-50%);display:grid;place-items:center;border:0;background:transparent;color:#89929e;cursor:pointer;border-radius:5px}
+.commerce-search-clear:hover,.commerce-search-clear:focus-visible{color:#58d6e7;background:#58d6e714}

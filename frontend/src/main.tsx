@@ -13,6 +13,7 @@ import './accessibility.css';
 import './layout-fixes.css';
 import './contract-builder.css';
 import './commerce.css';
+import './search-controls.css';
 import './information.css';
 import { AppShell, type ApiStatus } from './components/AppShell';
 import { api } from './api';

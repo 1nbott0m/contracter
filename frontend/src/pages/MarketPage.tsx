@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, RefreshCw, ShoppingCart } from 'lucide-react';
+import { ArrowRight, RefreshCw, ShoppingCart, X } from 'lucide-react';
 import { api, catalogSkuToMarketItem } from '../api';
 import type { ApiStatus } from '../components/AppShell';
 import { resolveSkinImage, SkinImage } from '../components/SkinImage';
@@ -116,7 +116,7 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
   return <>
     <section className="intro commerce-intro"><div><span className="eyebrow">MARKET / CC ECONOMY</span><h1>Маркет</h1><p>Публичный каталог с текущими подтверждёнными сервером оценками.</p></div><div className="commerce-balance">БАЛАНС: {session.status === 'authenticated' && balance !== null ? `${(balance / 1_000_000).toLocaleString('ru-RU')} CC` : 'НЕДОСТУПЕН'}</div></section>
     <div className="commerce-filters" aria-label="Фильтры маркета">
-      <label className="commerce-search">Поиск<input aria-label="Поиск по маркету" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Оружие или скин" /></label>
+      <label className="commerce-search">Поиск<span className="commerce-search-field"><input aria-label="Поиск по маркету" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Оружие или скин" />{search && <button type="button" className="commerce-search-clear" aria-label="Очистить поиск маркета" onClick={() => setSearch('')}><X size={14} /></button>}</span></label>
       {/* Native selects are intentional: compact market filters use the OS picker. */}<label>Редкость<select value={rarity} onChange={(event) => setRarity(event.target.value)}><option value="">Все</option>{rarities.map((value) => <option key={value}>{value}</option>)}</select></label>
       <label>Износ<select value={wear} onChange={(event) => setWear(event.target.value)}><option value="">Любой</option>{wears.map((value) => <option key={value}>{value}</option>)}</select></label>
       <label>Наличие<select value={availability} onChange={(event) => setAvailability(event.target.value)}><option value="all">Все</option><option value="available">Доступно</option><option value="unavailable">Недоступно</option></select></label>

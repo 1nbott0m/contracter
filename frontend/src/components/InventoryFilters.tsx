@@ -1,4 +1,5 @@
 import type { InventoryFilterValues } from '../types';
+import { X } from 'lucide-react';
 
 type InventoryFiltersProps = {
   value: InventoryFilterValues;
@@ -18,7 +19,7 @@ export function InventoryFilters({ value, weapons, rarities, wears, onChange }: 
   };
 
   return <div className="commerce-filters inventory-filters" aria-label="Фильтры инвентаря">
-    <label className="commerce-search">Поиск<input type="search" value={value.search} onChange={(event) => update('search', event.target.value)} placeholder="Название скина" /></label>
+    <label className="commerce-search">Поиск<span className="commerce-search-field"><input type="search" value={value.search} onChange={(event) => update('search', event.target.value)} placeholder="Название скина" />{value.search && <button type="button" className="commerce-search-clear" aria-label="Очистить поиск инвентаря" onClick={() => update('search', '')}><X size={14} /></button>}</span></label>
     {/* Native select is intentional: short filter options use the OS keyboard/touch picker. */}<label>Оружие<select value={value.weapon} onChange={(event) => update('weapon', event.target.value)}><option value="">Все</option>{weapons.map((weapon) => <option key={weapon}>{weapon}</option>)}</select></label>
     <label>Редкость<select value={value.rarity} onChange={(event) => update('rarity', event.target.value)}><option value="">Все</option>{rarities.map((rarity) => <option key={rarity}>{rarity}</option>)}</select></label>
     <label>Износ<select value={value.wear} onChange={(event) => update('wear', event.target.value)}><option value="">Любой</option>{wears.map((wear) => <option key={wear}>{wear}</option>)}</select></label>
