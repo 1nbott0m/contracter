@@ -15,6 +15,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -44,8 +45,19 @@ def api_json(key: str, hash_name: str) -> object:
         f"https://market.csgo.com/api/v2/get-list-items-info?{query}",
         headers={"Accept": "application/json", "User-Agent": "contracter-market-import/1"},
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        # Market.CSGO may transiently fail one item while the rest of the
+        # catalog remains available. Do not discard a whole import for that.
+        if error.code >= 500:
+            print(f"skipping temporarily unavailable item {hash_name!r}: HTTP {error.code}", file=sys.stderr)
+            return []
+        raise SystemExit(f"Market.CSGO request failed with HTTP {error.code}") from error
+    except urllib.error.URLError as error:
+        print(f"skipping unavailable item {hash_name!r}: {error.reason}", file=sys.stderr)
+        return []
     if isinstance(payload, dict) and payload.get("success") is False:
         raise SystemExit(f"Market.CSGO rejected request: {payload.get('error', 'unknown error')}")
     return payload
