@@ -28,10 +28,9 @@ async fn run() -> Result<(), StartupError> {
     // PostgreSQL before this process claims to be able to serve traffic,
     // rather than discovering that only when the first request arrives.
     database.health_check().await?;
-    // Apply the published schema before accepting traffic.  Operators that
-    // provision migrations out-of-band may set CONTRACTER_MIGRATIONS_READY;
-    // Database::migrate turns that flag into a health check and never grants
-    // the server a schema bypass.
+    // Apply the published schema before accepting traffic. Migrations are
+    // idempotent and guarded by a PostgreSQL advisory lock, so every instance
+    // can safely perform this startup check without serving a partial schema.
     database.migrate().await?;
 
     let mut state = AppState::new(database, AuthConfig::default())
