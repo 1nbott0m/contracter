@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiInventoryItem, CatalogSku, MarketValuation, QuoteResponse } from '../api';
 import { CONTRACT_SELECTION_STORAGE_KEY } from './InventoryPage';
@@ -102,7 +102,7 @@ it('does not replay an ambiguous quote create against a stale allocation', async
     fireEvent.click(await screen.findByRole('button', { name: `Выбрать ${item.stable_name} для контракта` }));
   }
   fireEvent.click(screen.getByRole('button', { name: 'ЗАКЛЮЧИТЬ КОНТРАКТ' }));
-  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(await screen.findByText('Не удалось заключить контракт. Проверьте доступность предметов и повторите.')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'ПОВТОРИТЬ' }));
 
   expect(await screen.findByText('Контракт contract-id принят сервером.')).toBeTruthy();
@@ -134,9 +134,73 @@ it('does not infer accept success from unrelated owner history', async () => {
   }
   fireEvent.click(screen.getByRole('button', { name: 'ЗАКЛЮЧИТЬ КОНТРАКТ' }));
 
-  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(await screen.findByText('Не удалось заключить контракт. Проверьте доступность предметов и повторите.')).toBeTruthy();
   expect(history).toHaveBeenCalledTimes(0);
   expect(client.acceptQuote).toHaveBeenCalledTimes(1);
   expect(client.acceptQuote.mock.calls[0]?.[0]).toBe('quote-id');
   expect(client.acceptQuote.mock.calls[0]?.[1]).toEqual(expect.any(String));
+});
+
+it('reveals only the server-returned output item after acceptance', async () => {
+  vi.stubGlobal('matchMedia', vi.fn(() => ({
+    matches: true,
+    media: '(prefers-reduced-motion: reduce)',
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })));
+  const outputInventory: ApiInventoryItem = {
+    ...inventory[0],
+    item_id: 'server-output',
+    sku_id: 'server-output-sku',
+    catalog_item_id: 'server-output-catalog',
+    stable_name: 'AK-47 | Server Result',
+    rarity: 'classified',
+    acquired_at: '2026-09-24T12:01:00Z',
+  };
+  const outputCatalog: CatalogSku = {
+    ...catalog[0],
+    sku_id: outputInventory.sku_id,
+    item_id: outputInventory.catalog_item_id,
+    stable_name: outputInventory.stable_name,
+    weapon: 'AK-47',
+    skin_name: 'Server Result',
+    rarity: 'classified',
+    rarity_rank: 4,
+    canonical_image_url: 'https://cdn.example.test/server-output.png',
+  };
+  const outputValuation: MarketValuation = {
+    ...valuations[0],
+    sku_id: outputInventory.sku_id,
+    price_microcredits: 9_000_000,
+  };
+  const inventoryRequest = vi.fn()
+    .mockResolvedValueOnce({ items: inventory })
+    .mockResolvedValueOnce({ items: [outputInventory] });
+  const client = {
+    inventory: inventoryRequest,
+    catalogSkus: vi.fn(async () => ({ items: [...catalog, outputCatalog] })),
+    marketValuations: vi.fn(async () => ({ items: [...valuations, outputValuation] })),
+    allocateQuote: vi.fn(async () => ({ allocation_id: 'allocation-id', commitment: [] })),
+    createQuote: vi.fn(async () => ({
+      ...quote,
+      outcomes: [{ position: 0, item_id: outputInventory.item_id, output_float: '0.04', probability_numerator: 1, probability_denominator: 1, buyback_microcredits: 9_000_000, currency_code: 'CC' as const }],
+    })),
+    acceptQuote: vi.fn(async () => ({ contract_id: 'contract-id' })),
+    history: vi.fn(async () => []),
+  };
+  render(<ContractsPage setApiStatus={vi.fn()} client={client} />);
+
+  for (const item of inventory) {
+    fireEvent.click(await screen.findByRole('button', { name: `Выбрать ${item.stable_name} для контракта` }));
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'ЗАКЛЮЧИТЬ КОНТРАКТ' }));
+
+  const reveal = await screen.findByRole('dialog', { name: 'Фиксация контракта' });
+  expect(await within(reveal).findByText('Server Result')).toBeTruthy();
+  expect(within(reveal).getByRole('img', { name: 'AK-47 | Server Result' }).getAttribute('src')).toBe(outputCatalog.canonical_image_url);
+  expect(inventoryRequest).toHaveBeenCalledTimes(2);
 });

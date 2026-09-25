@@ -6,6 +6,7 @@ import {
   isDevelopmentFallbackEnabled,
   type CatalogSku,
   type MarketValuation,
+  type QuoteResponse,
 } from '../api';
 import type { ApiStatus } from '../components/AppShell';
 import { ContractBuilder, type CommittedContract } from '../components/ContractBuilder';
@@ -28,6 +29,7 @@ type ContractStage = 'allocation' | 'quote' | 'accept';
 export type ContractLifecycle = {
   allocationId: string | null;
   quoteId: string | null;
+  quote: QuoteResponse | null;
   idempotencyKey: string;
   stage: ContractStage;
   submittedSnapshot: readonly string[];
@@ -145,6 +147,7 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
       lifecycle.current = {
         allocationId: null,
         quoteId: null,
+        quote: null,
         idempotencyKey: crypto.randomUUID(),
         stage: 'allocation',
         submittedSnapshot,
@@ -165,6 +168,7 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
           operation.idempotencyKey,
         );
         operation.quoteId = quote.quote_id;
+        operation.quote = quote;
         operation.stage = 'accept';
       } catch (error) {
         // Quote creation has no idempotency key on the backend. Do not replay
@@ -175,8 +179,29 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
     }
 
     const committed = await client.acceptQuote(operation.quoteId!, operation.idempotencyKey);
+    let result: InventoryItem | null = null;
+    try {
+      const refreshed = await client.inventory();
+      const catalogBySku = new Map(catalog.map((row) => [row.sku_id, row]));
+      const valuationBySku = new Map(valuations.map((row) => [row.sku_id, row]));
+      const mapped = refreshed.items.map((row) => inventoryItemToSkin(row, catalogBySku.get(row.sku_id), valuationBySku.get(row.sku_id)));
+      setItems(mapped);
+      const outcomeIds = new Set(operation.quote?.outcomes.map((outcome) => outcome.item_id) ?? []);
+      result = mapped.find((item) => outcomeIds.has(item.publicId || item.id)) ?? null;
+    } catch {
+      // Acceptance is already authoritative. A failed presentation refresh must
+      // not replace it with a possible outcome or turn it into a fake failure.
+    }
+    const resultOutcome = result
+      ? operation.quote?.outcomes.find((outcome) => outcome.item_id === (result.publicId || result.id))
+      : undefined;
     lifecycle.current = null;
-    return { contractId: committed.contract_id };
+    return {
+      contractId: committed.contract_id,
+      result,
+      inputValueMicrocredits: operation.quote?.input_value_microcredits ?? null,
+      resultValueMicrocredits: resultOutcome?.buyback_microcredits ?? null,
+    };
   };
 
   return (

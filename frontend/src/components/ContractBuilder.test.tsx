@@ -85,7 +85,7 @@ describe('ContractBuilder submission', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'ЗАКЛЮЧИТЬ КОНТРАКТ' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('Не удалось заключить контракт');
+    expect((await screen.findByText('Не удалось заключить контракт. Проверьте доступность предметов и повторите.')).textContent).toContain('Не удалось заключить контракт');
     expect(screen.getByRole('button', { name: 'ПОВТОРИТЬ' })).toBeTruthy();
     expect(screen.queryByText(/ВАШ РЕЗУЛЬТАТ/)).toBeNull();
   });

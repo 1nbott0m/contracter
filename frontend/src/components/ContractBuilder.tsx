@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { CirclePlus, Sparkles, X } from 'lucide-react';
 import type { InventoryItem, SkinDefinition } from '../types';
 import { ContractSummary, type ContractSubmitState } from './ContractSummary';
+import { ContractReveal, rememberContractPresentation, type ContractRevealState } from './ContractReveal';
 import { PossibleResults } from './PossibleResults';
 import { resolveSkinImage, SkinImage } from './SkinImage';
 import { SkinCard } from './SkinCard';
@@ -9,7 +10,12 @@ import { SkinCard } from './SkinCard';
 export const MIN_CONTRACT_ITEMS = 4;
 export const MAX_CONTRACT_ITEMS = 10;
 
-export type CommittedContract = { contractId: string };
+export type CommittedContract = {
+  contractId: string;
+  result?: SkinDefinition | null;
+  inputValueMicrocredits?: number | null;
+  resultValueMicrocredits?: number | null;
+};
 
 type ContractBuilderProps = {
   items: InventoryItem[];
@@ -37,6 +43,9 @@ export function ContractBuilder({
   const [internalSelected, setInternalSelected] = useState(() => distinctSelection(initialSelected));
   const [inspected, setInspected] = useState<InventoryItem | null>(null);
   const [submitState, setSubmitState] = useState<ContractSubmitState>({ status: 'idle' });
+  const [revealOpen, setRevealOpen] = useState(false);
+  const [revealSelection, setRevealSelection] = useState<InventoryItem[]>([]);
+  const [revealState, setRevealState] = useState<ContractRevealState>({ status: 'submitting' });
   const submitGeneration = useRef(0);
   const submitting = useRef(false);
   const selected = controlledSelected === undefined ? internalSelected : distinctSelection(controlledSelected);
@@ -60,13 +69,24 @@ export function ContractBuilder({
     submitting.current = true;
     const submittedSnapshot = Object.freeze([...selected]);
     setSubmitState({ status: 'submitting' });
+    setRevealSelection([...submittedSnapshot]);
+    setRevealState({ status: 'submitting' });
+    setRevealOpen(true);
     try {
       const committed = await onSubmit(submittedSnapshot);
       if (generation !== submitGeneration.current) return;
+      rememberContractPresentation(committed.contractId, {
+        inputs: [...submittedSnapshot],
+        result: committed.result ?? null,
+        inputValueMicrocredits: committed.inputValueMicrocredits ?? null,
+        resultValueMicrocredits: committed.resultValueMicrocredits ?? null,
+      });
       setSubmitState({ status: 'success', contractId: committed.contractId });
+      setRevealState({ status: 'success', contractId: committed.contractId, result: committed.result ?? null });
     } catch {
       if (generation !== submitGeneration.current) return;
       setSubmitState({ status: 'error' });
+      setRevealState({ status: 'error' });
     } finally {
       if (generation === submitGeneration.current) submitting.current = false;
     }
@@ -108,6 +128,18 @@ export function ContractBuilder({
       </section>
 
       <PossibleResults items={possibleResults} developmentData={possibleResultsAreDevelopmentData} />
+
+      <ContractReveal
+        open={revealOpen}
+        selected={revealSelection}
+        state={revealState}
+        onClose={() => setRevealOpen(false)}
+        onNew={() => {
+          setRevealOpen(false);
+          setSubmitState({ status: 'idle' });
+          updateSelection([]);
+        }}
+      />
 
       {inspected && <div className="item-inspector-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setInspected(null); }}><section className="item-inspector panel" role="dialog" aria-modal="true" aria-label={`${inspected.weapon} | ${inspected.skin}`}><button className="inspector-close" type="button" onClick={() => setInspected(null)} aria-label="Закрыть"><X size={16} /></button><div className="inspector-art"><SkinImage src={resolveSkinImage(inspected)} alt={`${inspected.weapon} | ${inspected.skin}`} accent={inspected.color} /></div><span className="eyebrow">{inspected.rarity}</span><h2>{inspected.weapon} | {inspected.skin}</h2><p>{inspected.wear}</p></section></div>}
     </>

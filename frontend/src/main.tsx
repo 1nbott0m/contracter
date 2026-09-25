@@ -17,22 +17,19 @@ import { NotFoundPage } from './pages/NotFoundPage';
 import { MarketPage } from './pages/MarketPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { HistoryPage } from './pages/HistoryPage';
+import { ContractDetailsPage } from './pages/ContractDetailsPage';
+import { VerificationPage } from './pages/VerificationPage';
 import { useRouter, type AppRoute, type Navigate } from './router';
 import { useSession } from './hooks/useSession';
 
 const routeCopy: Partial<Record<AppRoute['id'], { eyebrow: string; title: string; text: string }>> = {
-  history: { eyebrow: 'AUDIT TRAIL / HISTORY', title: 'История контрактов', text: 'Завершённые операции будут доступны после загрузки данных аккаунта.' },
-  transparency: { eyebrow: 'TRANSPARENCY / CONTROL', title: 'Прозрачность', text: 'Здесь будут опубликованы правила контрактов и доступные владельцу способы сверки истории.' },
   terms: { eyebrow: 'INFORMATION / TERMS', title: 'Условия использования', text: 'Актуальные условия сервиса будут опубликованы на этой странице.' },
   privacy: { eyebrow: 'INFORMATION / PRIVACY', title: 'Политика конфиденциальности', text: 'Актуальная информация об обработке данных будет опубликована на этой странице.' },
   support: { eyebrow: 'SERVICE / SUPPORT', title: 'Поддержка', text: 'Контакты и способы обращения будут опубликованы на этой странице.' },
 };
 
 function RoutePage({ route, navigate }: { route: AppRoute; navigate: Navigate }) {
-  if (route.id === 'contract-details') {
-    return <section className="route-state"><span className="eyebrow">MY CONTRACT / HISTORY ENTRY</span><h1>Контракт {route.params.contractId}</h1><p>Здесь будет показана доступная владельцу сводка операции из истории аккаунта.</p><button className="primary route-state-action" onClick={() => navigate('/history')}>К истории <ArrowRight size={16} /></button></section>;
-  }
-
   const copy = routeCopy[route.id];
   if (!copy) return null;
   return <section className="route-state"><span className="eyebrow">{copy.eyebrow}</span><h1>{copy.title}</h1><p>{copy.text}</p></section>;
@@ -80,8 +77,11 @@ export function App() {
   else if (route.id === 'contracts') page = <section className="route-state"><h1>{session.state.status === 'expired' ? 'Сессия истекла' : 'Требуется вход'}</h1><p>Войдите, чтобы использовать принадлежащие вам предметы.</p><button className="primary route-state-action" onClick={() => navigate('/login')}>Войти <ArrowRight size={16} /></button></section>;
   else if (route.id === 'market') page = <MarketPage session={session.state} navigate={navigate} setApiStatus={setApiStatus} onBalanceChange={setBalanceMicrocredits} />;
   else if (route.id === 'inventory') page = <InventoryPage session={session.state} navigate={navigate} setApiStatus={setApiStatus} />;
+  else if (route.id === 'history') page = <HistoryPage session={session.state} navigate={navigate} setApiStatus={setApiStatus} />;
+  else if (route.id === 'contract-details') page = <ContractDetailsPage contractId={route.params.contractId} session={session.state} navigate={navigate} />;
   else if (route.id === 'profile') page = <ProfilePage session={session.state} navigate={navigate} logout={session.logout} />;
   else if (route.id === 'login') page = <LoginPage navigate={navigate} login={session.login} />;
+  else if (route.id === 'transparency') page = <VerificationPage session={session.state} navigate={navigate} />;
   else if (route.id === 'not-found') page = <NotFoundPage navigate={navigate} />;
   else page = <RoutePage route={route} navigate={navigate} />;
 
