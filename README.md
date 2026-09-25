@@ -1,6 +1,6 @@
-# Contracter backend
+# Contracter
 
-Репозиторий содержит backend Contracter: PostgreSQL-схему и инварианты, детерминированное экономическое ядро, application-слой, HTTP API на Axum и бинарный сервер. Frontend, внешняя загрузка цен, платежи и Steam-интеграция не входят в этот репозиторий.
+Репозиторий содержит полный текущий MVP Contracter: frontend, PostgreSQL-схему и инварианты, детерминированное экономическое ядро, application-слой, HTTP API на Axum и бинарный сервер. Frontend собирается отдельно из `frontend/` и подключается к API через `VITE_API_URL`. Внешняя загрузка цен и реальные платежи остаются отдельными интеграциями; вход через Steam реализован в backend и frontend.
 
 Пошаговая инструкция для второго разработчика: [`docs/FRIEND_ONBOARDING_RU.md`](docs/FRIEND_ONBOARDING_RU.md). Готовая версия для отправки другу: [`docs/Инструкция_для_разработчика_Contracter.docx`](docs/Инструкция_для_разработчика_Contracter.docx). Правила для Claude Code находятся в [`CLAUDE.md`](CLAUDE.md).
 
@@ -15,6 +15,7 @@
 - `db/seeds` — идемпотентные справочные данные без каталога конкретных скинов.
 - `db/tests` — SQL-проверки ограничений, журналов и административных правил.
 - `scripts/verify.sh` — единая локальная проверка.
+- `frontend` — production frontend на React/Vite: регистрация, вход, Steam, контракты, инвентарь, маркет, история и административный интерфейс.
 
 ## Переменные окружения и запуск
 
@@ -95,7 +96,7 @@ SET is_active = true, deactivated_at = NULL;
 - Risk policy v1 содержит четыре согласованных лимита, но остаётся неактивной до калибровки minimum notional и dispersion на реальных данных.
 - Источник Market.CSGO добавлен выключенным; включение требует проверенного интеграционного процесса.
 - Конкретные модели скинов, SKU и float bounds не добавлены без проверенного источника каталога.
-- Для production остаются отдельными задачами deployment, мониторинг, резервное копирование, внешняя загрузка цен, Steam-интеграция и frontend.
+- Для production остаются отдельными задачами deployment, мониторинг, резервное копирование, внешняя загрузка цен и платёжная интеграция. Steam-вход и frontend уже входят в текущий MVP; их production-настройки (URL, секреты и redirect-конфигурация) должны совпадать с окружением деплоя.
 
 # Production deployment
 See deploy/README.md and deploy/docker-compose.prod.yml. Internal balances are CC; RUB is only an external top-up input.
