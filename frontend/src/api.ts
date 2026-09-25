@@ -24,7 +24,8 @@ export class ApiRequestError extends Error {
 }
 
 export type Account = { user_id: string; login: string; created_at: string; is_admin?: boolean };
-export type AdminMeResponse = { user_id: string; is_admin: true };
+export type AdminMeResponse = { user_id: string; is_admin: boolean; totp_verified: boolean };
+export type TotpProvisionResponse = { secret: string; otpauth_uri: string };
 export type LoginResponse = { user_id: string };
 export type RegisterResponse = { user_id: string };
 /** Exact JSON shape returned by `GET /api/v1/me/inventory`. UUIDs and floats
@@ -219,6 +220,8 @@ export const api = {
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   me: () => request<Account>('/me'),
   adminMe: () => request<AdminMeResponse>('/admin/me'),
+  provisionTotp: () => jsonPost<TotpProvisionResponse>('/admin/totp/provision'),
+  verifyTotp: (code: string) => jsonPost<void>('/auth/totp/verify', { code }),
   balance: () => request<Balance>('/me/balance'),
   inventory: () => requestAllPages<ApiInventoryItem>('/me/inventory'),
   catalogSkus: () => requestAllPages<CatalogSku>('/catalog/skus'),

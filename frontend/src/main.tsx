@@ -82,10 +82,14 @@ function RegisterPage({ navigate }: { navigate: Navigate }) {
 
 function AdminPage({ navigate, session }: { navigate: Navigate; session: ReturnType<typeof useSession>['state'] }) {
   const [verified, setVerified] = useState<'idle' | 'checking' | 'ok' | 'denied' | 'error'>('idle');
+  const [totpVerified, setTotpVerified] = useState(false);
+  const [secret, setSecret] = useState('');
+  const [code, setCode] = useState('');
+  const [totpError, setTotpError] = useState('');
   useEffect(() => {
     if (session.status !== 'authenticated' || !session.account.is_admin) return;
     setVerified('checking');
-    void api.adminMe().then(() => setVerified('ok')).catch((error) => {
+    void api.adminMe().then((result) => { setTotpVerified(result.totp_verified); setVerified('ok'); }).catch((error) => {
       setVerified(error instanceof Error && 'status' in error && (error as { status?: number }).status === 403 ? 'denied' : 'error');
     });
   }, [session]);
@@ -93,7 +97,9 @@ function AdminPage({ navigate, session }: { navigate: Navigate; session: ReturnT
   if (session.status !== 'authenticated') return <section className="route-state"><h1>Войдите в аккаунт</h1><p>Панель администратора доступна только авторизованным пользователям.</p><button className="primary" type="button" onClick={() => navigate('/login?returnTo=/admin')}>Войти <ArrowRight size={16} /></button></section>;
   if (!session.account.is_admin || verified === 'denied') return <section className="route-state"><h1>Доступ закрыт</h1><p>У аккаунта «{session.account.login}» нет активной роли администратора.</p><button className="primary" type="button" onClick={() => navigate('/contracts')}>Вернуться к контрактам <ArrowRight size={16} /></button></section>;
   if (verified === 'error') return <section className="route-state"><h1>Панель временно недоступна</h1><p>Сервер не подтвердил административную сессию. Повторите попытку позже.</p></section>;
-  return <section className="admin-page route-state"><span className="eyebrow">CONTRACTER / CONTROL ROOM</span><h1>Панель администратора</h1><p>Административная роль подтверждена сервером. Аккаунт: <strong>{session.account.login}</strong>.</p><div className="admin-status">{verified === 'checking' ? 'ПРОВЕРКА РОЛИ…' : 'ADMIN ACCESS ACTIVE'}</div><div className="admin-actions"><button className="primary" type="button" onClick={() => navigate('/transparency')}>Проверка честности <ArrowRight size={16} /></button><button className="text-button" type="button" onClick={() => navigate('/market')}>Открыть маркет</button></div></section>;
+  const setup = async () => { setTotpError(''); try { const result = await api.provisionTotp(); setSecret(result.secret); } catch { setTotpError('Не удалось создать секрет 2FA.'); } };
+  const confirm = async (event: React.FormEvent) => { event.preventDefault(); setTotpError(''); try { await api.verifyTotp(code); setTotpVerified(true); } catch { setTotpError('Неверный код Google Authenticator.'); } };
+  return <section className="admin-page route-state"><span className="eyebrow">CONTRACTER / CONTROL ROOM</span><h1>Панель администратора</h1><p>Административная роль подтверждена сервером. Аккаунт: <strong>{session.account.login}</strong>.</p><div className="admin-status">{totpVerified ? '2FA ACTIVE' : '2FA REQUIRED'}</div>{!totpVerified && <div className="panel admin-2fa"><h2>Google Authenticator</h2><p>Подключите TOTP перед выполнением административных операций.</p>{!secret ? <button className="primary" type="button" onClick={() => void setup()}>Создать секрет 2FA</button> : <><p>Добавьте секрет в приложение: <code>{secret}</code></p><form onSubmit={confirm}><input value={code} onChange={(event) => setCode(event.target.value)} inputMode="numeric" pattern="[0-9]{6}" placeholder="123456" aria-label="Код Google Authenticator" required /><button className="primary" type="submit">Подтвердить код</button></form></>}{totpError && <p className="login-error" role="alert">{totpError}</p>}</div>}<div className="admin-actions"><button className="primary" type="button" onClick={() => navigate('/transparency')}>Проверка честности <ArrowRight size={16} /></button><button className="text-button" type="button" onClick={() => navigate('/market')}>Открыть маркет</button></div></section>;
 }
 
 export function App() {

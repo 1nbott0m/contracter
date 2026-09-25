@@ -1,12 +1,15 @@
 use std::{fmt, sync::OnceLock, time::Duration};
 
+use crate::seed_protection::{ProtectedSeed, SeedProtector};
 use argon2::{
     Argon2,
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use db::{Database, DatabaseError, PublicId, UserId};
+use hmac::{Hmac, Mac};
 use rand::RngCore;
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::Semaphore;
@@ -189,6 +192,100 @@ pub async fn is_active_administrator(
     user_public_id: PublicId,
 ) -> Result<bool, AuthError> {
     Ok(db::is_active_administrator(database.pool(), user_public_id).await?)
+}
+
+pub fn encrypt_totp_secret(
+    protector: &dyn SeedProtector,
+    secret: &[u8; 20],
+    user_public_id: PublicId,
+) -> Result<Vec<u8>, AuthError> {
+    let mut padded = [0_u8; 32];
+    padded[..20].copy_from_slice(secret);
+    let protected = protector
+        .encrypt(&padded, user_public_id.get().as_bytes())
+        .map_err(|_| AuthError::InvalidCredentials)?;
+    let mut blob = Vec::with_capacity(24 + protected.ciphertext.len());
+    blob.extend_from_slice(&protected.nonce);
+    blob.extend_from_slice(&protected.ciphertext);
+    Ok(blob)
+}
+
+pub fn decrypt_totp_secret(
+    protector: &dyn SeedProtector,
+    blob: &[u8],
+    user_public_id: PublicId,
+) -> Result<[u8; 20], AuthError> {
+    if blob.len() < 24 + 16 {
+        return Err(AuthError::InvalidCredentials);
+    }
+    let mut nonce = [0_u8; 24];
+    nonce.copy_from_slice(&blob[..24]);
+    let protected = ProtectedSeed {
+        nonce,
+        ciphertext: blob[24..].to_vec(),
+    };
+    let padded = protector
+        .decrypt(&protected, user_public_id.get().as_bytes())
+        .map_err(|_| AuthError::InvalidCredentials)?;
+    padded[..20]
+        .try_into()
+        .map_err(|_| AuthError::InvalidCredentials)
+}
+
+pub async fn provision_totp(
+    database: &Database,
+    protector: &dyn SeedProtector,
+    user: PublicId,
+) -> Result<String, AuthError> {
+    let mut secret = [0_u8; 20];
+    rand::rngs::OsRng.fill_bytes(&mut secret);
+    let blob = encrypt_totp_secret(protector, &secret, user)?;
+    if !db::set_administrator_totp_secret(database.pool(), user, &blob).await? {
+        return Err(AuthError::InvalidCredentials);
+    }
+    Ok(data_encoding::BASE32_NOPAD.encode(&secret))
+}
+
+pub async fn verify_totp(
+    database: &Database,
+    protector: &dyn SeedProtector,
+    caller: AuthenticatedUser,
+    code: &str,
+) -> Result<(), AuthError> {
+    let blob = db::administrator_totp_secret(database.pool(), caller.user_public_id)
+        .await?
+        .ok_or(AuthError::InvalidCredentials)?;
+    let secret = decrypt_totp_secret(protector, &blob, caller.user_public_id)?;
+    if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(AuthError::InvalidCredentials);
+    }
+    let number: u32 = code.parse().map_err(|_| AuthError::InvalidCredentials)?;
+    let counter = chrono::Utc::now().timestamp().div_euclid(30) as u64;
+    for candidate in counter.saturating_sub(1)..=counter.saturating_add(1) {
+        let mut mac =
+            Hmac::<Sha1>::new_from_slice(&secret).map_err(|_| AuthError::InvalidCredentials)?;
+        mac.update(&candidate.to_be_bytes());
+        let bytes = mac.finalize().into_bytes();
+        let offset = (bytes[19] & 0x0f) as usize;
+        let value = (u32::from(bytes[offset]) & 0x7f) << 24
+            | u32::from(bytes[offset + 1]) << 16
+            | u32::from(bytes[offset + 2]) << 8
+            | u32::from(bytes[offset + 3]);
+        if value % 1_000_000 == number {
+            if !db::mark_session_totp_verified(database.pool(), caller.session_public_id).await? {
+                return Err(AuthError::SessionInvalid);
+            }
+            return Ok(());
+        }
+    }
+    Err(AuthError::InvalidCredentials)
+}
+
+pub async fn session_totp_verified(
+    database: &Database,
+    caller: AuthenticatedUser,
+) -> Result<bool, AuthError> {
+    Ok(db::session_totp_verified(database.pool(), caller.session_public_id).await?)
 }
 
 /// Verifies credentials and issues a session. A wrong password and an

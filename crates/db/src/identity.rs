@@ -111,6 +111,62 @@ where
         .await?)
 }
 
+pub async fn administrator_totp_secret<'e, E>(
+    executor: E,
+    user_public_id: PublicId,
+) -> Result<Option<Vec<u8>>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT administrator_totp_secret($1)")
+        .bind(user_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn set_administrator_totp_secret<'e, E>(
+    executor: E,
+    user_public_id: PublicId,
+    blob: &[u8],
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(
+        sqlx::query_scalar("SELECT set_administrator_totp_secret($1, $2)")
+            .bind(user_public_id)
+            .bind(blob)
+            .fetch_one(executor)
+            .await?,
+    )
+}
+
+pub async fn mark_session_totp_verified<'e, E>(
+    executor: E,
+    session_public_id: PublicId,
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT mark_session_totp_verified($1)")
+        .bind(session_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
+pub async fn session_totp_verified<'e, E>(
+    executor: E,
+    session_public_id: PublicId,
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT session_totp_verified($1)")
+        .bind(session_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
 /// Creates a session for an enabled user, returning the session's public
 /// id. Only the token's hash is stored; the raw token stays with the
 /// caller.

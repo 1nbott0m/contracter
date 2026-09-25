@@ -22,7 +22,9 @@ use crate::{
     client_ip::ClientIpKeyExtractor,
     error::ApiError,
     request_id::request_id_middleware,
-    routes::{account, admin, auth, catalog, health, history, inventory, market, quote},
+    routes::{
+        account, admin, admin_totp, auth, catalog, health, history, inventory, market, quote,
+    },
     state::AppState,
 };
 
@@ -74,8 +76,10 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/logout-all", post(auth::logout_all))
+        .route("/auth/totp/verify", post(admin_totp::verify))
         .route("/me", get(account::me))
         .route("/admin/me", get(admin::me))
+        .route("/admin/totp/provision", post(admin_totp::provision))
         .route("/me/balance", get(account::balance))
         .route("/me/inventory", get(inventory::list))
         .route("/me/inventory/{item_id}", get(inventory::detail))

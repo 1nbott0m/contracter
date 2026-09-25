@@ -9,6 +9,7 @@ use crate::{error::ApiError, extract::CurrentUser, state::AppState};
 pub struct AdminMeResponse {
     pub user_id: Uuid,
     pub is_admin: bool,
+    pub totp_verified: bool,
 }
 
 /// Returns the caller's administrator membership. This endpoint never
@@ -19,6 +20,7 @@ pub async fn me(
     CurrentUser(caller): CurrentUser,
 ) -> Result<impl IntoResponse, ApiError> {
     let is_admin = auth::is_active_administrator(state.database(), caller.user_public_id).await?;
+    let totp_verified = auth::session_totp_verified(state.database(), caller).await?;
     if !is_admin {
         return Err(ApiError::Forbidden(
             "Administrator access required".to_owned(),
@@ -27,5 +29,6 @@ pub async fn me(
     Ok(Json(AdminMeResponse {
         user_id: caller.user_public_id.get(),
         is_admin,
+        totp_verified,
     }))
 }
