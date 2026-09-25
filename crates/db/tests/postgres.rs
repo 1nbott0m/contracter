@@ -1,4 +1,4 @@
-use db::{Database, DatabaseConfig};
+use db::{Database, DatabaseConfig, MIGRATOR};
 use sqlx::Executor;
 
 #[tokio::test]
@@ -28,7 +28,7 @@ async fn sqlx_applies_migrations_idempotently_and_rolls_back_transactions() {
             .fetch_one(database.pool())
             .await
             .expect("read SQLx migration history");
-        assert_eq!(applied, 35);
+        assert_eq!(applied, MIGRATOR.iter().count() as i64);
     }
 
     let mut transaction = database.begin().await.expect("begin transaction");
