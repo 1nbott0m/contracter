@@ -63,7 +63,7 @@ const quote: QuoteResponse = {
 
 afterEach(cleanup);
 
-it('retries the failed stage with the same allocation, quote and idempotency key', async () => {
+it('does not replay an ambiguous quote create against a stale allocation', async () => {
   const createQuote = vi.fn()
     .mockRejectedValueOnce(new Error('transport failed'))
     .mockResolvedValueOnce(quote);
@@ -87,15 +87,15 @@ it('retries the failed stage with the same allocation, quote and idempotency key
   fireEvent.click(screen.getByRole('button', { name: 'ПОВТОРИТЬ' }));
 
   expect(await screen.findByText('Контракт contract-id принят сервером.')).toBeTruthy();
-  expect(client.allocateQuote).toHaveBeenCalledTimes(1);
+  expect(client.allocateQuote).toHaveBeenCalledTimes(2);
   expect(createQuote).toHaveBeenCalledTimes(2);
   expect(createQuote.mock.calls[0]?.[0]).toBe('allocation-id');
   expect(createQuote.mock.calls[1]?.[0]).toBe('allocation-id');
-  expect(createQuote.mock.calls[0]?.[2]).toBe(createQuote.mock.calls[1]?.[2]);
+  expect(createQuote.mock.calls[0]?.[2]).not.toBe(createQuote.mock.calls[1]?.[2]);
   expect(acceptQuote).toHaveBeenCalledTimes(1);
 });
 
-it('reconciles an ambiguous accept failure against owner history', async () => {
+it('does not infer accept success from unrelated owner history', async () => {
   const history = vi.fn()
     .mockResolvedValueOnce([])
     .mockResolvedValueOnce([{ contract_id: 'reconciled-contract', status: 'completed', created_at: '2026-09-24T12:01:00Z', ledger_transaction_id: 42 }]);
@@ -115,8 +115,8 @@ it('reconciles an ambiguous accept failure against owner history', async () => {
   }
   fireEvent.click(screen.getByRole('button', { name: 'ЗАКЛЮЧИТЬ КОНТРАКТ' }));
 
-  expect(await screen.findByText('Контракт reconciled-contract принят сервером.')).toBeTruthy();
-  expect(history).toHaveBeenCalledTimes(2);
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(history).toHaveBeenCalledTimes(0);
   expect(client.acceptQuote).toHaveBeenCalledTimes(1);
   expect(client.acceptQuote.mock.calls[0]?.[0]).toBe('quote-id');
   expect(client.acceptQuote.mock.calls[0]?.[1]).toEqual(expect.any(String));

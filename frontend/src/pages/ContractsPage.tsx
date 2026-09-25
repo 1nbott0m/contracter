@@ -38,10 +38,6 @@ function sameSnapshot(lifecycle: ContractLifecycle, submitted: readonly string[]
     && lifecycle.submittedSnapshot.every((id, index) => id === submitted[index]);
 }
 
-function isAmbiguousAcceptFailure(error: unknown) {
-  return !(error instanceof Error && 'status' in error && typeof error.status === 'number' && error.status < 500);
-}
-
 type ContractsPageProps = {
   setApiStatus: (status: ApiStatus) => void;
   client?: ContractsApi;
@@ -155,28 +151,25 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
       operation.stage = 'quote';
     }
     if (operation.stage === 'quote') {
-      const quote = await client.createQuote(
-        operation.allocationId!,
-        [...operation.submittedSnapshot],
-        operation.idempotencyKey,
-      );
-      operation.quoteId = quote.quote_id;
-      operation.stage = 'accept';
-    }
-    if (!operation.historyBeforeAccept) {
-      operation.historyBeforeAccept = new Set((await client.history()).map((item) => item.contract_id));
+      try {
+        const quote = await client.createQuote(
+          operation.allocationId!,
+          [...operation.submittedSnapshot],
+          operation.idempotencyKey,
+        );
+        operation.quoteId = quote.quote_id;
+        operation.stage = 'accept';
+      } catch (error) {
+        // Quote creation has no idempotency key on the backend. Do not replay
+        // an ambiguous request against a possibly released allocation.
+        lifecycle.current = null;
+        throw error;
+      }
     }
 
-    try {
-      const committed = await client.acceptQuote(operation.quoteId!, operation.idempotencyKey);
-      return { contractId: committed.contract_id };
-    } catch (error) {
-      if (!isAmbiguousAcceptFailure(error)) throw error;
-      const history = await client.history();
-      const created = history.filter((item) => !operation.historyBeforeAccept!.has(item.contract_id));
-      if (created.length === 1) return { contractId: created[0]!.contract_id };
-      throw error;
-    }
+    const committed = await client.acceptQuote(operation.quoteId!, operation.idempotencyKey);
+    lifecycle.current = null;
+    return { contractId: committed.contract_id };
   };
 
   return (
