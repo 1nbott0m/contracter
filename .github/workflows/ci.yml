@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-only-throwaway
+          POSTGRES_DB: contracter_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: ci-only-throwaway
+      TEST_DATABASE_URL: postgres://postgres@localhost:5432/contracter_ci
+      TEST_RUNTIME_ROLE_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Provision test roles
+        run: psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/provision_test_roles.sql
+      - name: Canonical verification
+        run: ./scripts/verify.sh
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: RustSec advisory audit
+        run: cargo install cargo-audit --locked && cargo audit
