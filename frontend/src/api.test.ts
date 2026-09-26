@@ -103,6 +103,22 @@ describe('paginated API lists', () => {
     expect(secondUrl.searchParams.get('cursor')).toBe('opaque cursor/+=');
   });
 
+  it.each([
+    ['ledgerHistory', '/api/v1/me/history/ledger', 'transaction_id'],
+    ['inventoryEventHistory', '/api/v1/me/history/inventory-events', 'event_id'],
+  ] as const)('loads typed %s history pages', async (method, pathname, idField) => {
+    const first = { [idField]: 'cursor-id', amount_microcredits: 1 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(Array(200).fill(first)), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await api[method]();
+    expect(result).toHaveLength(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(new URL(String((fetchMock.mock.calls[1] as unknown as [RequestInfo])[0])).searchParams.get('cursor')).toBe('cursor-id');
+    expect(new URL(String((fetchMock.mock.calls[0] as unknown as [RequestInfo])[0])).pathname).toBe(pathname);
+  });
+
   it('stops with an error if a server repeats a cursor instead of looping forever', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       items: [],

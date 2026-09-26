@@ -59,6 +59,20 @@ export type ContractHistoryItem = {
   created_at: string;
   ledger_transaction_id: number | null;
 };
+export type LedgerHistoryItem = {
+  transaction_id: string;
+  operation: string;
+  amount_microcredits: number;
+  currency_code: 'CC';
+  occurred_at: string;
+};
+export type InventoryEventHistoryItem = {
+  event_id: string;
+  inventory_item_id: string;
+  event_kind: string;
+  operation_id: string;
+  occurred_at: string;
+};
 export type MarketPurchaseResponse = {
   operation_id: string;
   inventory_item_id: string;
@@ -202,6 +216,26 @@ async function requestAllContractHistory(): Promise<ContractHistoryItem[]> {
   }
 }
 
+async function requestAllArrayHistory<T, K extends keyof T>(
+  path: string,
+  idField: K,
+): Promise<T[]> {
+  const items: T[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (;;) {
+    const query = new URLSearchParams({ limit: '200' });
+    if (cursor !== undefined) query.set('cursor', cursor);
+    const page = await request<T[]>(`${path}?${query.toString()}`);
+    items.push(...page);
+    if (page.length < 200) return items;
+    const nextCursor = String(page[page.length - 1]?.[idField] ?? '');
+    if (!nextCursor || seenCursors.has(nextCursor)) throw new Error('API_PAGINATION_CURSOR_REPEATED');
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+}
+
 async function findContract(contractId: string): Promise<ContractHistoryItem | null> {
   const normalizedId = contractId.trim().toLowerCase();
   const history = await requestAllContractHistory();
@@ -256,6 +290,8 @@ export const api = {
     { idempotency_key: idempotencyKey },
   ),
   history: requestAllContractHistory,
+  ledgerHistory: () => requestAllArrayHistory<LedgerHistoryItem, 'transaction_id'>('/me/history/ledger', 'transaction_id'),
+  inventoryEventHistory: () => requestAllArrayHistory<InventoryEventHistoryItem, 'event_id'>('/me/history/inventory-events', 'event_id'),
   findMyContractHistoryEntry: findContract,
   marketPurchase,
   /** @deprecated Prefer marketPurchase. */
