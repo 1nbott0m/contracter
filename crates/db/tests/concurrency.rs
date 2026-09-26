@@ -21,8 +21,9 @@
 //! uniquely named per run.
 
 use db::{
-    CollectionId, Database, DatabaseConfig, find_current_collection_scarcity,
-    post_credit_adjustment, publish_collection_scarcity_snapshot, register_invited_user,
+    CollectionId, Database, DatabaseConfig, PublicId, UserId, find_current_collection_scarcity,
+    post_credit_adjustment, publish_collection_scarcity_snapshot, purchase_market_item,
+    register_invited_user,
 };
 use uuid::Uuid;
 
@@ -363,6 +364,124 @@ async fn concurrent_scarcity_publishes_leave_current_pointing_at_the_latest_snap
         "current_collection_scarcity must point at the most recently created snapshot, \
          not whichever concurrent publish happened to commit last"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn concurrent_market_purchases_with_the_same_key_settle_once() {
+    let database = test_database().await;
+    let pool = database.pool();
+    let suffix = Uuid::new_v4().simple().to_string();
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (login, password_hash) VALUES ($1, 'concurrency-market') RETURNING id",
+    )
+    .bind(format!("concurrency_market_{suffix}"))
+    .fetch_one(pool)
+    .await
+    .expect("insert market user");
+    sqlx::query(
+        "INSERT INTO ledger_accounts (kind_code) VALUES ('system_treasury') ON CONFLICT DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .expect("ensure treasury");
+    let wallet: i64 = sqlx::query_scalar(
+        "INSERT INTO ledger_accounts (kind_code, owner_user_id) VALUES ('user_credit', $1) RETURNING id",
+    ).bind(user_id).fetch_one(pool).await.expect("insert wallet");
+    let treasury: i64 = sqlx::query_scalar(
+        "SELECT id FROM ledger_accounts WHERE kind_code = 'system_treasury' AND owner_user_id IS NULL",
+    ).fetch_one(pool).await.expect("read treasury");
+    sqlx::query("SELECT post_ledger_transaction('concurrency_market_seed', $1, $2::jsonb)")
+        .bind(Uuid::new_v4())
+        .bind(serde_json::json!([
+            {"account_id": wallet, "amount_microcredits": 10_000_000},
+            {"account_id": treasury, "amount_microcredits": -10_000_000}
+        ]))
+        .execute(pool)
+        .await
+        .expect("seed market balance");
+    sqlx::query("INSERT INTO rarities (code, rank, is_covert) VALUES ($1, 9602, false) ON CONFLICT (code) DO NOTHING")
+        .bind(format!("concurrency-market-{suffix}" )).execute(pool).await.expect("seed rarity");
+    sqlx::query("INSERT INTO wear_bands (code, lower_bound, upper_bound, includes_upper_bound) VALUES ($1, 0, 1, true) ON CONFLICT (code) DO NOTHING")
+        .bind(format!("concurrency-market-{suffix}" )).execute(pool).await.expect("seed wear band");
+    let collection: i64 = sqlx::query_scalar(
+        "INSERT INTO collections (slug, display_name) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(format!("concurrency-market-{suffix}"))
+    .bind("Concurrency market")
+    .fetch_one(pool)
+    .await
+    .expect("insert collection");
+    let catalog: i64 = sqlx::query_scalar("INSERT INTO catalog_items (collection_id, rarity_code, stable_name, min_float, max_float) VALUES ($1, $2, $3, 0, 1) RETURNING id")
+        .bind(collection).bind(format!("concurrency-market-{suffix}" )).bind(format!("Concurrency market {suffix}" )).fetch_one(pool).await.expect("insert catalog");
+    let sku_public: Uuid = Uuid::new_v4();
+    let sku: i64 = sqlx::query_scalar("INSERT INTO skus (public_id, catalog_item_id, wear_band_id) SELECT $1, $2, id FROM wear_bands WHERE code = $3 RETURNING id")
+        .bind(sku_public).bind(catalog).bind(format!("concurrency-market-{suffix}" )).fetch_one(pool).await.expect("insert sku");
+    let snapshot: i64 = sqlx::query_scalar("INSERT INTO valuation_snapshots (formula_version, snapshot_at, published_at) VALUES ('concurrency-market', clock_timestamp(), clock_timestamp()) RETURNING id")
+        .fetch_one(pool).await.expect("insert snapshot");
+    sqlx::query("INSERT INTO valuation_snapshot_items (snapshot_id, sku_id, verified_price_microcredits, source_code, window_days, valid_sale_count, evidence_cutoff_at, evidence_digest) VALUES ($1, $2, 1_000_000, 'market_csgo', 7, 20, clock_timestamp(), digest('concurrency-market', 'sha256'))")
+        .bind(snapshot).bind(sku).execute(pool).await.expect("insert valuation");
+    sqlx::query("INSERT INTO current_valuations (sku_id, snapshot_id, snapshot_item_id, verified_price_microcredits) SELECT sku_id, snapshot_id, id, verified_price_microcredits FROM valuation_snapshot_items WHERE snapshot_id = $1")
+        .bind(snapshot).execute(pool).await.expect("activate valuation");
+    let item_public: Uuid = Uuid::new_v4();
+    let item: i64 = sqlx::query_scalar("INSERT INTO inventory_items (public_id, sku_id, canonical_float) VALUES ($1, $2, 0.2) RETURNING id")
+        .bind(item_public).bind(sku).fetch_one(pool).await.expect("insert warehouse item");
+    sqlx::query(
+        "INSERT INTO inventory_positions (inventory_item_id, in_warehouse) VALUES ($1, true)",
+    )
+    .bind(item)
+    .execute(pool)
+    .await
+    .expect("insert position");
+    sqlx::query("INSERT INTO warehouse_stock (sku_id, available_units) VALUES ($1, 1)")
+        .bind(sku)
+        .execute(pool)
+        .await
+        .expect("insert stock");
+
+    let key = Uuid::new_v4();
+    let mut connection_a = pool.acquire().await.expect("acquire connection a");
+    let mut connection_b = pool.acquire().await.expect("acquire connection b");
+    let (result_a, result_b) = tokio::join!(
+        purchase_market_item(
+            connection_a.as_mut(),
+            UserId::new(user_id),
+            PublicId::new(sku_public),
+            key,
+        ),
+        purchase_market_item(
+            connection_b.as_mut(),
+            UserId::new(user_id),
+            PublicId::new(sku_public),
+            key,
+        ),
+    );
+    let settled_a = result_a.expect("first purchase settles");
+    let settled_b = result_b.expect("concurrent retry settles");
+    assert_eq!(settled_a, settled_b);
+    let balance: i64 = sqlx::query_scalar(
+        "SELECT balance_microcredits FROM ledger_balances WHERE account_id = $1",
+    )
+    .bind(wallet)
+    .fetch_one(pool)
+    .await
+    .expect("read balance");
+    assert_eq!(balance, 9_000_000);
+    let purchases: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM market_purchase_events WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+    .expect("count purchases");
+    assert_eq!(purchases, 1);
+    let available: i32 =
+        sqlx::query_scalar("SELECT available_units FROM warehouse_stock WHERE sku_id = $1")
+            .bind(sku)
+            .fetch_one(pool)
+            .await
+            .expect("read stock");
+    assert_eq!(available, 0);
 }
 
 /// A committed invitation, since two connections must see it.
