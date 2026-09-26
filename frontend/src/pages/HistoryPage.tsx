@@ -1,6 +1,6 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import { ArrowRight, RefreshCw } from 'lucide-react';
-import { api, type ContractHistoryItem } from '../api';
+import { api, type ContractHistoryItem, type InventoryEventHistoryItem, type LedgerHistoryItem } from '../api';
 import type { ApiStatus } from '../components/AppShell';
 import { readContractPresentation } from '../components/ContractReveal';
 import { resolveSkinImage, SkinImage } from '../components/SkinImage';
@@ -8,7 +8,8 @@ import type { Navigate } from '../router';
 import type { SessionState } from '../session';
 import type { AsyncState } from '../types';
 
-type HistoryApi = Pick<typeof api, 'history'>;
+type HistoryApi = Pick<typeof api, 'history'> & Partial<Pick<typeof api, 'ledgerHistory' | 'inventoryEventHistory'>>;
+type HistoryMode = 'contracts' | 'ledger' | 'inventory';
 type HistoryPageProps = { session: SessionState; navigate: Navigate; client?: HistoryApi; setApiStatus?: (status: ApiStatus) => void };
 
 export function contractStatusLabel(status: string) {
@@ -29,6 +30,9 @@ export function microcredits(value: number | null) {
 
 export function HistoryPage({ session, navigate, client = api, setApiStatus }: HistoryPageProps) {
   const [state, setState] = useState<AsyncState<ContractHistoryItem[]>>({ status: 'loading' });
+  const [ledgerState, setLedgerState] = useState<AsyncState<LedgerHistoryItem[]>>({ status: 'loading' });
+  const [inventoryState, setInventoryState] = useState<AsyncState<InventoryEventHistoryItem[]>>({ status: 'loading' });
+  const [mode, setMode] = useState<HistoryMode>('contracts');
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
@@ -36,9 +40,16 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
     let active = true;
     setState({ status: 'loading' });
     setApiStatus?.('connecting');
-    client.history().then((items) => {
+    const load = mode === 'contracts'
+      ? client.history()
+      : mode === 'ledger'
+        ? client.ledgerHistory?.() ?? Promise.resolve([])
+        : client.inventoryEventHistory?.() ?? Promise.resolve([]);
+    load.then((items) => {
       if (!active) return;
-      setState(items.length ? { status: 'success', data: items } : { status: 'empty', data: [] });
+      if (mode === 'contracts') setState(items.length ? { status: 'success', data: items as ContractHistoryItem[] } : { status: 'empty', data: [] });
+      if (mode === 'ledger') setLedgerState(items.length ? { status: 'success', data: items as LedgerHistoryItem[] } : { status: 'empty', data: [] });
+      if (mode === 'inventory') setInventoryState(items.length ? { status: 'success', data: items as InventoryEventHistoryItem[] } : { status: 'empty', data: [] });
       setApiStatus?.('live');
     }).catch((error: unknown) => {
       if (!active) return;
@@ -46,7 +57,7 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
       setApiStatus?.('fallback');
     });
     return () => { active = false; };
-  }, [client, reload, session.status, setApiStatus]);
+  }, [client, mode, reload, session.status, setApiStatus]);
 
   if (session.status !== 'authenticated') {
     return <section className="route-state"><span className="eyebrow">ACCOUNT / PRIVATE HISTORY</span><h1>История контрактов</h1><p>{session.status === 'loading' ? 'Проверяем сессию.' : 'Войдите, чтобы загрузить историю этого аккаунта.'}</p>{session.status !== 'loading' && <button className="primary route-state-action" type="button" onClick={() => navigate('/login?returnTo=/history')}>Войти <ArrowRight size={16} /></button>}</section>;
@@ -59,11 +70,12 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
   };
 
   return <>
-    <section className="intro commerce-intro"><div><span className="eyebrow">ACCOUNT / PRIVATE HISTORY</span><h1>История контрактов</h1><p>Только контракты текущего авторизованного аккаунта.</p></div></section>
-    {state.status === 'loading' && <div className="commerce-state" role="status"><RefreshCw className="spin" size={18} /> Загружаем историю…</div>}
-    {state.status === 'error' && <div className="commerce-state" role="alert"><strong>История недоступна</strong><span>Демонстрационные операции не подставлены.</span><button type="button" onClick={() => setReload((value) => value + 1)}>Повторить</button></div>}
-    {state.status === 'empty' && <div className="commerce-state"><strong>История пуста</strong><span>API не вернул контрактов этого аккаунта.</span></div>}
-    {state.status === 'success' && <section className="history-list" aria-label="Контракты аккаунта">{state.data.map((entry) => {
+    <section className="intro commerce-intro"><div><span className="eyebrow">ACCOUNT / PRIVATE HISTORY</span><h1>История операций</h1><p>Только события текущего авторизованного аккаунта.</p></div></section>
+    <div className="history-tabs" role="tablist" aria-label="Тип истории">{([['contracts', 'Контракты'], ['ledger', 'Баланс CC'], ['inventory', 'Инвентарь']] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={mode === value} className={mode === value ? 'active' : ''} onClick={() => setMode(value)}>{label}</button>)}</div>
+    {mode === 'contracts' && state.status === 'loading' && <div className="commerce-state" role="status"><RefreshCw className="spin" size={18} /> Загружаем историю…</div>}
+    {mode === 'contracts' && state.status === 'error' && <div className="commerce-state" role="alert"><strong>История недоступна</strong><span>Демонстрационные операции не подставлены.</span><button type="button" onClick={() => setReload((value) => value + 1)}>Повторить</button></div>}
+    {mode === 'contracts' && state.status === 'empty' && <div className="commerce-state"><strong>История пуста</strong><span>API не вернул контрактов этого аккаунта.</span></div>}
+    {mode === 'contracts' && state.status === 'success' && <section className="history-list" aria-label="Контракты аккаунта">{state.data.map((entry) => {
       const presentation = readContractPresentation(entry.contract_id);
       return <article className="history-card panel" key={entry.contract_id}>
         <div className="history-card-heading"><div><span className="eyebrow">{contractStatusLabel(entry.status)}</span><h2>{entry.contract_id}</h2><time dateTime={entry.created_at}>{contractDate(entry.created_at)}</time></div><a href={`/contracts/${encodeURIComponent(entry.contract_id)}`} onClick={(event) => open(event, entry.contract_id)} aria-label={`Открыть контракт ${entry.contract_id}`}>Открыть <ArrowRight size={15} /></a></div>
@@ -75,5 +87,14 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
         </div> : <p className="history-media-unavailable">Изображения и значения недоступны в текущем API истории.</p>}
       </article>;
     })}</section>}
+    {mode === 'ledger' && <HistoryRows state={ledgerState} empty="Операций CC пока нет" title="История баланса CC" render={(entry) => <><strong>{entry.operation}</strong><span>{microcredits(entry.amount_microcredits)}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
+    {mode === 'inventory' && <HistoryRows state={inventoryState} empty="Событий инвентаря пока нет" title="История инвентаря" render={(entry) => <><strong>{entry.event_kind}</strong><span>Предмет {entry.inventory_item_id}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
   </>;
+}
+
+function HistoryRows<T>({ state, empty, title, render }: { state: AsyncState<T[]>; empty: string; title: string; render: (entry: T) => ReactNode }) {
+  if (state.status === 'loading') return <div className="commerce-state" role="status"><RefreshCw className="spin" size={18} /> Загружаем…</div>;
+  if (state.status === 'error') return <div className="commerce-state" role="alert"><strong>История недоступна</strong><span>Демонстрационные события не подставлены.</span></div>;
+  if (state.status === 'empty' || state.status === 'idle') return <div className="commerce-state"><strong>{empty}</strong></div>;
+  return <section className="history-list" aria-label={title}>{state.data.map((entry, index) => <article className="history-card panel history-row" key={index}>{render(entry)}</article>)}</section>;
 }
