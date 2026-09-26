@@ -40,5 +40,8 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime') THEN
         GRANT EXECUTE ON FUNCTION ensure_virtual_warehouse_stock() TO contracter_runtime;
     END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_admin_runtime') THEN
+        GRANT EXECUTE ON FUNCTION ensure_virtual_warehouse_stock() TO contracter_admin_runtime;
+    END IF;
 END
 $grant$;
