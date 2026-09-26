@@ -25,6 +25,7 @@ export function Footer({ navigate }: { navigate: Navigate }) {
         <FooterLink href="/market" navigate={navigate}>Маркет</FooterLink>
         <FooterLink href="/inventory" navigate={navigate}>Инвентарь</FooterLink>
         <FooterLink href="/history" navigate={navigate}>История</FooterLink>
+        <FooterLink href="/profile" navigate={navigate}>Профиль</FooterLink>
       </nav>
     </div>
     <div className="footer-group">

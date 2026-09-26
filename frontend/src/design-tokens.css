@@ -26,7 +26,16 @@ html { font-family: var(--ct-font-ui); }
 body { background: radial-gradient(circle at 78% 0, #172137 0, transparent 30rem), var(--ct-canvas); }
 .balance, .commerce-balance, .reveal-contract-id, .admin-metric strong { font-family: var(--ct-font-data); font-variant-numeric: tabular-nums; }
 .app-shell { color: var(--ct-text); }
+.app-shell::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1; background: linear-gradient(90deg, transparent 0 49.9%, #57e3f308 50%, transparent 50.1%), linear-gradient(#57e3f306 1px, transparent 1px); background-size: 100% 100%, 100% 84px; mask-image: linear-gradient(to bottom, #000, transparent 70%); }
 .header { border-bottom-color: var(--ct-line); background: #0d111ae6; border-radius: 0 0 var(--ct-panel-radius) var(--ct-panel-radius); }
+main { max-width: 1440px; padding-top: clamp(42px, 6vw, 84px); position: relative; }
+main::before { content: ""; position: absolute; inset: 0 4.5% auto; height: 1px; background: linear-gradient(90deg, transparent, #57e3f344 22%, transparent 78%); pointer-events: none; }
+.intro, .route-state, .content-section { animation: ct-enter var(--ct-motion-normal) var(--ct-ease-emphasis) both; }
+.intro p { max-width: 62ch; line-height: 1.65; }
+.content-section { margin-top: clamp(62px, 9vw, 120px); }
+.skin-card { transition: transform var(--ct-motion-fast) var(--ct-ease-standard), border-color var(--ct-motion-fast) ease, box-shadow var(--ct-motion-fast) ease; }
+.skin-card:hover { transform: translateY(-4px); box-shadow: 0 18px 42px #0006; }
+footer.site-footer { padding-top: 52px; padding-bottom: 52px; background: linear-gradient(180deg, transparent, #090b0f 20%); }
 .panel { border-color: var(--ct-line); background: var(--ct-surface); border-radius: var(--ct-panel-radius); }
 .search { border-color: var(--ct-line); background: var(--ct-surface); border-radius: var(--ct-control-radius); }
 .primary { background: var(--ct-cyan); border-radius: var(--ct-control-radius); transition: transform var(--ct-motion-fast) var(--ct-ease-standard), box-shadow var(--ct-motion-fast) var(--ct-ease-standard), background var(--ct-motion-fast) ease; }
@@ -54,6 +63,15 @@ body { background: radial-gradient(circle at 78% 0, #172137 0, transparent 30rem
 .login-modal { border-color: var(--ct-line); background: linear-gradient(145deg, var(--ct-surface-raised), var(--ct-surface)); border-radius: var(--ct-panel-radius); box-shadow: 0 30px 90px #000b; }
 .login-modal input { border-color: var(--ct-line); background: var(--ct-canvas); border-radius: var(--ct-control-radius); }
 .login-modal input:focus { border-color: var(--ct-cyan); box-shadow: 0 0 0 3px #57e3f322; }
+.profile-button { transition: color var(--ct-motion-fast) var(--ct-ease-standard), transform var(--ct-motion-fast) var(--ct-ease-standard); }
+.profile-button:hover { color: var(--ct-text); transform: translateY(-1px); }
+.profile-popover { border: 1px solid var(--ct-line); border-radius: var(--ct-panel-radius); background: var(--ct-surface-raised); box-shadow: 0 24px 70px #000b; padding: 8px; animation: ct-pop var(--ct-motion-fast) var(--ct-ease-emphasis) both; }
+.profile-popover button { border-radius: 10px; transition: background var(--ct-motion-fast) ease, color var(--ct-motion-fast) ease; }
+.profile-popover button:hover { background: #57e3f314; color: var(--ct-cyan); }
 .profile-shortcuts button { border-color: var(--ct-line); background: var(--ct-surface); border-radius: var(--ct-panel-radius); transition: transform .2s ease, border-color .2s ease, background .2s ease; }
 .profile-shortcuts button:hover { transform: translateY(-4px); border-color: var(--ct-cyan); background: var(--ct-surface-raised); }
 .admin-metric, .admin-users, .admin-2fa { border-radius: var(--ct-panel-radius); }
+@keyframes ct-pop { from { opacity: 0; transform: translateY(-6px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes ct-enter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+@media (max-width: 700px) { .mobile-navigation { grid-template-columns: repeat(5, 1fr); } .mobile-navigation a { font-size: 7px; } }

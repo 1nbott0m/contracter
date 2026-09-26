@@ -70,3 +70,12 @@ license key is used here.
 
 Every level has a non-motion semantic state, and the global reduced-motion
 rule removes decorative loops while preserving labels, status text, and actions.
+
+### Watermelon UI evaluation (2026-09-26)
+
+- **Inspected:** Watermelon home, blocks/contact, animated components and dashboard catalogue.
+- **Adopted:** the block-level composition idea: one clear first action, a calm supporting explanation, grouped sections with strong vertical rhythm, and forms that feel like part of the product rather than a separate template.
+- **Adapted:** CONTRACTER keeps its existing graphite/cyan/violet palette, server-status bar, CC truth states, and native route components. The new shell adds a restrained grid atmosphere, stronger section spacing, and a clearer profile destination without importing Watermelon's branding or copy.
+- **Rejected:** copying a contact-page layout into market/contract flows. Those are operational tools and must keep dense controls, stable image frames, and server-owned state.
+
+Watermelon was used as a composition reference, not as a runtime dependency. Skiper was used similarly for interaction patterns; no external component package is installed, so existing API behavior and bundle size remain stable.

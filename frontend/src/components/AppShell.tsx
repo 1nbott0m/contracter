@@ -24,6 +24,7 @@ const primaryNavigation = [
   { id: 'market', href: '/market', label: 'МАРКЕТ' },
   { id: 'inventory', href: '/inventory', label: 'ИНВЕНТАРЬ' },
   { id: 'history', href: '/history', label: 'ИСТОРИЯ' },
+  { id: 'profile', href: '/profile', label: 'ПРОФИЛЬ' },
 ] as const;
 
 function activePrimaryRoute(route: AppRoute) {
