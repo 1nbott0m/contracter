@@ -267,14 +267,25 @@ pub async fn verify_totp(
     caller: AuthenticatedUser,
     code: &str,
 ) -> Result<(), AuthError> {
+    if !db::admin_totp_attempt_allowed(database.pool(), caller.session_public_id).await? {
+        return Err(AuthError::InvalidCredentials);
+    }
     let blob = db::administrator_totp_secret(database.pool(), caller.user_public_id)
         .await?
         .ok_or(AuthError::InvalidCredentials)?;
     let secret = decrypt_totp_secret(protector, &blob, caller.user_public_id)?;
     if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) {
+        let _ = db::record_admin_totp_failure(database.pool(), caller.session_public_id).await?;
         return Err(AuthError::InvalidCredentials);
     }
-    let number: u32 = code.parse().map_err(|_| AuthError::InvalidCredentials)?;
+    let number: u32 = match code.parse() {
+        Ok(number) => number,
+        Err(_) => {
+            let _ =
+                db::record_admin_totp_failure(database.pool(), caller.session_public_id).await?;
+            return Err(AuthError::InvalidCredentials);
+        }
+    };
     let counter = chrono::Utc::now().timestamp().div_euclid(30) as u64;
     for candidate in counter.saturating_sub(1)..=counter.saturating_add(1) {
         let mut mac =
@@ -290,9 +301,11 @@ pub async fn verify_totp(
             if !db::mark_session_totp_verified(database.pool(), caller.session_public_id).await? {
                 return Err(AuthError::SessionInvalid);
             }
+            db::clear_admin_totp_failures(database.pool(), caller.session_public_id).await?;
             return Ok(());
         }
     }
+    let _ = db::record_admin_totp_failure(database.pool(), caller.session_public_id).await?;
     Err(AuthError::InvalidCredentials)
 }
 
