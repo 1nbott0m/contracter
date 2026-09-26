@@ -174,6 +174,13 @@ async function requestAllPages<T>(path: string): Promise<ApiPage<T>> {
   }
 }
 
+/** Load one bounded public page so large catalogs can render progressively. */
+async function requestPage<T>(path: string, cursor?: string): Promise<ApiPage<T>> {
+  const query = new URLSearchParams({ limit: '200' });
+  if (cursor !== undefined) query.set('cursor', cursor);
+  return request<ApiPage<T>>(`${path}?${query.toString()}`);
+}
+
 async function requestAllContractHistory(): Promise<ContractHistoryItem[]> {
   const items: ContractHistoryItem[] = [];
   const seenCursors = new Set<string>();
@@ -234,6 +241,8 @@ export const api = {
   verifyTotp: (code: string) => jsonPost<void>('/auth/totp/verify', { code }),
   balance: () => request<Balance>('/me/balance'),
   inventory: () => requestAllPages<ApiInventoryItem>('/me/inventory'),
+  catalogSkusPage: (cursor?: string) => requestPage<CatalogSku>('/catalog/skus', cursor),
+  marketValuationsPage: (cursor?: string) => requestPage<MarketValuation>('/market/valuations', cursor),
   catalogSkus: () => requestAllPages<CatalogSku>('/catalog/skus'),
   marketValuations: () => requestAllPages<MarketValuation>('/market/valuations'),
   allocateQuote: () => jsonPost<QuoteAllocationResponse>('/me/quote-allocations'),

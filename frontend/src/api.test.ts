@@ -56,6 +56,19 @@ afterEach(() => {
 });
 
 describe('paginated API lists', () => {
+  it('loads one bounded catalog page without eagerly following its cursor', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [{ page: 1 }], next_cursor: 'next' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.catalogSkusPage()).resolves.toEqual({ items: [{ page: 1 }], next_cursor: 'next' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const firstCall = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit] | undefined;
+    expect(new URL(String(firstCall?.[0])).searchParams.get('limit')).toBe('200');
+  });
+
   it.each([
     ['inventory', '/api/v1/me/inventory'],
     ['catalogSkus', '/api/v1/catalog/skus'],

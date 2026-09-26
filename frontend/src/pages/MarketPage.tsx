@@ -8,7 +8,7 @@ import type { Navigate } from '../router';
 import type { SessionState } from '../session';
 import type { AsyncState, MarketItem } from '../types';
 
-type MarketApi = Pick<typeof api, 'catalogSkus' | 'marketValuations' | 'balance' | 'inventory' | 'marketPurchase'>;
+type MarketApi = Pick<typeof api, 'catalogSkusPage' | 'marketValuations' | 'balance' | 'inventory' | 'marketPurchase'>;
 type PurchaseState = { status: 'idle' | 'loading' | 'success' | 'error'; message?: string };
 type MarketSort = 'name' | 'price-asc' | 'price-desc';
 
@@ -34,18 +34,21 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
   const [balance, setBalance] = useState<number | null>(null);
   const [purchases, setPurchases] = useState<Record<string, PurchaseState>>({});
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const [nextCatalogCursor, setNextCatalogCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const purchaseKeys = useRef(new Map<string, string>());
 
   useEffect(() => {
     let active = true;
     setState({ status: 'loading' });
     setApiStatus?.('connecting');
-    Promise.all([client.catalogSkus(), client.marketValuations()])
+    Promise.all([client.catalogSkusPage(), client.marketValuations()])
       .then(([catalog, valuations]) => {
         if (!active) return;
         const bySku = new Map(valuations.items.map((valuation) => [valuation.sku_id, valuation]));
         const items = catalog.items.map((sku) => catalogSkuToMarketItem(sku, bySku.get(sku.sku_id)));
         setState(items.length ? { status: 'success', data: items } : { status: 'empty', data: [] });
+        setNextCatalogCursor(catalog.next_cursor ?? null);
         setApiStatus?.('live');
       })
       .catch((error: unknown) => {
@@ -89,6 +92,28 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
   }, [availability, rarity, search, sort, source, wear]);
 
   const retryLoad = () => setRetryAttempt((attempt) => attempt + 1);
+  const loadMore = async () => {
+    if (!nextCatalogCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const [catalog, valuations] = await Promise.all([
+        client.catalogSkusPage(nextCatalogCursor),
+        client.marketValuations(),
+      ]);
+      const bySku = new Map(valuations.items.map((valuation) => [valuation.sku_id, valuation]));
+      const nextItems = catalog.items.map((sku) => catalogSkuToMarketItem(sku, bySku.get(sku.sku_id)));
+      setState((current) => {
+        const existing = current.status === 'success' || current.status === 'empty' ? current.data || [] : [];
+        const merged = [...existing, ...nextItems];
+        return merged.length ? { status: 'success', data: merged } : { status: 'empty', data: [] };
+      });
+      setNextCatalogCursor(catalog.next_cursor ?? null);
+    } catch (error: unknown) {
+      setState((current) => current.status === 'success' ? current : { status: 'error', error: error instanceof Error ? error.message : 'Маркет недоступен' });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
   const purchase = async (item: MarketItem) => {
     if (session.status !== 'authenticated') {
       navigate('/login');
@@ -145,5 +170,6 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
         {purchaseState.message && <p className={`purchase-message ${purchaseState.status}`} role={purchaseState.status === 'error' ? 'alert' : 'status'}>{purchaseState.message}</p>}
       </article>;
     })}</section>}
+    {nextCatalogCursor && <div className="commerce-load-more"><button type="button" className="secondary" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'ЗАГРУЗКА…' : 'ЗАГРУЗИТЬ ЕЩЁ'}</button></div>}
   </>;
 }

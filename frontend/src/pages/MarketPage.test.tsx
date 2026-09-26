@@ -36,7 +36,7 @@ afterEach(cleanup);
 
 it('filters market results and keeps unavailable offers unpurchasable', async () => {
   const client = {
-    catalogSkus: vi.fn(async () => ({ items: catalog })),
+    catalogSkusPage: vi.fn(async () => ({ items: catalog })),
     marketValuations: vi.fn(async () => ({ items: valuations })),
     balance: vi.fn(async () => ({ currency_code: 'CC' as const, balance_microcredits: 12_000_000 })),
     inventory: vi.fn(async () => ({ items: [] })),
@@ -61,7 +61,7 @@ it('uses one idempotency key while a purchase is retried and refreshes balance a
     .mockResolvedValueOnce({ currency_code: 'CC', balance_microcredits: 10_000_000 });
   const onBalanceChange = vi.fn();
   const client = {
-    catalogSkus: vi.fn(async () => ({ items: catalog.slice(0, 1) })),
+    catalogSkusPage: vi.fn(async () => ({ items: catalog.slice(0, 1) })),
     marketValuations: vi.fn(async () => ({ items: valuations.slice(0, 1) })),
     balance,
     inventory: vi.fn(async () => ({ items: [{ item_id: 'owned-item' }] })),
@@ -82,7 +82,7 @@ it('uses one idempotency key while a purchase is retried and refreshes balance a
 
 it('explains when the server catalog is ready but CC prices are not published', async () => {
   const client = {
-    catalogSkus: vi.fn(async () => ({ items: catalog.slice(0, 1) })),
+    catalogSkusPage: vi.fn(async () => ({ items: catalog.slice(0, 1) })),
     marketValuations: vi.fn(async () => ({ items: [] })),
     balance: vi.fn(),
     inventory: vi.fn(),
