@@ -90,14 +90,14 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
         </div> : <p className="history-media-unavailable">Изображения и значения недоступны в текущем API истории.</p>}
       </article>;
     })}</section>}
-    {mode === 'ledger' && <HistoryRows state={ledgerState} empty="Операций CC пока нет" title="История баланса CC" render={(entry) => <><strong>{entry.operation}</strong><span>{microcredits(entry.amount_microcredits)}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
-    {mode === 'inventory' && <HistoryRows state={inventoryState} empty="Событий инвентаря пока нет" title="История инвентаря" render={(entry) => <><strong>{entry.event_kind}</strong><span>Предмет {entry.inventory_item_id}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
+    {mode === 'ledger' && <HistoryRows state={ledgerState} empty="Операций CC пока нет" title="История баланса CC" onRetry={() => setReload((value) => value + 1)} render={(entry) => <><strong>{entry.operation}</strong><span>{microcredits(entry.amount_microcredits)}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
+    {mode === 'inventory' && <HistoryRows state={inventoryState} empty="Событий инвентаря пока нет" title="История инвентаря" onRetry={() => setReload((value) => value + 1)} render={(entry) => <><strong>{entry.event_kind}</strong><span>Предмет {entry.inventory_item_id}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
   </>;
 }
 
-function HistoryRows<T>({ state, empty, title, render }: { state: AsyncState<T[]>; empty: string; title: string; render: (entry: T) => ReactNode }) {
+function HistoryRows<T>({ state, empty, title, onRetry, render }: { state: AsyncState<T[]>; empty: string; title: string; onRetry: () => void; render: (entry: T) => ReactNode }) {
   if (state.status === 'loading') return <div className="commerce-state" role="status"><RefreshCw className="spin" size={18} /> Загружаем…</div>;
-  if (state.status === 'error') return <div className="commerce-state" role="alert"><strong>История недоступна</strong><span>Демонстрационные события не подставлены.</span></div>;
+  if (state.status === 'error') return <div className="commerce-state" role="alert"><strong>История недоступна</strong><span>Демонстрационные события не подставлены.</span><button type="button" onClick={onRetry}>Повторить</button></div>;
   if (state.status === 'empty' || state.status === 'idle') return <div className="commerce-state"><strong>{empty}</strong></div>;
   return <section className="history-list" aria-label={title}>{state.data.map((entry, index) => <article className="history-card panel history-row" key={index}>{render(entry)}</article>)}</section>;
 }
