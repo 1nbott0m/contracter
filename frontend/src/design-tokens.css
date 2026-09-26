@@ -61,6 +61,7 @@ footer.site-footer { padding-top: 52px; padding-bottom: 52px; background: linear
 .commerce-state { border-color: var(--ct-line); border-radius: var(--ct-panel-radius); }
 .market-buy, .inventory-contract-action { border-radius: var(--ct-control-radius); }
 .login-modal { border-color: var(--ct-line); background: linear-gradient(145deg, var(--ct-surface-raised), var(--ct-surface)); border-radius: var(--ct-panel-radius); box-shadow: 0 30px 90px #000b; }
+.login-modal::before { content: ""; display: block; width: 100%; height: 74px; margin-bottom: 18px; background: url('/contracter-brand.png') center / contain no-repeat; filter: drop-shadow(0 0 16px #57e3f333); }
 .login-modal input { border-color: var(--ct-line); background: var(--ct-canvas); border-radius: var(--ct-control-radius); }
 .login-modal input:focus { border-color: var(--ct-cyan); box-shadow: 0 0 0 3px #57e3f322; }
 .profile-button { transition: color var(--ct-motion-fast) var(--ct-ease-standard), transform var(--ct-motion-fast) var(--ct-ease-standard); }
