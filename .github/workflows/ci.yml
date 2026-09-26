@@ -16,7 +16,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/contracter_test
-  TEST_DATABASE_URL_INTEGRATION: postgresql://postgres:postgres@localhost:5432/contracter_integration
+  # Integration fixtures run as the database owner-role used by the
+  # SECURITY DEFINER/append-only guards, not as the bootstrap superuser.
+  TEST_DATABASE_URL_INTEGRATION: postgresql://anonymous:anonymous-ci@localhost:5432/contracter_integration
 
 jobs:
   verify:
@@ -62,7 +64,7 @@ jobs:
       - name: Verify workspace and PostgreSQL integration
         run: |
           psql postgresql://postgres:postgres@localhost:5432/postgres \
-            -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE anonymous NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_admin_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_readonly NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
+            -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE anonymous LOGIN PASSWORD 'anonymous-ci'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE anonymous LOGIN PASSWORD 'anonymous-ci'; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_admin_runtime NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$; DO \$\$ BEGIN CREATE ROLE contracter_readonly NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
           psql postgresql://postgres:postgres@localhost:5432/postgres \
             -v ON_ERROR_STOP=1 -c 'CREATE DATABASE contracter_integration OWNER anonymous'
           ./scripts/verify.sh
