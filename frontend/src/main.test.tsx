@@ -61,6 +61,18 @@ it('shows owned login validation instead of sending empty credentials', async ()
   expect(fetchMock.mock.calls.some((call) => String((call as unknown as [RequestInfo | URL])[0]).includes('/auth/login'))).toBe(false);
 });
 
+it('turns a Steam callback failure into a safe retry message', async () => {
+  window.history.replaceState({}, '', '/login?steam_error=verification_failed');
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+    error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+  }), { status: 401, headers: { 'Content-Type': 'application/json' } })));
+
+  await import('./main');
+
+  expect((await screen.findByRole('alert')).textContent).toContain('Не удалось подтвердить вход через Steam. Попробуйте ещё раз.');
+  expect(screen.getByRole('button', { name: /ВОЙТИ ЧЕРЕЗ STEAM/ })).toBeTruthy();
+});
+
 it('replaces development fixtures when the live inventory is empty', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [] }), {
     status: 200,

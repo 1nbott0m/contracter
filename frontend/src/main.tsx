@@ -38,6 +38,12 @@ function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; logi
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const registered = new URLSearchParams(window.location.search).get('registered') === '1';
+  const steamError = new URLSearchParams(window.location.search).get('steam_error');
+  const steamErrorMessage = steamError === 'verification_failed'
+    ? 'Не удалось подтвердить вход через Steam. Попробуйте ещё раз.'
+    : steamError === 'account_creation_failed'
+      ? 'Не удалось создать аккаунт Steam. Попробуйте ещё раз.'
+      : '';
   const submitLogin = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoginError('');
@@ -59,7 +65,7 @@ function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; logi
     }
   };
 
-  return <form className="login-modal route-login" noValidate onSubmit={submitLogin}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Войти</h1>{registered && <p className="auth-success" role="status">Аккаунт создан. Теперь войдите с выбранным паролем.</p>}<label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required aria-invalid={Boolean(loginError && !login.trim())} /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required aria-invalid={Boolean(loginError && !password)} /></label>{loginError && <p className="login-error" role="alert">{loginError}</p>}<button className="primary" type="submit">ПРОДОЛЖИТЬ <ArrowRight size={16} /></button><button className="secondary-auth" type="button" onClick={() => window.location.assign('https://contracter.onrender.com/api/v1/auth/steam/start')}>ВОЙТИ ЧЕРЕЗ STEAM</button><button className="text-button auth-switch" type="button" onClick={() => navigate('/register')}>Нет аккаунта? Зарегистрироваться</button></form>;
+  return <form className="login-modal route-login" noValidate onSubmit={submitLogin}><span className="eyebrow">CONTRACTER / ACCOUNT</span><h1>Войти</h1>{registered && <p className="auth-success" role="status">Аккаунт создан. Теперь войдите с выбранным паролем.</p>}{steamErrorMessage && <p className="login-error" role="alert">{steamErrorMessage}</p>}<label>ЛОГИН<input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required aria-invalid={Boolean(loginError && !login.trim())} /></label><label>ПАРОЛЬ<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required aria-invalid={Boolean(loginError && !password)} /></label>{loginError && <p className="login-error" role="alert">{loginError}</p>}<button className="primary" type="submit">ПРОДОЛЖИТЬ <ArrowRight size={16} /></button><button className="secondary-auth" type="button" onClick={() => window.location.assign('https://contracter.onrender.com/api/v1/auth/steam/start')}>ВОЙТИ ЧЕРЕЗ STEAM</button><button className="text-button auth-switch" type="button" onClick={() => navigate('/register')}>Нет аккаунта? Зарегистрироваться</button></form>;
 }
 
 function RegisterPage({ navigate }: { navigate: Navigate }) {

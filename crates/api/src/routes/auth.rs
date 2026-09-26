@@ -141,34 +141,49 @@ pub async fn steam_start() -> Redirect {
     )
 }
 
+fn steam_failure_redirect(code: &'static str) -> (HeaderMap, Redirect) {
+    (
+        HeaderMap::new(),
+        Redirect::temporary(match code {
+        "account_creation_failed" => {
+            "https://contracter-1t9.pages.dev/login?steam_error=account_creation_failed"
+        }
+        _ => "https://contracter-1t9.pages.dev/login?steam_error=verification_failed",
+        }),
+    )
+}
+
 pub async fn steam_callback(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let Some(claimed_id) = params.get("openid.claimed_id") else {
-        return Err(ApiError::Unauthorized("Steam verification failed".into()));
+        return Ok(steam_failure_redirect("verification_failed"));
     };
     let Some(steam_id) = claimed_id
         .rsplit('/')
         .next()
         .filter(|id| id.chars().all(|c| c.is_ascii_digit()) && id.len() >= 10)
     else {
-        return Err(ApiError::Unauthorized("Steam verification failed".into()));
+        return Ok(steam_failure_redirect("verification_failed"));
     };
     let mut form = params.clone();
     form.insert("openid.mode".into(), "check_authentication".into());
-    let response = reqwest::Client::new()
+    let response = match reqwest::Client::new()
         .post("https://steamcommunity.com/openid/login")
         .form(&form)
         .send()
         .await
-        .map_err(|_| ApiError::Unauthorized("Steam verification failed".into()))?;
-    let body = response
-        .text()
-        .await
-        .map_err(|_| ApiError::Unauthorized("Steam verification failed".into()))?;
+    {
+        Ok(response) => response,
+        Err(_) => return Ok(steam_failure_redirect("verification_failed")),
+    };
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(_) => return Ok(steam_failure_redirect("verification_failed")),
+    };
     if !body.lines().any(|line| line.trim() == "is_valid:true") {
-        return Err(ApiError::Unauthorized("Steam verification failed".into()));
+        return Ok(steam_failure_redirect("verification_failed"));
     }
     let user = db::find_user_by_steam_id(state.database().pool(), steam_id)
         .await
@@ -176,13 +191,17 @@ pub async fn steam_callback(
     let (user_id, user_public_id) = match user {
         Some(pair) => pair,
         None => {
-            let public_id = auth::register_steam(state.database(), steam_id).await?;
-            let (user_id, _) = db::find_user_by_steam_id(state.database().pool(), steam_id)
+            let public_id = match auth::register_steam(state.database(), steam_id).await {
+                Ok(public_id) => public_id,
+                Err(_) => return Ok(steam_failure_redirect("account_creation_failed")),
+            };
+            let (user_id, _) = match db::find_user_by_steam_id(state.database().pool(), steam_id)
                 .await
                 .map_err(application::auth::AuthError::from)?
-                .ok_or_else(|| {
-                    ApiError::Unauthorized("Steam account could not be created".into())
-                })?;
+            {
+                Some(pair) => pair,
+                None => return Ok(steam_failure_redirect("account_creation_failed")),
+            };
             (user_id, public_id)
         }
     };
@@ -204,4 +223,25 @@ pub async fn steam_callback(
         headers,
         Redirect::temporary("https://contracter-1t9.pages.dev/contracts"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::steam_failure_redirect;
+    use axum::{http::header::LOCATION, response::IntoResponse};
+
+    #[test]
+    fn steam_failure_redirect_is_safe_and_does_not_leak_provider_payload() {
+        let response = steam_failure_redirect("verification_failed").into_response();
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok());
+
+        assert_eq!(response.status().as_u16(), 307);
+        assert_eq!(
+            location,
+            Some("https://contracter-1t9.pages.dev/login?steam_error=verification_failed")
+        );
+    }
 }
