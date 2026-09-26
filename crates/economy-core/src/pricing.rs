@@ -1,9 +1,69 @@
 use rust_decimal::Decimal;
 use thiserror::Error;
 
+/// The sell-back spread: converting an item to credits pays 85% of its
+/// verified market value.
+///
+/// This is not the house edge and must not be confused with it. It
+/// applies when a player *leaves* the item economy; the house edge below
+/// applies when a player runs a contract. A player who contracts and
+/// never sells pays the edge and never the spread.
 const BUYBACK_PERCENT: i64 = 85;
 const PERCENT_DENOMINATOR: i64 = 100;
 const MIN_SALES: usize = 20;
+/// Basis points, so 10_000 is one whole.
+const BPS_DENOMINATOR: i64 = 10_000;
+
+/// The house edge on a contract, in basis points: 8%.
+///
+/// The margin is taken at contract time, by charging more than the
+/// outcome distribution is worth, rather than by damping the outcome
+/// probabilities. Keeping it out of the weights is what lets collection
+/// probability stay exactly proportional to input composition and lets
+/// scarcity remain a supply signal rather than a hidden margin dial --
+/// the two must stay separable, or neither can be audited.
+pub const HOUSE_EDGE_BPS: i64 = 800;
+
+/// What a contract is expected to return, as a fraction of what it costs:
+/// 92%. The complement of [`HOUSE_EDGE_BPS`], derived rather than written
+/// down twice so the two cannot drift apart.
+pub const TARGET_EV_BPS: i64 = BPS_DENOMINATOR - HOUSE_EDGE_BPS;
+
+/// The least an item may be worth and still be tradeable: 20 credits.
+///
+/// One credit is 1,000,000 microcredits, so this is 20_000_000. The floor
+/// exists so that rounding, spreads and fees stay small relative to the
+/// amounts they act on: on a one-microcredit item every one of them would
+/// dominate the price.
+pub const MINIMUM_ITEM_VALUE_MICROCREDITS: i64 = 20_000_000;
+
+/// The identity of the pricing rules a quote was produced under.
+///
+/// The game-mechanics document requires the formula to be deterministic,
+/// versioned, and fixed in the quote before it is accepted. Without a
+/// version, a quote priced yesterday and one priced after a parameter
+/// change are indistinguishable in storage, so neither a dispute nor a
+/// reconciliation can be settled: there is no way to say which rules
+/// applied.
+///
+/// Derived from the parameters rather than written down beside them. A
+/// hand-maintained version is a version someone forgets to bump, and a
+/// stale one is worse than none because it asserts something false.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PricingFormulaVersion {
+    pub house_edge_bps: i64,
+    pub buyback_percent: i64,
+    pub minimum_item_value_microcredits: i64,
+}
+
+/// The rules currently in force.
+pub const fn pricing_formula_version() -> PricingFormulaVersion {
+    PricingFormulaVersion {
+        house_edge_bps: HOUSE_EDGE_BPS,
+        buyback_percent: BUYBACK_PERCENT,
+        minimum_item_value_microcredits: MINIMUM_ITEM_VALUE_MICROCREDITS,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PricedOutcome {
@@ -28,6 +88,10 @@ impl PricedOutcome {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuotePrice {
+    /// The rules this price was computed under, carried with the price so
+    /// a stored quote records them rather than relying on whatever the
+    /// code happens to say when the quote is later read.
+    pub formula_version: PricingFormulaVersion,
     pub expected_buyback_microcredits: i64,
     pub quote_total_microcredits: i64,
     pub adjustment_microcredits: i64,
@@ -46,6 +110,26 @@ pub enum PricingError {
     InvalidProbabilities,
     #[error("checked arithmetic overflow")]
     Overflow,
+    #[error(
+        "an item must be worth at least {MINIMUM_ITEM_VALUE_MICROCREDITS} microcredits, got {value_microcredits}"
+    )]
+    ItemBelowMinimumValue { value_microcredits: i64 },
+}
+
+/// Rejects an item too cheap to trade.
+///
+/// A negative value is reported as [`PricingError::NegativeAmount`]
+/// rather than as "too cheap": it is not a price at all, and collapsing
+/// the two would let a data fault be read as an ordinary business
+/// refusal.
+pub const fn validate_item_value(value_microcredits: i64) -> Result<(), PricingError> {
+    if value_microcredits < 0 {
+        return Err(PricingError::NegativeAmount);
+    }
+    if value_microcredits < MINIMUM_ITEM_VALUE_MICROCREDITS {
+        return Err(PricingError::ItemBelowMinimumValue { value_microcredits });
+    }
+    Ok(())
 }
 
 pub fn trimmed_mean_microcredits(sales: &[i64]) -> Result<i64, PricingError> {
@@ -111,9 +195,12 @@ pub fn quote_adjustment_microcredits(
     }
 
     let market_numerator = outcomes.iter().try_fold(0_i128, |sum, outcome| {
-        if outcome.verified_price_microcredits < 0 {
-            return Err(PricingError::NegativeAmount);
-        }
+        // The floor is enforced here, on the path a quote actually takes,
+        // rather than merely being defined: an outcome cheaper than the
+        // minimum tradeable value must not be priced into a contract at
+        // all. Defining the constant without consulting it is how a rule
+        // ends up documented but absent.
+        validate_item_value(outcome.verified_price_microcredits)?;
         let scaled_weight = i128::from(outcome.weight_numerator)
             .checked_mul(common_denominator / i128::from(outcome.weight_denominator))
             .ok_or(PricingError::Overflow)?;
@@ -128,13 +215,60 @@ pub fn quote_adjustment_microcredits(
     let expected_buyback_denominator = common_denominator
         .checked_mul(i128::from(PERCENT_DENOMINATOR))
         .ok_or(PricingError::Overflow)?;
-    let expected = round_ratio_half_even(expected_buyback_numerator, expected_buyback_denominator)?;
-    let quote_total = ceil_ratio(market_numerator, common_denominator)?;
+    // Floored, matching `buyback_microcredits` exactly.
+    //
+    // This used to round half-even, which meant the figure quoted before
+    // acceptance could exceed the figure settlement pays by a microcredit
+    // -- two rounding rules for one quantity, and the discrepancy always
+    // fell against the player. A quote has to promise what it will pay.
+    let expected = expected_buyback_numerator
+        .checked_div(expected_buyback_denominator)
+        .ok_or(PricingError::Overflow)?;
+    let expected = i64::try_from(expected).map_err(|_| PricingError::Overflow)?;
+    // The house edge lives here, and only here.
+    //
+    // The contract costs `market_value / 0.92`, so the player's expected
+    // return is 92% of what they paid and the house keeps 8%. Charging
+    // the market value itself -- which is what this did before the
+    // game-mechanics document fixed an explicit edge -- would leave a 0%
+    // contract-time margin and make the whole house take depend on
+    // players later selling back.
+    //
+    // Rounded up, deliberately: rounding must not fall on the player's
+    // side of the edge, or the realised margin would sit below the
+    // configured one by up to a microcredit on every contract.
+    // Reduced before the edge is applied. `market_numerator` is already a
+    // product of prices and weights, and multiplying by 10_000 costs four
+    // more decimal digits of headroom; without this, a quote that priced
+    // fine before the edge existed could start refusing with `Overflow`.
+    // Dividing both sides by their common factor first is exact, so the
+    // result is unchanged -- only the range it survives grows.
+    let reduction = gcd_i128(market_numerator, common_denominator).max(1);
+    let quote_total = ceil_ratio(
+        (market_numerator / reduction)
+            .checked_mul(i128::from(BPS_DENOMINATOR))
+            .ok_or(PricingError::Overflow)?,
+        (common_denominator / reduction)
+            .checked_mul(i128::from(TARGET_EV_BPS))
+            .ok_or(PricingError::Overflow)?,
+    )?;
     let adjustment = quote_total
         .checked_sub(verified_input_value_microcredits)
         .ok_or(PricingError::Overflow)?;
     let fee = adjustment.max(0);
-    let rebate = adjustment.checked_neg().unwrap_or(0).max(0);
+    // A rebate is paid at the buyback rate, not at face value.
+    //
+    // Paid in full it would be a spread-free exit from the item economy:
+    // contract valuable inputs into a cheap outcome set, take the
+    // difference in credits at 100%, and keep the output item as well --
+    // strictly better than selling, which pays 85%. The rebate is a
+    // sell-back of the excess, so it is priced as one.
+    let excess = adjustment.checked_neg().unwrap_or(0).max(0);
+    let rebate = if excess == 0 {
+        0
+    } else {
+        buyback_microcredits(excess)?
+    };
     let effective_spread = if quote_total == 0 {
         Decimal::ZERO
     } else {
@@ -149,6 +283,7 @@ pub fn quote_adjustment_microcredits(
     };
 
     Ok(QuotePrice {
+        formula_version: pricing_formula_version(),
         expected_buyback_microcredits: expected,
         quote_total_microcredits: quote_total,
         adjustment_microcredits: adjustment,

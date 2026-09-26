@@ -78,10 +78,16 @@ they were never shown.
 ## Bounded input
 
 - `limit` is clamped to `1..=200`, default `50`. A limit is an
-  instruction to the database about how much work to do, which is
-  exactly the kind of client input that must be bounded before it gets
-  there. Clamped rather than rejected: there is nothing useful to tell a
-  caller who sent `limit=1000000` beyond "you got 200".
+  instruction to the database about how much work to do, which is exactly
+  the kind of client input that must be bounded before it gets there.
+  Clamping rather than rejecting means a caller who asks for more simply
+  gets 200.
+
+  One edge worth knowing: the field is a `u16`, so anything above 65535 is
+  refused by deserialization as a `400` rather than clamped. Both answers
+  are defensible and neither lets the caller through, but they are
+  different answers to the same question, so the boundary is written down
+  rather than left to be found.
 - Unknown query parameters are **rejected** (`deny_unknown_fields`). A
   typo'd `?colection=` would otherwise be answered with the unfiltered
   list, which for a filter is the most dangerous possible default.

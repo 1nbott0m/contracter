@@ -397,28 +397,52 @@ async fn listing_collections_pages_by_public_id_and_hides_disabled_rows() {
         .expect("first page");
     assert_eq!(first.len(), 2, "a page is capped at the requested limit");
 
-    // Walk the whole catalog in pages of two and collect what this
-    // fixture inserted, proving no row is skipped or repeated.
+    // Walk in pages of two, collecting what this fixture inserted, and stop
+    // once past the largest id it could possibly have inserted.
+    //
+    // Stopping early matters because the integration suites commit their
+    // fixtures, so the collections table grows with every run and a full
+    // walk costs a round trip per two rows forever. It is still a complete
+    // check: the listing is ordered by public id, so no row of ours can
+    // appear after the largest of them -- including the disabled one, which
+    // is why that id is part of the bound.
+    let upper_bound = expected
+        .last()
+        .copied()
+        .expect("the fixture inserted rows")
+        .max(hidden.public_id);
     let mut seen = Vec::new();
     let mut cursor = None;
     loop {
         let page = db::list_collections(transaction.as_mut(), cursor, 2)
             .await
             .expect("page");
-        if page.is_empty() {
+        let Some(last) = page.last() else { break };
+        let past_our_rows = last.public_id > upper_bound;
+        cursor = Some(last.public_id);
+        seen.extend(page.into_iter().map(|row| row.public_id));
+        if past_our_rows {
             break;
         }
-        cursor = Some(page.last().expect("non-empty").public_id);
-        seen.extend(page.into_iter().map(|row| row.public_id));
     }
 
-    let mut mine: Vec<_> = seen
+    // In walk order, not sorted first. Sorting both sides before comparing
+    // proves nothing was skipped or repeated, but it cannot see an order
+    // that is consistently wrong -- an ORDER BY and cursor comparison
+    // reversed together would still pass.
+    assert!(
+        seen.windows(2).all(|pair| pair[0] < pair[1]),
+        "the listing must be strictly ascending by public id"
+    );
+    let mine: Vec<_> = seen
         .iter()
         .copied()
         .filter(|id| expected.contains(id))
         .collect();
-    mine.sort();
-    assert_eq!(mine, expected, "every enabled row appears exactly once");
+    assert_eq!(
+        mine, expected,
+        "every enabled row appears exactly once, in ascending order"
+    );
     assert!(
         !seen.contains(&hidden.public_id),
         "a disabled collection is not part of the public catalog"

@@ -607,7 +607,7 @@ async fn runtime_role_can_query_availability_without_guard_table_access() {
     // The owner's own reads must work under the same role, and for the
     // same reason: they report a `locked` flag derived from
     // `inventory_item_locks`, which this role cannot read. Only the
-    // `owned_inventory` view (0017) runs with its owner's rights -- an
+    // `runtime_owned_inventory` view (0056) runs with its owner's rights -- an
     // `EXISTS` subquery written inline here would be evaluated with this
     // role's privileges and fail. Asserted under the role rather than as
     // the migration superuser, because as the superuser it passes either

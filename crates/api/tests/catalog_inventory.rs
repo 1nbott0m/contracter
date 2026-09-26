@@ -16,6 +16,14 @@ use uuid::Uuid;
 const PASSWORD: &str = "a-sufficiently-long-password";
 
 async fn test_state() -> Option<AppState> {
+    // `cargo test` runs many binaries in parallel, each with many tests,
+    // so this suite asks for far more simultaneous Argon2id hashes than a
+    // rate-limited service ever would. The production shed threshold is
+    // correct and stays correct; widening it here keeps a real behaviour
+    // from showing up as a flaky 503. The permit count -- the thing that
+    // actually bounds memory -- is untouched.
+    let _ = application::auth::set_hashing_queue_timeout(std::time::Duration::from_secs(120));
+
     let url = std::env::var("TEST_DATABASE_URL").ok()?;
     let database = Database::connect(&DatabaseConfig::new(url).expect("valid database URL"))
         .await
@@ -283,7 +291,7 @@ async fn give_item(state: &AppState, owner: i64, retired: bool, locked: bool) ->
     .expect("seed rarity");
     sqlx::query(
         "INSERT INTO wear_bands (code, lower_bound, upper_bound, includes_upper_bound) \
-         VALUES ('http_catalog', 0, 1, true) ON CONFLICT (code) DO NOTHING",
+         VALUES ('http_catalog', 0, 1, true) ON CONFLICT DO NOTHING",
     )
     .execute(pool)
     .await

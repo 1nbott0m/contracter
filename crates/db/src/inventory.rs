@@ -105,7 +105,7 @@ pub struct OwnedInventoryItem {
 /// single-item read, so the two can never disagree about what an owned
 /// item is or which columns it exposes.
 ///
-/// Reads `owned_inventory` (migration 0017) rather than joining the base
+/// Reads `runtime_owned_inventory` (migration 0056) rather than joining the base
 /// tables here. The `locked` flag needs `inventory_item_locks`, which
 /// `contracter_runtime` deliberately cannot read -- and an `EXISTS`
 /// subquery in that role's own statement is still subject to that role's
@@ -135,7 +135,7 @@ macro_rules! owned_inventory_projection {
                 wear_band_code, \
                 is_stattrak, \
                 is_souvenir \
-         FROM owned_inventory \
+         FROM runtime_owned_inventory \
          WHERE owner_user_id = $1"
     };
 }

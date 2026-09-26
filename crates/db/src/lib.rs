@@ -34,13 +34,13 @@ pub use identity::{
     AdminLedgerTransactionRow, AdminMarketPurchaseRow, AdminUserRow, UserCredential,
     admin_dashboard_stats, admin_disable_user, admin_totp_attempt_allowed, admin_users,
     administrator_totp_secret, clear_admin_totp_failures, create_user_session,
-    find_account_by_public_id, find_active_user_session, find_user_by_steam_id,
-    find_user_credential_by_login, find_user_credit_balance, is_active_administrator,
-    list_admin_active_sessions, list_admin_audit, list_admin_ledger_transactions,
-    list_admin_market_purchases, mark_session_totp_verified, record_admin_audit,
-    record_admin_totp_failure, register_invited_user, register_public_user, register_steam_user,
-    revoke_all_user_sessions, revoke_user_session, session_totp_verified,
-    set_administrator_totp_secret,
+    create_user_session_for_credential, find_account_by_public_id, find_active_user_session,
+    find_user_by_steam_id, find_user_credential_by_login, find_user_credit_balance,
+    invitation_is_redeemable, is_active_administrator, list_admin_active_sessions,
+    list_admin_audit, list_admin_ledger_transactions, list_admin_market_purchases,
+    mark_session_totp_verified, record_admin_audit, record_admin_totp_failure,
+    register_invited_user, register_public_user, register_steam_user, revoke_all_user_sessions,
+    revoke_user_session, session_totp_verified, set_administrator_totp_secret,
 };
 pub use ids::*;
 pub use inventory::{

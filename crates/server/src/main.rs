@@ -1,13 +1,13 @@
 mod config;
 mod shutdown;
 
-use api::{AppState, RouterConfig, build_router};
+use api::{AppState, build_router};
 use application::auth::AuthConfig;
 use application::quote_signing::QuoteSigner;
 use axum::{Router, routing::get};
 use config::{LogFormat, ServerConfig};
 use db::{Database, DatabaseConfig};
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -42,15 +42,8 @@ async fn run() -> Result<(), StartupError> {
         );
         state = state.with_insecure_cookies();
     }
-    let router = build_router(
-        state,
-        &RouterConfig {
-            rate_limit_burst: Some(config.rate_limit_burst()),
-            trusted_proxies: config.trusted_proxy_cidrs().clone(),
-            cors_allowed_origins: config.cors_allowed_origins().to_vec(),
-            ..RouterConfig::default()
-        },
-    );
+    let draining = state.draining_handle();
+    let router = build_router(state, &config.router_config());
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;
     let metrics_listener = tokio::net::TcpListener::bind(config.metrics_addr()).await?;
@@ -66,9 +59,15 @@ async fn run() -> Result<(), StartupError> {
 
     axum::serve(
         listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
+        // Carries the transport peer address into handlers, which the
+        // rate limiter keys on. Without this every caller shares one
+        // bucket and the limiter cannot tell them apart.
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown::shutdown_signal())
+    .with_graceful_shutdown(shutdown::drain_then_shutdown(
+        draining,
+        config.shutdown_drain(),
+    ))
     .await?;
 
     Ok(())

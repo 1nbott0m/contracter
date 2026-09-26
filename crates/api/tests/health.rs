@@ -151,11 +151,17 @@ async fn wrong_method_on_a_valid_route_still_gets_the_standard_envelope() {
         .unwrap();
 
     let response = router.oneshot(request).await.unwrap();
-    // Axum's default 405 is outside the fixed 9-code set; normalize_status
-    // maps a non-server-error status without a dedicated mapping to 400.
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // 405 keeps its meaning rather than collapsing to 400. It used to
+    // collapse, which produced a self-contradictory response -- a 400
+    // carrying axum's `Allow` header -- and made "wrong method"
+    // indistinguishable from "malformed body".
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert!(
+        response.headers().contains_key(axum::http::header::ALLOW),
+        "a 405 must still say which methods would work"
+    );
     let body = body_json(response).await;
-    assert_eq!(body["error"]["code"], "BAD_REQUEST");
+    assert_eq!(body["error"]["code"], "METHOD_NOT_ALLOWED");
     assert!(body["error"]["request_id"].is_string());
 }
 
@@ -255,8 +261,21 @@ async fn a_request_that_exceeds_the_configured_timeout_gets_a_deterministic_503(
         .body(Body::empty())
         .unwrap();
 
+    // Timed, because the status alone cannot tell the two causes apart:
+    // the timeout layer firing and the database call failing both come
+    // back as SERVICE_UNAVAILABLE. Removing the timeout layer left the
+    // status assertion green and simply took five seconds instead of five
+    // milliseconds -- so the only thing that distinguishes "the timeout
+    // fired" from "the pool gave up" is how long it took.
+    let started = std::time::Instant::now();
     let response = router.oneshot(request).await.unwrap();
+    let elapsed = started.elapsed();
+
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "the request timeout must fire long before the 5s pool acquire timeout, took {elapsed:?}"
+    );
     let body = body_json(response).await;
     assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
 }
@@ -277,4 +296,73 @@ async fn readiness_returns_200_against_a_real_postgresql_instance() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
     assert_eq!(body["status"], "ready");
+}
+
+/// A draining process must report itself unready before its socket closes.
+///
+/// `with_graceful_shutdown` stops accepting the instant the signal
+/// arrives. A load balancer only learns an instance is gone from its next
+/// readiness probe, so without this every rolling deploy produced a burst
+/// of connection-refused for callers routed in between.
+///
+/// Needs a reachable database, because the assertion that matters is the
+/// transition. An earlier version of this test used an unreachable one,
+/// where readiness was already 503 before draining began -- so deleting
+/// the draining check from the handler left it green. 200 before and 503
+/// after is the property; 503 before and 503 after proves nothing.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn a_draining_process_reports_itself_unready() {
+    let state = real_db_state()
+        .await
+        .expect("TEST_DATABASE_URL must be set to run this test");
+    let draining = state.draining_handle();
+    let router = router_with(state);
+
+    let ready = |router: axum::Router| async move {
+        router
+            .oneshot(
+                Request::builder()
+                    .uri("/health/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    };
+
+    assert_eq!(
+        ready(router.clone()).await.status(),
+        StatusCode::OK,
+        "a healthy process with a reachable database is ready before draining"
+    );
+
+    draining.store(true, std::sync::atomic::Ordering::Release);
+
+    let response = ready(router.clone()).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "and unready once draining, with the database still perfectly reachable"
+    );
+    let body = body_json(response).await;
+    assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
+
+    // Liveness stays up while draining: the process is still serving
+    // in-flight work, and an orchestrator that killed it now would cut
+    // those requests off.
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/health/live")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "draining is not the same as dead"
+    );
 }

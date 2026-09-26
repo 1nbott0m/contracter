@@ -1,6 +1,21 @@
 \set ON_ERROR_STOP on
 
+-- Whether a missing runtime role is a failure or merely a warning.
+--
+-- `db/verify.sh` passes TEST_RUNTIME_ROLE_REQUIRED through as this psql
+-- variable. The Rust integration tests already honoured it; this suite did
+-- not, so the variable that was meant to make a skipped privilege check
+-- loud made the SQL half of the checks no louder at all. A psql variable
+-- cannot be read inside a dollar-quoted DO block, so it is copied into a
+-- session setting the blocks can consult.
+\if :{?runtime_role_required}
+\else
+\set runtime_role_required ''
+\endif
+
 BEGIN;
+
+SELECT set_config('contracter.runtime_role_required', :'runtime_role_required', true);
 
 -- Force allocation of this session's temporary schema before defining
 -- transaction-scoped assertion helpers in pg_temp.
@@ -198,12 +213,21 @@ WHERE public_id IN (
     '10000000-0000-0000-0000-000000000002'
 );
 
+-- The treasury is a singleton, enforced by a partial unique index on the
+-- system kind. This suite rolls back at the end, but the Rust integration
+-- suites commit a treasury of their own, so on any database they have
+-- already run against one exists and inserting a second fails -- which
+-- made scripts/verify.sh pass on a fresh database and fail on the very next
+-- run against the same one. What the assertions below need is that a
+-- treasury exists, not that this suite created it, so an existing one is
+-- used as-is.
 INSERT INTO ledger_accounts (public_id, kind_code, owner_user_id)
 VALUES (
     '30000000-0000-0000-0000-000000000001',
     'system_treasury',
     NULL
-);
+)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO ledger_accounts (public_id, kind_code, owner_user_id)
 SELECT
@@ -473,11 +497,13 @@ SELECT pg_temp.assert_sqlstate(
     $sql$
 );
 
--- Input cardinality is validated before quote lookup or mutation. This keeps
--- malformed requests cheap and makes the 4-to-10 range independently
+-- Input cardinality is validated before quote lookup or mutation.  This keeps
+-- malformed requests cheap and makes the accepted range independently
 -- observable even though quote/stock fixtures are introduced by later tests.
+-- A contract takes four to ten inputs inclusive (0018); both edges are
+-- asserted, because a range guard that only checks one side is half a guard.
 SELECT pg_temp.assert_sqlstate(
-    'three locked contract inputs cannot be finalized',
+    'three locked contract inputs are below the minimum',
     '23514',
     $sql$
         SELECT finalize_contract(
@@ -489,25 +515,57 @@ SELECT pg_temp.assert_sqlstate(
 );
 
 SELECT pg_temp.assert_sqlstate(
-    'four locked contract inputs pass cardinality validation before quote lookup',
-    '23503',
-    $sql$
-        SELECT finalize_contract(
-            0,
-            ARRAY[1,2,3,4]::bigint[],
-            '70000000-0000-0000-0000-000000000002'
-        )
-    $sql$
-);
-
-SELECT pg_temp.assert_sqlstate(
-    'eleven locked contract inputs cannot be finalized',
+    'eleven locked contract inputs are above the maximum',
     '23514',
     $sql$
         SELECT finalize_contract(
             0,
             ARRAY[1,2,3,4,5,6,7,8,9,10,11]::bigint[],
             '70000000-0000-0000-0000-000000000003'
+        )
+    $sql$
+);
+
+-- Distinctness is not implied by the range.  Without this, one item passed
+-- five times would satisfy a bare length check and be spent as though it
+-- were five different items.
+SELECT pg_temp.assert_sqlstate(
+    'a repeated inventory item cannot pad a contract to the minimum',
+    '23514',
+    $sql$
+        SELECT finalize_contract(
+            0,
+            ARRAY[1,1,2,3]::bigint[],
+            '70000000-0000-0000-0000-000000000003'
+        )
+    $sql$
+);
+
+-- The lower and upper bounds themselves are accepted by the cardinality
+-- guard: each gets past it and fails later, on the quote that does not
+-- exist (23503, a foreign-key failure distinct from the 23514 above), which
+-- is what proves the guard let them through rather than the call happening
+-- to fail for the same reason as the out-of-range cases.
+SELECT pg_temp.assert_sqlstate(
+    'four unique inputs pass the cardinality guard',
+    '23503',
+    $sql$
+        SELECT finalize_contract(
+            0,
+            ARRAY[1,2,3,4]::bigint[],
+            '70000000-0000-0000-0000-000000000004'
+        )
+    $sql$
+);
+
+SELECT pg_temp.assert_sqlstate(
+    'ten unique inputs pass the cardinality guard',
+    '23503',
+    $sql$
+        SELECT finalize_contract(
+            0,
+            ARRAY[1,2,3,4,5,6,7,8,9,10]::bigint[],
+            '70000000-0000-0000-0000-000000000005'
         )
     $sql$
 );
@@ -694,9 +752,24 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
     THEN
+        -- A psql WARNING does not change the exit status, so on its own
+        -- this was a message a green run could print and still be green.
+        -- When the caller says the role is required, its absence fails.
+        IF current_setting('contracter.runtime_role_required', true) <> '' THEN
+            RAISE EXCEPTION 'contracter_runtime is required (TEST_RUNTIME_ROLE_REQUIRED) but does not exist: every privilege assertion below would pass vacuously';
+        END IF;
         RAISE WARNING 'SKIPPED (not verified): every contracter_runtime privilege assertion in this suite. The role does not exist in this database, so the least-privilege boundary is UNVERIFIED here. Create the runtime roles before treating this run as evidence.';
     ELSE
         RAISE NOTICE 'contracter_runtime exists: privilege assertions below are live.';
+    END IF;
+
+    -- The admin role's assertions carried the same vacuous guard with no
+    -- warning at all, not even the weak one.
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_admin_runtime') THEN
+        IF current_setting('contracter.runtime_role_required', true) <> '' THEN
+            RAISE EXCEPTION 'contracter_admin_runtime is required (TEST_RUNTIME_ROLE_REQUIRED) but does not exist';
+        END IF;
+        RAISE WARNING 'SKIPPED (not verified): contracter_admin_runtime privilege assertions. The role does not exist in this database.';
     END IF;
 END;
 $$;
@@ -950,7 +1023,9 @@ SELECT pg_temp.assert_true(
             'contracter_runtime', 'register_invited_user(bytea, text, text)', 'EXECUTE'
         )
         AND has_function_privilege(
-            'contracter_runtime', 'create_user_session(bigint, bytea, interval)', 'EXECUTE'
+            'contracter_runtime',
+            'create_user_session_for_credential(text, text, bytea, interval)',
+            'EXECUTE'
         )
         AND has_function_privilege(
             'contracter_runtime', 'find_active_user_session(bytea)', 'EXECUTE'
@@ -966,6 +1041,110 @@ SELECT pg_temp.assert_true(
         )
     )
 );
+-- No SECURITY DEFINER function may run as a superuser.
+--
+-- A definer executes with its owner's rights, so a superuser-owned one
+-- turns any bug in its body into full database and filesystem access, and
+-- silently defeats every column- and table-level REVOKE elsewhere in this
+-- schema. Migration 0021 reassigns them to contracter_definer when that
+-- role exists; this asserts the result, and also catches a function added
+-- later that quietly inherits superuser ownership again.
+DO $$
+DECLARE
+    superuser_owned integer;
+BEGIN
+    SELECT count(*) INTO superuser_owned
+    FROM pg_proc AS p
+    JOIN pg_roles AS r ON r.oid = p.proowner
+    JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef AND (r.rolsuper OR r.rolbypassrls);
+
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_definer') THEN
+        -- The most load-bearing assertion in the file, and it self-disabled
+        -- silently whenever the role was absent.
+        IF current_setting('contracter.runtime_role_required', true) <> '' THEN
+            RAISE EXCEPTION 'contracter_definer is required (TEST_RUNTIME_ROLE_REQUIRED) but does not exist: % SECURITY DEFINER function(s) run as their original owner', superuser_owned;
+        END IF;
+        RAISE WARNING 'SKIPPED (not verified): definer ownership. Role contracter_definer does not exist, so % SECURITY DEFINER function(s) still run as their original owner.', superuser_owned;
+    ELSE
+        PERFORM pg_temp.assert_true(
+            'no SECURITY DEFINER function is owned by a superuser',
+            superuser_owned = 0
+        );
+    END IF;
+END;
+$$;
+
+-- Every definer function names pg_temp explicitly and last. PostgreSQL
+-- searches an unlisted pg_temp first, so leaving it out is the unsafe
+-- spelling even where no hijack is currently reachable.
+SELECT pg_temp.assert_true(
+    'every SECURITY DEFINER function pins pg_temp in its search_path',
+    NOT EXISTS (
+        SELECT 1
+        FROM pg_proc AS p
+        JOIN pg_namespace AS n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.prosecdef
+          -- pg_catalog first and pg_temp last; `public` may sit between
+          -- them for bodies that use unqualified names. Anything else lets
+          -- a caller's temporary schema shadow a real relation.
+          AND NOT EXISTS (
+              SELECT 1
+              FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) AS setting
+              WHERE setting ~ '^search_path=pg_catalog(, public)?, pg_temp$'
+          )
+    )
+);
+
+-- The owner inventory view must not carry an internal sequential id.
+SELECT pg_temp.assert_true(
+    'runtime_owned_inventory exposes no internal inventory id',
+    NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'public.runtime_owned_inventory'::regclass
+          AND attnum > 0 AND NOT attisdropped AND attname = 'id'
+    )
+);
+
+-- ...and the runtime role must not be able to reach the original view that
+-- does carry it. Skipped only when the role does not exist and the run does
+-- not require it (the guard above already fails a required-but-missing role).
+SELECT pg_temp.assert_true(
+    'contracter_runtime cannot read the unreshaped owned_inventory view',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_table_privilege('contracter_runtime', 'public.owned_inventory', 'SELECT')
+);
+
+-- The runtime role must not be able to enumerate logins.
+--
+-- It cannot read password_hash directly, but it can execute
+-- find_user_credential_by_login, which returns one. Reading `users.login`
+-- as well turns that verification function into a bulk dump via
+-- CROSS JOIN LATERAL. Migration 0019 removed the column grant; this keeps
+-- it removed, because restoring it looks harmless in isolation.
+-- Session creation must name the credential it acts on.
+--
+-- The unbound create_user_session trusts whatever internal id it is
+-- handed, so a leaked runtime credential would mint a session for any
+-- account -- full takeover with no password. 0022 binds the runtime role
+-- to the variant that must be shown the account's stored hash. The
+-- unbound one stays defined for later administrative and recovery paths,
+-- which run as an admin role.
+SELECT pg_temp.assert_true(
+    'contracter_runtime cannot create a session from an internal id alone',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_function_privilege(
+        'contracter_runtime', 'create_user_session(bigint, bytea, interval)', 'EXECUTE'
+    )
+);
+
+SELECT pg_temp.assert_true(
+    'contracter_runtime cannot read users.login, so it cannot enumerate credentials',
+    NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')
+    OR NOT has_column_privilege('contracter_runtime', 'users', 'login', 'SELECT')
+);
+
 SELECT pg_temp.assert_true(
     'contracter_runtime still cannot read password_hash directly after the login flow exists',
     NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'contracter_runtime')

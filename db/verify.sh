@@ -38,6 +38,11 @@ done
 
 for test_file in "$test_dir"/*.sql; do
     if [ -f "$test_file" ]; then
-        psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 --file="$test_file"
+        # TEST_RUNTIME_ROLE_REQUIRED reaches the SQL suite too, so a missing
+        # runtime role fails the run rather than printing a warning a green
+        # run can ignore.
+        psql -X --dbname="$TEST_DATABASE_URL" --set=ON_ERROR_STOP=1 \
+            --set=runtime_role_required="${TEST_RUNTIME_ROLE_REQUIRED:-}" \
+            --file="$test_file"
     fi
 done
