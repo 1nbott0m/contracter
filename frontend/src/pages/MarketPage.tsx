@@ -158,12 +158,13 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
     {filtered.length > 0 && <section className="market-grid" aria-label="Предложения маркета">{filtered.map((item) => {
       const purchaseState = purchases[item.skuId] || { status: 'idle' as const };
       const name = `${item.weapon} | ${item.skin}`;
-      const unavailable = !item.available || item.price === null;
+      const priceUnavailable = item.price === null;
+      const unavailable = !item.available || priceUnavailable;
       const loading = purchaseState.status === 'loading';
       return <article className="market-card panel" key={item.skuId}>
         <div className="market-art"><SkinImage src={resolveSkinImage(item)} alt={name} accent={item.color} /></div>
         <span className="eyebrow">{item.rarity}</span><h2>{item.weapon}<strong>{item.skin}</strong></h2><p>{item.wear}</p>
-        <div className="market-price"><strong>{money(item.price)}</strong><span>{item.available ? 'ДОСТУПНО' : 'НЕДОСТУПНО'}</span></div>
+        <div className="market-price"><strong>{money(item.price)}</strong><span>{priceUnavailable ? 'ОЦЕНКА НЕ ОПУБЛИКОВАНА' : item.available ? 'ДОСТУПНО' : 'НЕТ В НАЛИЧИИ'}</span></div>
         <button className="primary market-buy" type="button" disabled={unavailable || loading || purchaseState.status === 'success'} onClick={() => void purchase(item)} aria-label={unavailable ? `${name} недоступен для покупки` : loading ? `Покупка ${name} выполняется` : purchaseState.status === 'success' ? `${name} куплен` : `Купить ${name} за ${money(item.price)}`}>
           {loading ? <><RefreshCw className="spin" size={15} /> ПОКУПКА…</> : purchaseState.status === 'success' ? <>КУПЛЕНО <ArrowRight size={15} /></> : <><ShoppingCart size={15} /> {unavailable ? 'НЕДОСТУПНО' : 'КУПИТЬ'}</>}
         </button>
