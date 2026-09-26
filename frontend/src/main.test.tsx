@@ -51,6 +51,16 @@ it('uses the session hook for login and logout behavior', async () => {
   expect(fetchMock.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/auth/logout'))).toBe(true);
 });
 
+it('shows owned login validation instead of sending empty credentials', async () => {
+  window.history.replaceState({}, '', '/login');
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), { status: 401 }));
+  vi.stubGlobal('fetch', fetchMock);
+  await import('./main');
+  fireEvent.click(await screen.findByRole('button', { name: /ПРОДОЛЖИТЬ/ }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Введите логин и пароль.');
+  expect(fetchMock.mock.calls.some((call) => String((call as unknown as [RequestInfo | URL])[0]).includes('/auth/login'))).toBe(false);
+});
+
 it('replaces development fixtures when the live inventory is empty', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [] }), {
     status: 200,
