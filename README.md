@@ -1,6 +1,6 @@
 # Contracter
 
-Репозиторий содержит полный текущий MVP Contracter: frontend, PostgreSQL-схему и инварианты, детерминированное экономическое ядро, application-слой, HTTP API на Axum и бинарный сервер. Frontend собирается отдельно из `frontend/` и подключается к API через `VITE_API_URL`. Внешняя загрузка цен и реальные платежи остаются отдельными интеграциями; вход через Steam реализован в backend и frontend.
+Репозиторий содержит полный текущий MVP Contracter: frontend, PostgreSQL-схему и инварианты, детерминированное экономическое ядро, application-слой, HTTP API на Axum и бинарный сервер. Frontend собирается отдельно из `frontend/` и подключается к API через `VITE_API_URL`; production-сборка безопасно использует Render API, если переменная не задана. Server-side импорт подтверждённых цен Market.CSGO уже подключён через бесплатный GitHub Actions workflow. Реальные платежи остаются отдельной интеграцией; вход через Steam реализован в backend и frontend.
 
 Пошаговая инструкция для второго разработчика: [`docs/FRIEND_ONBOARDING_RU.md`](docs/FRIEND_ONBOARDING_RU.md). Готовая версия для отправки другу: [`docs/Инструкция_для_разработчика_Contracter.docx`](docs/Инструкция_для_разработчика_Contracter.docx). Правила для Claude Code находятся в [`CLAUDE.md`](CLAUDE.md).
 
