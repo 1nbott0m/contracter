@@ -45,3 +45,7 @@ BEGIN
     END IF;
 END
 $grant$;
+
+-- Backfill the already imported catalog on the first deployment. This is
+-- idempotent and preserves any existing balances/reservations.
+SELECT public.ensure_virtual_warehouse_stock();
