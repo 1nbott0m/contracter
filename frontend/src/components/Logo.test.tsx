@@ -11,7 +11,7 @@ it('renders the repository-owned two-card logo asset and routes home', () => {
 
   const link = screen.getByRole('link', { name: 'CONTRACTER — Контракты' });
   expect(link.getAttribute('href')).toBe('/contracts');
-  expect(link.querySelector('img')?.getAttribute('src')).toBe('/contracter-logo.svg');
+  expect(link.querySelector('img')?.getAttribute('src')).toBe('/contracter-mark.png');
   expect(link.querySelector('img')?.getAttribute('alt')).toBe('');
 
   fireEvent.click(link);
