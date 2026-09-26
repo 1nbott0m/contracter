@@ -247,6 +247,51 @@ where
         .await?)
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminLedgerTransactionRow {
+    pub transaction_id: uuid::Uuid,
+    pub user_id: Option<uuid::Uuid>,
+    pub operation_kind: String,
+    pub amount_microcredits: i64,
+    pub occurred_at: DateTime<Utc>,
+}
+
+pub async fn list_admin_ledger_transactions<'e, E>(
+    executor: E,
+    admin_public_id: PublicId,
+) -> Result<Vec<AdminLedgerTransactionRow>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT transaction_id, user_id, operation_kind, amount_microcredits, occurred_at FROM list_admin_ledger_transactions($1)")
+        .bind(admin_public_id)
+        .fetch_all(executor)
+        .await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminMarketPurchaseRow {
+    pub purchase_id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub sku_id: uuid::Uuid,
+    pub inventory_item_id: uuid::Uuid,
+    pub amount_microcredits: i64,
+    pub occurred_at: DateTime<Utc>,
+}
+
+pub async fn list_admin_market_purchases<'e, E>(
+    executor: E,
+    admin_public_id: PublicId,
+) -> Result<Vec<AdminMarketPurchaseRow>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT purchase_id, user_id, sku_id, inventory_item_id, amount_microcredits, occurred_at FROM list_admin_market_purchases($1)")
+        .bind(admin_public_id)
+        .fetch_all(executor)
+        .await?)
+}
+
 pub async fn admin_totp_attempt_allowed<'e, E>(
     executor: E,
     session_public_id: PublicId,

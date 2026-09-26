@@ -100,6 +100,68 @@ pub async fn disable_user(
 }
 
 #[derive(Debug, Serialize)]
+pub struct AdminLedgerResponse {
+    pub transaction_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub operation_kind: String,
+    pub amount_microcredits: i64,
+    pub occurred_at: String,
+}
+
+pub async fn ledger(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<impl IntoResponse, ApiError> {
+    require_verified_admin(&state, caller).await?;
+    let rows = db::list_admin_ledger_transactions(state.database().pool(), caller.user_public_id)
+        .await
+        .map_err(application::auth::AuthError::from)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| AdminLedgerResponse {
+                transaction_id: row.transaction_id,
+                user_id: row.user_id,
+                operation_kind: row.operation_kind,
+                amount_microcredits: row.amount_microcredits,
+                occurred_at: row.occurred_at.to_rfc3339(),
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminMarketPurchaseResponse {
+    pub purchase_id: Uuid,
+    pub user_id: Uuid,
+    pub sku_id: Uuid,
+    pub inventory_item_id: Uuid,
+    pub amount_microcredits: i64,
+    pub occurred_at: String,
+}
+
+pub async fn market_purchases(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<impl IntoResponse, ApiError> {
+    require_verified_admin(&state, caller).await?;
+    let rows = db::list_admin_market_purchases(state.database().pool(), caller.user_public_id)
+        .await
+        .map_err(application::auth::AuthError::from)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| AdminMarketPurchaseResponse {
+                purchase_id: row.purchase_id,
+                user_id: row.user_id,
+                sku_id: row.sku_id,
+                inventory_item_id: row.inventory_item_id,
+                amount_microcredits: row.amount_microcredits,
+                occurred_at: row.occurred_at.to_rfc3339(),
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
 pub struct AdminAuditResponse {
     pub public_id: Uuid,
     pub administrator_public_id: Uuid,
