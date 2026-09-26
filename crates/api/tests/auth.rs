@@ -3,7 +3,7 @@
 //! no mocked middleware, so the cookie handling, extractor, and error
 //! envelope under test are exactly the ones that ship.
 
-use api::{AppState, RouterConfig, SECURE_SESSION_COOKIE, build_router};
+use api::{AppState, RateLimitConfig, RouterConfig, SECURE_SESSION_COOKIE, build_router};
 use application::auth::{AuthConfig, SecretToken};
 use axum::{
     Router,
@@ -12,13 +12,20 @@ use axum::{
 };
 use db::{Database, DatabaseConfig};
 use serde_json::{Value, json};
-use std::time::Duration;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 const PASSWORD: &str = "a-sufficiently-long-password";
 
 async fn test_state() -> Option<AppState> {
+    // `cargo test` runs many binaries in parallel, each with many tests,
+    // so this suite asks for far more simultaneous Argon2id hashes than a
+    // rate-limited service ever would. The production shed threshold is
+    // correct and stays correct; widening it here keeps a real behaviour
+    // from showing up as a flaky 503. The permit count -- the thing that
+    // actually bounds memory -- is untouched.
+    let _ = application::auth::set_hashing_queue_timeout(std::time::Duration::from_secs(120));
+
     let url = std::env::var("TEST_DATABASE_URL").ok()?;
     let database = Database::connect(&DatabaseConfig::new(url).expect("valid database URL"))
         .await
@@ -645,10 +652,19 @@ async fn an_internal_database_failure_returns_a_sanitized_500() {
     // Port 1 on the loopback: nothing listens there, and `connect_lazy`
     // means the failure happens at query time, inside the handler, exactly
     // where a production outage would put it.
+    //
+    // `with_acquire_timeout` is set well below the router's own request
+    // timeout (10s, both defaults) and deliberately short. Without it this
+    // test raced three unrelated clocks against each other -- how long the
+    // OS takes to refuse a TCP connect to an unused port, the pool's
+    // acquire timeout, and the router's request timeout -- and on a loaded
+    // machine the router timeout could win, turning a 500 into a 503. The
+    // test must prove the database-error path specifically, not whichever
+    // of two 10-second timeouts happens to fire first.
     let config =
         DatabaseConfig::new("postgresql://contracter:contracter@127.0.0.1:1/contracter".to_owned())
             .expect("valid database URL")
-            .with_acquire_timeout(Duration::from_millis(100));
+            .with_acquire_timeout(std::time::Duration::from_millis(500));
     let state = AppState::new(Database::connect_lazy(&config), AuthConfig::default());
 
     let response = router(&state)
@@ -727,5 +743,175 @@ async fn authenticated_responses_are_not_cacheable_and_vary_on_the_cookie() {
             .get(header::CACHE_CONTROL)
             .and_then(|value| value.to_str().ok()),
         Some("no-store")
+    );
+}
+
+/// `/auth/register` and `/auth/login` cost an Argon2id hash each, which is
+/// what makes them worth flooding. The limiter must refuse before that
+/// work happens, and must say when to come back.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn the_auth_endpoints_refuse_a_flood_with_a_retry_hint() {
+    // A budget of two, so the limit is reachable without sending a
+    // production-sized flood at a test database.
+    let state = require_database!().with_auth_rate_limit(RateLimitConfig {
+        burst: 2,
+        refill_interval: std::time::Duration::from_secs(60),
+    });
+
+    let attempt = || {
+        router(&state).oneshot(post(
+            "/api/v1/auth/login",
+            json!({ "login": "nobody_at_all", "password": PASSWORD }),
+        ))
+    };
+
+    // Within budget: refused for the real reason, not the limiter.
+    for _ in 0..2 {
+        let response = attempt().await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "an in-budget attempt must reach the credential check"
+        );
+    }
+
+    // Over budget: refused by the limiter instead.
+    let response = attempt().await.unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    // Machine-readable, not only prose: a delay a client cannot parse is a
+    // delay no client honours.
+    let retry_after = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .expect("a 429 must carry Retry-After")
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
+    assert!(
+        retry_after.parse::<u64>().expect("whole seconds") >= 1,
+        "Retry-After must be a positive whole number of seconds, got {retry_after}"
+    );
+    let body = body_json(response).await;
+    assert_eq!(body["error"]["code"], "TOO_MANY_REQUESTS");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("a message")
+            .contains("retry in"),
+        "a 429 that does not say when to come back invites an immediate retry"
+    );
+
+    // Registration shares the address budget, so it is refused too: a
+    // flood must not simply move to the other expensive endpoint.
+    let response = router(&state)
+        .oneshot(post(
+            "/api/v1/auth/register",
+            json!({
+                "invitation_token": SecretToken::generate().reveal(),
+                "login": unique_login("flood"),
+                "password": PASSWORD,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// The address budget is spent before any account's, so a flood is
+/// stopped before it can exhaust one victim's allowance and lock them out.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn the_address_budget_is_charged_before_any_accounts() {
+    // Registering and logging in the victim costs two from the address
+    // budget before the test proper begins -- the limiter does not know
+    // the difference between setup and attack, which is the point. Four
+    // leaves exactly two, so the third guess is the one that runs out.
+    let state = require_database!().with_auth_rate_limit(RateLimitConfig {
+        burst: 4,
+        refill_interval: std::time::Duration::from_secs(60),
+    });
+    let (victim, _) = registered_session(&state).await;
+
+    let guess = |login: String| {
+        router(&state).oneshot(post(
+            "/api/v1/auth/login",
+            json!({ "login": login, "password": "wrong-but-long-enough" }),
+        ))
+    };
+
+    // Two guesses remain within the address budget and are answered on
+    // their merits, indistinguishably from any other wrong password.
+    for _ in 0..2 {
+        let response = guess(victim.clone()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // The third exhausts the address budget. Note what is *not* happening:
+    // the victim's own per-login budget has seen one fewer request (it was
+    // not charged for the registration), so it still has room. This
+    // refusal is the flooder being stopped, not the account being locked.
+    let response = guess(victim.clone()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // A different login from the same address is refused too, for the same
+    // reason -- the address is what ran out, not the account.
+    let response = guess(unique_login("bystander")).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the exhausted budget is the address's, so it applies to every login from it"
+    );
+}
+
+/// Per-address budgets, exercised through the real router.
+///
+/// `oneshot` never populates `ConnectInfo`, so every other rate-limit test
+/// in this file runs through the fallback that puts all callers in one
+/// bucket. That means the one piece of wiring that decides whether callers
+/// are told apart -- the peer address reaching the limiter -- was covered
+/// nowhere: replacing the per-address key with a constant left every HTTP
+/// test green. This supplies the address the way the server does, and
+/// checks two addresses really do get independent budgets.
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn distinct_addresses_get_independent_budgets() {
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    let state = require_database!().with_auth_rate_limit(RateLimitConfig {
+        burst: 2,
+        refill_interval: std::time::Duration::from_secs(60),
+    });
+
+    let attempt_from = |address: &str| {
+        let mut request = post(
+            "/api/v1/auth/login",
+            json!({ "login": unique_login("peer"), "password": PASSWORD }),
+        );
+        let peer: SocketAddr = address.parse().expect("a socket address");
+        request.extensions_mut().insert(ConnectInfo(peer));
+        router(&state).oneshot(request)
+    };
+
+    // One address spends its whole budget and is then refused.
+    for _ in 0..2 {
+        assert_eq!(
+            attempt_from("198.51.100.1:40000").await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        attempt_from("198.51.100.1:40001").await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the port differs but the address does not, so it is the same caller"
+    );
+
+    // A different address is untouched by the first one's exhaustion. If
+    // the limiter could not tell them apart, this would be 429 as well.
+    assert_eq!(
+        attempt_from("198.51.100.2:40000").await.unwrap().status(),
+        StatusCode::UNAUTHORIZED,
+        "one address exhausting its budget must not lock out another"
     );
 }

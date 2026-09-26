@@ -1,10 +1,17 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 use application::auth::AuthConfig;
 use application::quote_signing::QuoteSigner;
 use application::seed_protection::SeedProtector;
 use db::Database;
-use std::sync::Arc;
 
-use crate::session_cookie::SessionCookiePolicy;
+use crate::{
+    rate_limit::{RateLimitConfig, RateLimiter},
+    session_cookie::SessionCookiePolicy,
+};
 
 /// Shared, cheaply-cloneable application state. `Database` wraps an
 /// `sqlx::PgPool`, which is itself `Arc`-backed, so cloning `AppState`
@@ -16,20 +23,59 @@ pub struct AppState {
     secure_cookies: bool,
     seed_protector: Option<Arc<dyn SeedProtector>>,
     quote_signer: Option<Arc<dyn QuoteSigner>>,
+    auth_rate_limiter: RateLimiter,
+    draining: Arc<AtomicBool>,
 }
 
 impl AppState {
     /// Session cookies are marked `Secure` by default. `with_insecure_cookies`
     /// is the only way to turn that off, so plain-HTTP local development
     /// has to be an explicit choice rather than a silent default.
-    pub const fn new(database: Database, auth_config: AuthConfig) -> Self {
+    pub fn new(database: Database, auth_config: AuthConfig) -> Self {
         Self {
             database,
             auth_config,
             secure_cookies: true,
             seed_protector: None,
             quote_signer: None,
+            auth_rate_limiter: RateLimiter::new(RateLimitConfig::default()),
+            draining: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Replaces the limiter guarding `/auth/*`.
+    ///
+    /// Exists so a test can make the limit reachable in a handful of
+    /// requests instead of the production budget, and so a deployment can
+    /// tighten it. The limiter is shared by every clone of this state, so
+    /// one process has one budget however many routers are built from it.
+    #[must_use]
+    pub fn with_auth_rate_limit(mut self, config: RateLimitConfig) -> Self {
+        self.auth_rate_limiter = RateLimiter::new(config);
+        self
+    }
+
+    pub(crate) const fn auth_rate_limiter(&self) -> &RateLimiter {
+        &self.auth_rate_limiter
+    }
+
+    /// A handle that makes this process report itself unready.
+    ///
+    /// Shared with every clone of this state, so the shutdown path can set
+    /// it once and every router sees it.
+    #[must_use]
+    pub fn draining_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.draining)
+    }
+
+    /// Whether this process has begun shutting down.
+    ///
+    /// `Acquire`/`Release` rather than `Relaxed`: the flag is a signal
+    /// between the shutdown task and every request handler, and a handler
+    /// that saw a stale `false` would keep the load balancer sending
+    /// traffic for exactly as long as the staleness lasted.
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::Acquire)
     }
 
     #[must_use]

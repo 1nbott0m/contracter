@@ -18,6 +18,9 @@ uuid.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tracing.workspace = true
 thiserror.workspace = true
+# Fixed-width rate-limit keys: the login is attacker-chosen and retained,
+# so the key must not be the string itself.
+sha2.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

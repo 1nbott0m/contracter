@@ -57,6 +57,27 @@ where
     .await?)
 }
 
+/// Answers whether redeeming this token would succeed right now.
+///
+/// A probe, not an authorization step. `register_invited_user` remains
+/// the only thing that redeems, and it still locks the invitation
+/// `FOR UPDATE`, so two callers racing one invitation resolve to a single
+/// winner regardless of what this returned a moment earlier. Its only
+/// purpose is to let a caller holding a worthless token stop before
+/// paying for an Argon2id hash.
+pub async fn invitation_is_redeemable<'e, E>(
+    executor: E,
+    invitation_token_hash: &[u8],
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT invitation_is_redeemable($1)")
+        .bind(invitation_token_hash)
+        .fetch_one(executor)
+        .await?)
+}
+
 /// Redeems an invitation and creates its user in one atomic statement,
 /// returning the new user's public id. The caller supplies an
 /// already-derived password hash; no plaintext ever reaches the database.
@@ -411,6 +432,35 @@ where
             .fetch_one(executor)
             .await?,
     )
+}
+
+/// Creates a session for a login whose stored hash the caller presents.
+///
+/// The hash is proof that the caller read this account's credential --
+/// which requires executing the narrow lookup function for that exact
+/// login. It is not proof of password verification; that still happens in
+/// `application`, where Argon2id lives. What it buys is that a caller
+/// holding only the database credential cannot mint a session for an
+/// arbitrary account id.
+pub async fn create_user_session_for_credential<'e, E>(
+    executor: E,
+    login: &str,
+    password_hash: &str,
+    session_token_hash: &[u8],
+    ttl: std::time::Duration,
+) -> Result<PublicId, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar(
+        "SELECT create_user_session_for_credential($1, $2, $3, make_interval(secs => $4))",
+    )
+    .bind(login)
+    .bind(password_hash)
+    .bind(session_token_hash)
+    .bind(ttl.as_secs_f64())
+    .fetch_one(executor)
+    .await?)
 }
 
 /// Resolves a presented session token hash to its owner, or `None` if the

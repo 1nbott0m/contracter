@@ -157,6 +157,7 @@ pub async fn create(
     let inputs: Vec<_> = projection
         .iter()
         .map(|row| economy_core::tradeup::InputItem {
+            item_id: row.inventory_item_public_id.get().to_string(),
             sku_id: row.sku_public_id.get().to_string(),
             collection_id: row.collection_id.get().to_string(),
             rarity: 0,

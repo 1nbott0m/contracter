@@ -77,11 +77,19 @@ async fn stamp_response(response: Response, id: Uuid) -> Response {
     Response::from_parts(parts, Body::from(payload))
 }
 
-const SUPPORTED_STATUSES: [StatusCode; 9] = [
+const SUPPORTED_STATUSES: [StatusCode; 11] = [
     StatusCode::BAD_REQUEST,
     StatusCode::UNAUTHORIZED,
     StatusCode::FORBIDDEN,
     StatusCode::NOT_FOUND,
+    // Both of these carry information a caller acts on differently from a
+    // malformed body: 405 arrives with an `Allow` header naming what would
+    // have worked, and 415 says the body was fine but its type was not.
+    // Collapsing them into 400 produced a self-contradictory response -- a
+    // 400 carrying `Allow` -- and made "wrong method" indistinguishable
+    // from "bad JSON".
+    StatusCode::METHOD_NOT_ALLOWED,
+    StatusCode::UNSUPPORTED_MEDIA_TYPE,
     StatusCode::CONFLICT,
     StatusCode::UNPROCESSABLE_ENTITY,
     StatusCode::TOO_MANY_REQUESTS,
@@ -133,6 +141,8 @@ fn fallback_envelope(status: StatusCode, id: Uuid) -> Value {
         StatusCode::CONFLICT => "CONFLICT",
         StatusCode::UNPROCESSABLE_ENTITY => "UNPROCESSABLE_ENTITY",
         StatusCode::TOO_MANY_REQUESTS => "TOO_MANY_REQUESTS",
+        StatusCode::METHOD_NOT_ALLOWED => "METHOD_NOT_ALLOWED",
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "UNSUPPORTED_MEDIA_TYPE",
         StatusCode::SERVICE_UNAVAILABLE => "SERVICE_UNAVAILABLE",
         _ => "INTERNAL_SERVER_ERROR",
     };

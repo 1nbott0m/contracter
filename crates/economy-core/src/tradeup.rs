@@ -3,15 +3,46 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
+/// Smallest and largest number of inputs a contract may submit.
 pub const MIN_INPUT_COUNT: usize = 4;
 pub const MAX_INPUT_COUNT: usize = 10;
+
+/// A contract takes four to ten inputs, inclusive.
+///
+/// The count is not a constant in the probability maths that follow: the
+/// collection weights and the output float both divide by the number of
+/// inputs actually submitted. Dividing by a fixed ten instead would make
+/// every shorter contract's weights fail to sum to one, and would bias
+/// every output float toward Factory New.
+const INPUT_RANGE: std::ops::RangeInclusive<usize> = MIN_INPUT_COUNT..=MAX_INPUT_COUNT;
 const COVERT_RARITY: u8 = 5;
 const MIN_WEIGHT_DENOMINATOR: u64 = 100;
+/// How finely a scarcity multiplier is resolved, and the factor by which
+/// `apply_outcome_scarcity` scales the outcome denominator.
+///
+/// Fixed rather than derived from the multipliers, so the final
+/// denominator is known before any damping and cannot grow with them. A
+/// million parts is far finer than any supply signal warrants -- the
+/// published multipliers are ratios of unit counts in the low hundreds --
+/// and it keeps the denominator around 10^8 for realistic contracts,
+/// three orders of magnitude inside `u64`.
+const SCARCITY_RESOLUTION: u128 = 1_000_000;
 const HASH_DOMAIN: &[u8] = b"contracter/outcome/v1";
 const COMMITMENT_DOMAIN: &[u8] = b"contracter/server-seed/v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputItem {
+    /// Which physical item this is, distinct from which *kind* of item it
+    /// is (`sku_id`).
+    ///
+    /// A contract spends ten specific instances, and the same instance may
+    /// not be spent twice. Without an identity here the rule was
+    /// unrepresentable in the layer that computes the probabilities:
+    /// passing one item four times produced weights and an output float as
+    /// though four items had been spent, and only `finalize_contract`
+    /// caught it, at the very end. A probability calculation that can be
+    /// fed a lie is one whose result means nothing.
+    pub item_id: String,
     pub sku_id: String,
     pub collection_id: String,
     pub rarity: u8,
@@ -44,10 +75,12 @@ pub struct Selection {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TradeupError {
-    #[error("between {MIN_INPUT_COUNT} and {MAX_INPUT_COUNT} inputs are required, got {actual}")]
+    #[error("between {} and {} inputs are required, got {actual}", INPUT_RANGE.start(), INPUT_RANGE.end())]
     InputCount { actual: usize },
     #[error("input rarities must match")]
     MixedInputRarities,
+    #[error("the same item cannot be used twice: {item_id}")]
+    DuplicateInput { item_id: String },
     #[error("Covert inputs are not eligible")]
     CovertInput,
     #[error("rarity {rarity} cannot have a next tier")]
@@ -58,8 +91,6 @@ pub enum TradeupError {
     FloatOutOfRange { sku_id: String },
     #[error("collection {collection_id} has no next-rarity output")]
     MissingOutput { collection_id: String },
-    #[error("candidate output is unavailable: {sku_id}")]
-    UnavailableOutput { sku_id: String },
     #[error("candidate output has the wrong rarity: {sku_id}")]
     WrongOutputRarity { sku_id: String },
     #[error("outcome weights are invalid")]
@@ -71,7 +102,6 @@ pub fn build_outcomes(
     outputs: &[OutputItem],
 ) -> Result<Vec<WeightedOutcome>, TradeupError> {
     validate_inputs(inputs)?;
-    let total_input_count = inputs.len() as u64;
     let input_rarity = inputs[0].rarity;
     let output_rarity = input_rarity
         .checked_add(1)
@@ -94,10 +124,18 @@ pub fn build_outcomes(
                 sku_id: output.sku_id.clone(),
             });
         }
+        // Zero stock excludes the candidate; it does not doom the
+        // contract. The remaining candidates are renormalised by the
+        // weight maths below, which divides by how many survived in each
+        // collection. Refusing outright -- the previous behaviour --
+        // meant one out-of-stock skin made every contract touching its
+        // collection impossible.
+        //
+        // A collection left with nothing in stock is still refused, but
+        // as `MissingOutput` below, which is the honest description: the
+        // inputs have no reachable next-rarity result.
         if !output.available {
-            return Err(TradeupError::UnavailableOutput {
-                sku_id: output.sku_id.clone(),
-            });
+            continue;
         }
         grouped
             .entry(output.collection_id.as_str())
@@ -105,6 +143,10 @@ pub fn build_outcomes(
             .push(output);
     }
 
+    // The divisor is the submitted count, not a constant. Because the
+    // per-collection input counts sum to exactly this, the per-outcome
+    // weights still sum to `common` for any accepted count.
+    let input_total = inputs.len() as u64;
     let mut common = 1_u64;
     for collection in counts.keys() {
         let count = grouped
@@ -113,24 +155,25 @@ pub fn build_outcomes(
                 collection_id: (*collection).to_owned(),
             })?
             .len() as u64;
-        let denominator = total_input_count
+        let scaled = input_total
             .checked_mul(count)
             .ok_or(TradeupError::InvalidWeights)?;
-        common = checked_lcm(common, denominator).ok_or(TradeupError::InvalidWeights)?;
+        common = checked_lcm(common, scaled).ok_or(TradeupError::InvalidWeights)?;
     }
     if common < MIN_WEIGHT_DENOMINATOR {
         common *= MIN_WEIGHT_DENOMINATOR.div_ceil(common);
     }
 
     let mut result = Vec::new();
-    for (collection, collection_input_count) in counts {
+    for (collection, input_count) in counts {
         let collection_outputs = &grouped[collection];
-        let denominator = total_input_count
-            .checked_mul(collection_outputs.len() as u64)
-            .ok_or(TradeupError::InvalidWeights)?;
-        let each = collection_input_count
+        let each = input_count
             .checked_mul(common)
-            .and_then(|value| value.checked_div(denominator))
+            .and_then(|v| {
+                input_total
+                    .checked_mul(collection_outputs.len() as u64)
+                    .and_then(|divisor| v.checked_div(divisor))
+            })
             .ok_or(TradeupError::InvalidWeights)?;
         for output in collection_outputs {
             result.push(WeightedOutcome {
@@ -148,36 +191,47 @@ pub fn build_outcomes(
     Ok(result)
 }
 
-/// A collection's supply-based damping factor, in `[0, 1]` as an exact
+/// A supply-based damping factor for one outcome, in `[0, 1]` as an exact
 /// rational `numerator / denominator`. `denominator` must be greater than
-/// zero and `numerator` must not exceed it.
+/// zero and `numerator` must not exceed it -- scarcity only ever damps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScarcityMultiplier {
     pub numerator: u64,
     pub denominator: u64,
 }
 
-/// Applies a per-collection scarcity multiplier to already-built outcome
-/// weights. A collection missing from `multipliers` is treated as `1/1`
-/// (no damping). An outcome whose damped weight rounds down to zero is
-/// dropped rather than carried through with a zero weight, matching
-/// [`select_outcome`]'s existing rule that a zero-weight entry is invalid
-/// rather than merely inert. The result's denominator is simply the sum of
-/// the surviving damped numerators, which already satisfies
-/// [`select_outcome`]'s "numerators sum to the shared denominator"
-/// invariant without rescaling back to the original total.
+/// Applies per-outcome scarcity, keyed by SKU, **within each collection**.
 ///
-/// Each outcome's damped weight floors to an integer independently
-/// (`weight_numerator * multiplier.numerator / multiplier.denominator`).
-/// For small `weight_numerator` values -- which `build_outcomes` routinely
-/// produces -- two different multipliers can floor to the same integer for
-/// every outcome and so produce a bit-identical result: e.g. two outcomes
-/// each with `weight_numerator = 3` damped by 50/100 and by 40/60 both
-/// floor to `(1, 1)`. A caller publishing a materially different scarcity
-/// multiplier is not guaranteed any observable effect on low-weight
-/// outcomes; see
-/// `draining_stock_cannot_increase_a_collections_own_weight_but_may_have_no_effect_at_low_weight`.
-pub fn apply_collection_scarcity(
+/// The game-mechanics document fixes two things that together decide this
+/// function's shape: the chance of a collection follows the composition of
+/// the inputs, and scarcity changes the weights of eligible outcomes
+/// *inside* the chosen collection. So a multiplier may move probability
+/// between the outcomes of one collection and must never move it between
+/// collections. Renormalising across the whole set -- which an earlier
+/// version did -- turns scarcity into a cross-collection dial: damping one
+/// collection raises another's odds, the tie to input composition breaks,
+/// and scarcity becomes an unauditable margin lever rather than a supply
+/// signal. The document forbids exactly that.
+///
+/// Keyed by SKU rather than by collection, because a single multiplier
+/// covering a whole collection carries no within-collection information:
+/// scaling every outcome of a collection by the same factor and then
+/// renormalising inside it is the identity. Stock is per SKU, so the
+/// signal is too.
+///
+/// An outcome damped to nothing is dropped and its collection's remaining
+/// outcomes take its share, which keeps the collection's own weight
+/// intact. A collection with nothing left is an error rather than a silent
+/// redistribution: handing its share to another collection is the one
+/// thing this function exists to prevent, so there is no correct answer to
+/// give.
+///
+/// The arithmetic is exact. Each collection's outcomes are damped over a
+/// common multiplier denominator, then the whole distribution is scaled by
+/// the lowest common multiple of the collections' damped totals, so every
+/// resulting weight is an integer and each collection's share is preserved
+/// to the last unit. Nothing is rounded, so no share drifts.
+pub fn apply_outcome_scarcity(
     outcomes: &[WeightedOutcome],
     multipliers: &BTreeMap<String, ScarcityMultiplier>,
 ) -> Result<Vec<WeightedOutcome>, TradeupError> {
@@ -192,50 +246,157 @@ pub fn apply_collection_scarcity(
         return Err(TradeupError::InvalidWeights);
     }
 
-    let mut damped = Vec::with_capacity(outcomes.len());
+    // Group by collection. `BTreeMap` orders by collection id, which makes
+    // the result independent of the order the outcomes arrived in.
+    let mut collections: BTreeMap<&str, Vec<&WeightedOutcome>> = BTreeMap::new();
     for outcome in outcomes {
-        let multiplier =
-            multipliers
-                .get(&outcome.collection_id)
-                .copied()
-                .unwrap_or(ScarcityMultiplier {
-                    numerator: 1,
-                    denominator: 1,
-                });
-        if multiplier.denominator == 0 || multiplier.numerator > multiplier.denominator {
-            return Err(TradeupError::InvalidWeights);
-        }
-        let scaled = (outcome.weight_numerator as u128)
-            .checked_mul(multiplier.numerator as u128)
-            .ok_or(TradeupError::InvalidWeights)?;
-        let damped_numerator = scaled
-            .checked_div(multiplier.denominator as u128)
-            .ok_or(TradeupError::InvalidWeights)?;
-        if damped_numerator == 0 {
-            continue;
-        }
-        let damped_numerator =
-            u64::try_from(damped_numerator).map_err(|_| TradeupError::InvalidWeights)?;
-        damped.push((outcome, damped_numerator));
+        collections
+            .entry(outcome.collection_id.as_str())
+            .or_default()
+            .push(outcome);
     }
 
-    let total = damped
-        .iter()
-        .try_fold(0_u64, |sum, (_, numerator)| sum.checked_add(*numerator))
+    // Every collection's slice of the final denominator is exactly
+    // `original_share * SCARCITY_RESOLUTION`, so the final denominator is
+    // fixed before any damping happens and cannot grow with the
+    // multipliers. That is the whole reason this is laid out as it is: an
+    // earlier version took the lowest common multiple of the collections'
+    // damped totals, which is a product of near-coprime numbers. With
+    // multiplier denominators of the shape the stock policy actually
+    // produces -- 167, 125, 83, 42, 17, 7 -- a five-collection contract
+    // needed a 67-bit denominator and was refused as `InvalidWeights`, so
+    // an ordinary multi-collection trade-up failed and the error pointed
+    // at corrupt data rather than at an internal range limit.
+    let final_denominator = u128::from(denominator)
+        .checked_mul(SCARCITY_RESOLUTION)
         .ok_or(TradeupError::InvalidWeights)?;
-    if total == 0 {
+    let final_denominator =
+        u64::try_from(final_denominator).map_err(|_| TradeupError::InvalidWeights)?;
+
+    let mut result = Vec::with_capacity(outcomes.len());
+
+    for (collection, members) in &collections {
+        // The share this collection must still hold afterwards, in units
+        // of the final denominator. Computed from the incoming weights, so
+        // it is whatever `build_outcomes` decided from input composition.
+        let mut original_share = 0_u128;
+        for member in members {
+            original_share = original_share
+                .checked_add(u128::from(member.weight_numerator))
+                .ok_or(TradeupError::InvalidWeights)?;
+        }
+        let collection_target = original_share
+            .checked_mul(SCARCITY_RESOLUTION)
+            .ok_or(TradeupError::InvalidWeights)?;
+
+        // Damped weights, in arbitrary units: only their ratios matter,
+        // because the collection's total is pinned above.
+        let mut damped = Vec::with_capacity(members.len());
+        let mut damped_total = 0_u128;
+        for member in members {
+            let multiplier =
+                multipliers
+                    .get(&member.sku_id)
+                    .copied()
+                    .unwrap_or(ScarcityMultiplier {
+                        numerator: 1,
+                        denominator: 1,
+                    });
+            if multiplier.denominator == 0 || multiplier.numerator > multiplier.denominator {
+                return Err(TradeupError::InvalidWeights);
+            }
+            // Normalised to a fixed resolution rather than to a common
+            // multiple of the multipliers' own denominators. Flooring here
+            // only loses a multiplier finer than one part in
+            // SCARCITY_RESOLUTION, and a multiplier that floors to zero was
+            // already "damped to nothing".
+            let normalised = u128::from(multiplier.numerator)
+                .checked_mul(SCARCITY_RESOLUTION)
+                .ok_or(TradeupError::InvalidWeights)?
+                / u128::from(multiplier.denominator);
+            let weight = u128::from(member.weight_numerator)
+                .checked_mul(normalised)
+                .ok_or(TradeupError::InvalidWeights)?;
+            if weight == 0 {
+                continue;
+            }
+            damped_total = damped_total
+                .checked_add(weight)
+                .ok_or(TradeupError::InvalidWeights)?;
+            damped.push((member, weight));
+        }
+
+        if damped_total == 0 {
+            // Every candidate here is out of stock. These inputs have no
+            // reachable result, and giving the share to a different
+            // collection would break the one invariant scarcity must
+            // uphold.
+            return Err(TradeupError::MissingOutput {
+                collection_id: (*collection).to_owned(),
+            });
+        }
+
+        // Apportion `collection_target` among the survivors in proportion
+        // to their damped weights, by largest remainder. The floors alone
+        // would leave a few units unassigned and the collection's share
+        // would come out short; handing each leftover unit to the largest
+        // remainder assigns exactly the target, so the share stays exact
+        // while only the within-collection split rounds.
+        let mut assigned = Vec::with_capacity(damped.len());
+        let mut distributed = 0_u128;
+        for (member, weight) in &damped {
+            let exact = collection_target
+                .checked_mul(*weight)
+                .ok_or(TradeupError::InvalidWeights)?;
+            let floor = exact / damped_total;
+            assigned.push((*member, floor, exact % damped_total));
+            distributed = distributed
+                .checked_add(floor)
+                .ok_or(TradeupError::InvalidWeights)?;
+        }
+
+        // Ties break on sku id, so two runs over the same inputs assign the
+        // same leftovers -- a quote has to be reproducible.
+        let mut order: Vec<usize> = (0..assigned.len()).collect();
+        order.sort_by(|left, right| {
+            assigned[*right]
+                .2
+                .cmp(&assigned[*left].2)
+                .then_with(|| assigned[*left].0.sku_id.cmp(&assigned[*right].0.sku_id))
+        });
+        let mut leftover = collection_target - distributed;
+        for index in order {
+            if leftover == 0 {
+                break;
+            }
+            assigned[index].1 += 1;
+            leftover -= 1;
+        }
+
+        for (member, numerator, _) in assigned {
+            if numerator == 0 {
+                // Rounded away entirely: dropped rather than carried at
+                // zero, matching `select_outcome`'s rule that a zero weight
+                // is invalid rather than merely inert. Its units have
+                // already gone to its siblings, so the collection's share
+                // is unaffected.
+                continue;
+            }
+            let numerator = u64::try_from(numerator).map_err(|_| TradeupError::InvalidWeights)?;
+            result.push(WeightedOutcome {
+                sku_id: member.sku_id.clone(),
+                collection_id: member.collection_id.clone(),
+                weight_numerator: numerator,
+                weight_denominator: final_denominator,
+            });
+        }
+    }
+
+    result.sort_by(|a, b| a.sku_id.cmp(&b.sku_id));
+    if checked_weight_sum(&result)? != final_denominator {
         return Err(TradeupError::InvalidWeights);
     }
-
-    Ok(damped
-        .into_iter()
-        .map(|(outcome, numerator)| WeightedOutcome {
-            sku_id: outcome.sku_id.clone(),
-            collection_id: outcome.collection_id.clone(),
-            weight_numerator: numerator,
-            weight_denominator: total,
-        })
-        .collect())
+    Ok(result)
 }
 
 pub fn calculate_output_float(
@@ -267,6 +428,22 @@ pub fn server_seed_commitment(server_seed: &[u8; 32]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// The smallest 128-bit draw that can be used without bias.
+///
+/// A draw is reduced modulo `denominator`. If `2^128` is not a multiple of
+/// the denominator, the values above the last whole multiple would make the
+/// low residues slightly more likely than the high ones. Discarding draws
+/// below `2^128 mod denominator` leaves a range whose length is an exact
+/// multiple, so every residue is equally likely.
+///
+/// Separate so it can be tested. The bias it removes is at most
+/// `denominator / 2^128`, far too small for any distribution test to
+/// detect, so the only honest check is on the value itself: a regression
+/// here would otherwise pass every sampling test there could ever be.
+fn rejection_threshold(denominator: u64) -> u128 {
+    (u128::from(denominator)).wrapping_neg() % u128::from(denominator)
+}
+
 pub fn select_outcome(
     outcomes: &[WeightedOutcome],
     server_seed: &[u8; 32],
@@ -285,9 +462,17 @@ pub fn select_outcome(
         return Err(TradeupError::InvalidWeights);
     }
 
+    // Sorted before hashing, so the result depends only on the outcome
+    // set, never on the order a caller happened to pass it in. Without
+    // this the same server seed, client seed and nonce would select a
+    // different item -- and publish a different digest -- depending on
+    // whether the caller used database order or sorted order. A player
+    // replaying the commitment against the documented outcome set would
+    // then compute a different result and correctly conclude the house
+    // had cheated.
     let mut ordered = outcomes.to_vec();
     ordered.sort_by(|a, b| a.sku_id.cmp(&b.sku_id));
-    let threshold = (denominator as u128).wrapping_neg() % denominator as u128;
+    let threshold = rejection_threshold(denominator);
     let mut counter = 0_u64;
     loop {
         let digest = selection_digest(&ordered, server_seed, client_seed, nonce, counter);
@@ -311,11 +496,23 @@ pub fn select_outcome(
 }
 
 fn validate_inputs(inputs: &[InputItem]) -> Result<(), TradeupError> {
-    if !(MIN_INPUT_COUNT..=MAX_INPUT_COUNT).contains(&inputs.len()) {
+    if !INPUT_RANGE.contains(&inputs.len()) {
         return Err(TradeupError::InputCount {
             actual: inputs.len(),
         });
     }
+    // Distinctness, checked here rather than trusted from the caller. The
+    // database enforces it too, at finalisation; this is the layer that
+    // would otherwise compute a distribution from a set that cannot exist.
+    let mut seen = BTreeSet::new();
+    for item in inputs {
+        if !seen.insert(item.item_id.as_str()) {
+            return Err(TradeupError::DuplicateInput {
+                item_id: item.item_id.clone(),
+            });
+        }
+    }
+
     let rarity = inputs[0].rarity;
     if inputs.iter().any(|item| item.rarity != rarity) {
         return Err(TradeupError::MixedInputRarities);
@@ -380,4 +577,35 @@ fn checked_weight_sum(outcomes: &[WeightedOutcome]) -> Result<u64, TradeupError>
         sum.checked_add(outcome.weight_numerator)
             .ok_or(TradeupError::InvalidWeights)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The threshold is exactly `2^128 mod d`, computed here independently
+    /// of the implementation's wrapping trick.
+    ///
+    /// Replacing it with zero leaves every behavioural test green, because
+    /// the bias it removes is at most `d / 2^128`. This is the only test
+    /// that can see that regression.
+    #[test]
+    fn the_rejection_threshold_is_two_to_the_128_modulo_the_denominator() {
+        for denominator in [1_u64, 2, 3, 7, 10, 100, 120, 192, 1_000_003, u64::MAX] {
+            let d = u128::from(denominator);
+            // (2^128 - 1) mod d, plus one, mod d: 2^128 mod d without ever
+            // representing 2^128.
+            let expected = (u128::MAX % d + 1) % d;
+            assert_eq!(
+                rejection_threshold(denominator),
+                expected,
+                "denominator {denominator}"
+            );
+            assert!(rejection_threshold(denominator) < d);
+        }
+        // Powers of two divide 2^128, so nothing is ever discarded.
+        assert_eq!(rejection_threshold(64), 0);
+        // And a case that is not: 2^128 mod 3 is 1.
+        assert_eq!(rejection_threshold(3), 1);
+    }
 }

@@ -249,9 +249,26 @@ async fn scarcity_reconciliation_is_empty_after_a_normal_publish() {
         .await
         .expect("serialize scarcity fixtures against crates/db/tests/scarcity.rs");
 
-    publish_collection_scarcity_snapshot(transaction.as_mut(), "reconciliation-v1")
-        .await
-        .expect("publish scarcity snapshot");
+    let snapshot_id =
+        publish_collection_scarcity_snapshot(transaction.as_mut(), "reconciliation-v1")
+            .await
+            .expect("publish scarcity snapshot");
+
+    // Precondition, stated rather than assumed. "No drift" holds trivially
+    // for a publish that wrote nothing, so without this the assertion below
+    // would pass on exactly the failure it exists to rule out. The seeds
+    // provide covered collections; this proves they were actually used.
+    let published_items: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM collection_scarcity_snapshot_items WHERE snapshot_id = $1",
+    )
+    .bind(snapshot_id)
+    .fetch_one(transaction.as_mut())
+    .await
+    .expect("count the snapshot's items");
+    assert!(
+        published_items > 0,
+        "the publish must cover at least one collection, or zero drift proves nothing"
+    );
 
     let drift = reconcile_current_collection_scarcity(transaction.as_mut())
         .await

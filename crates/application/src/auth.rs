@@ -1,4 +1,8 @@
-use std::{fmt, sync::OnceLock, time::Duration};
+use std::{
+    fmt,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use crate::seed_protection::{ProtectedSeed, SeedProtector};
 use argon2::{
@@ -30,7 +34,11 @@ const TOKEN_BYTES: usize = 32;
 /// server admits it is saturated. Short on purpose: a caller waiting
 /// longer than this is already past the point where a useful response is
 /// coming, and holding them open only deepens the queue.
-const HASHING_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// At the default permit count this only fires under genuine saturation:
+/// with one permit per core and roughly 60 ms per hash, a five-second
+/// queue means a backlog in the thousands.
+const DEFAULT_HASHING_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A bearer secret (session or invitation token) in its raw, client-facing
 /// form. `Debug` is redacted so it cannot reach a log line by accident,
@@ -138,6 +146,20 @@ pub async fn register(
 ) -> Result<PublicId, AuthError> {
     validate_login(login)?;
     validate_password(password)?;
+
+    // Check the invitation before paying for the hash.
+    //
+    // Argon2id costs ~19 MiB and tens of milliseconds by design, and the
+    // number that may run at once is capped by `hashing_permits`. Hashing
+    // first meant an attacker with no invitation at all could keep that
+    // cap saturated with garbage registrations, and every legitimate
+    // login would then queue and be shed as 503. This is a probe, not the
+    // authorization: `register_invited_user` below still locks the
+    // invitation and redeems it atomically, so a caller that wins this
+    // check and loses the race still gets `InvitationUnusable`.
+    if !db::invitation_is_redeemable(database.pool(), &invitation_token.hash()).await? {
+        return Err(AuthError::InvitationUnusable);
+    }
 
     let password_hash = hash_password(password.to_owned()).await?;
     let result = db::register_invited_user(
@@ -330,7 +352,12 @@ pub async fn login(
     // denies an attacker the cheapest way to buy 19 MiB of server work.
     // It is not an oracle: the answer depends only on what the caller
     // typed, never on whether the login exists.
-    if validate_password(password).is_err() {
+    // The same reasoning applies to the login field, which is otherwise
+    // bounded only by the 256 KiB body limit: a 250 KiB login buys a full
+    // case-folding comparison in PostgreSQL and then a full Argon2id
+    // verification. `InvalidCredentials` rather than `InvalidLogin`, so a
+    // malformed login is still indistinguishable from a wrong password.
+    if validate_password(password).is_err() || validate_login(login).is_err() {
         return Err(AuthError::InvalidCredentials);
     }
 
@@ -339,22 +366,32 @@ pub async fn login(
     let (stored_hash, user) = match credential {
         Some(credential) if credential.disabled_at.is_none() => (
             Some(credential.password_hash),
-            Some((credential.user_id, credential.user_public_id)),
+            Some(credential.user_public_id),
         ),
         // Unknown login, or a disabled account: still spend a full
         // verification against a decoy hash before failing.
         _ => (None, None),
     };
 
-    let password_matches = verify_password(password.to_owned(), stored_hash).await?;
-    let (true, Some((user_id, user_public_id))) = (password_matches, user) else {
+    let password_matches = verify_password(password.to_owned(), stored_hash.clone()).await?;
+    let (true, Some(user_public_id), Some(verified_hash)) = (password_matches, user, stored_hash)
+    else {
         return Err(AuthError::InvalidCredentials);
     };
 
     let token = SecretToken::generate();
-    let session_public_id =
-        db::create_user_session(database.pool(), user_id, &token.hash(), config.session_ttl)
-            .await?;
+    // The stored hash goes back to the database, which refuses unless it
+    // still matches that login's credential. Handing over an internal id
+    // instead would let anyone holding the database credential mint a
+    // session for any account; see migration 0022.
+    let session_public_id = db::create_user_session_for_credential(
+        database.pool(),
+        login,
+        &verified_hash,
+        &token.hash(),
+        config.session_ttl,
+    )
+    .await?;
 
     Ok(IssuedSession {
         token,
@@ -469,16 +506,38 @@ fn hashing_concurrency() -> usize {
         .max(2)
 }
 
-fn hashing_permits() -> &'static Semaphore {
-    static PERMITS: OnceLock<Semaphore> = OnceLock::new();
-    PERMITS.get_or_init(|| Semaphore::new(hashing_concurrency()))
+fn hashing_permits() -> Arc<Semaphore> {
+    static PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    Arc::clone(PERMITS.get_or_init(|| Arc::new(Semaphore::new(hashing_concurrency()))))
+}
+
+static HASHING_QUEUE_TIMEOUT: OnceLock<Duration> = OnceLock::new();
+
+fn hashing_queue_timeout() -> Duration {
+    *HASHING_QUEUE_TIMEOUT.get_or_init(|| DEFAULT_HASHING_QUEUE_TIMEOUT)
+}
+
+/// Widens the shed threshold for environments that legitimately queue far
+/// more concurrent hashes than a served request pattern would.
+///
+/// The limiter is process-wide, so its timeout is too. This exists for a
+/// specific, narrow reason: `cargo test` runs many test binaries in
+/// parallel and many tests within each, so an integration suite can ask
+/// for hundreds of simultaneous hashes -- a load no rate-limited service
+/// would see, but one that trips a threshold tuned for real traffic and
+/// turns a correct production behaviour into a flaky test.
+///
+/// It does not change the permit count, so the memory ceiling that
+/// bounds the denial-of-service is untouched. Returns `Err` with the
+/// value already in force if hashing has begun, because changing it
+/// mid-flight would apply to some waiters and not others.
+pub fn set_hashing_queue_timeout(timeout: Duration) -> Result<(), Duration> {
+    HASHING_QUEUE_TIMEOUT
+        .set(timeout)
+        .map_err(|_| hashing_queue_timeout())
 }
 
 /// Runs one Argon2id operation, holding a permit for its whole duration.
-///
-/// The permit is taken before `spawn_blocking` and released only when the
-/// blocking task returns, so it accounts for the memory actually held --
-/// including for a request whose caller has already gone away.
 async fn with_hashing_permit<T, F>(work: F) -> Result<T, AuthError>
 where
     F: FnOnce() -> Result<T, AuthError> + Send + 'static,
@@ -490,21 +549,37 @@ where
 /// The body of `with_hashing_permit`, taking its limiter explicitly so a
 /// test can exercise saturation against a pool it owns rather than the
 /// process-wide one (which every other test in this binary is also using).
-async fn run_permitted<T, F>(permits: &Semaphore, work: F) -> Result<T, AuthError>
+///
+/// The permit is **moved into the blocking closure**, not held by this
+/// future. That distinction is the whole bound.
+///
+/// A blocking task cannot be cancelled: dropping its `JoinHandle` detaches
+/// it and it runs to completion regardless. But dropping this future --
+/// which hyper does the instant a client closes its connection, and which
+/// the request timeout does on its own schedule -- destroys every local
+/// this future owns. An earlier version kept the permit in such a local,
+/// so an abandoned request handed its permit straight back while its 19
+/// MiB Argon2 kept running. A client that fired requests and closed the
+/// socket could therefore hold far more memory than the semaphore admits,
+/// which is precisely the denial of service the semaphore was added to
+/// prevent. Owned by the closure, the permit survives exactly as long as
+/// the allocation it accounts for.
+async fn run_permitted<T, F>(permits: Arc<Semaphore>, work: F) -> Result<T, AuthError>
 where
     F: FnOnce() -> Result<T, AuthError> + Send + 'static,
     T: Send + 'static,
 {
-    let permit = tokio::time::timeout(HASHING_QUEUE_TIMEOUT, permits.acquire())
+    let permit = tokio::time::timeout(hashing_queue_timeout(), permits.acquire_owned())
         .await
         .map_err(|_| AuthError::Overloaded)?
         .map_err(|_| AuthError::PasswordHashing)?;
 
-    let result = tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|_| AuthError::PasswordHashing)?;
-    drop(permit);
-    result
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|_| AuthError::PasswordHashing)?
 }
 
 /// Argon2id is deliberately CPU- and memory-hard, so it runs on the
@@ -561,6 +636,14 @@ fn decoy_password_hash() -> &'static str {
         let mut unguessable = [0_u8; TOKEN_BYTES];
         OsRng.fill_bytes(&mut unguessable);
         let salt = SaltString::generate(&mut OsRng);
+        // Built with the same `Argon2::default()` that verification uses,
+        // so the decoy costs what a real hash costs. Verification honours
+        // the parameters embedded in whatever PHC string it is given, so
+        // the moment stored hashes move to stronger parameters -- a bump,
+        // or an import -- a decoy pinned to the old ones would verify
+        // faster than a real credential and quietly reopen the timing
+        // oracle this exists to close. `the_decoy_costs_what_a_real_hash_costs`
+        // asserts they still agree.
         Argon2::default()
             .hash_password(&unguessable, &salt)
             .expect("hashing a fixed-width value with default parameters cannot fail")
@@ -674,6 +757,106 @@ mod tests {
         );
     }
 
+    /// The decoy only equalises timing while it costs what a real hash
+    /// costs. Verification uses the parameters embedded in the stored
+    /// string, so if those ever diverge from the decoy's, an unknown login
+    /// becomes measurably cheaper than a known one.
+    #[test]
+    fn the_decoy_costs_what_a_real_hash_costs() {
+        let decoy = decoy_password_hash();
+        let parsed = PasswordHash::new(decoy).expect("the decoy is a valid PHC string");
+        let decoy_params = argon2::Params::try_from(&parsed).expect("decoy parameters");
+        let current = Argon2::default();
+
+        assert_eq!(parsed.algorithm.as_str(), "argon2id");
+        assert_eq!(
+            (
+                decoy_params.m_cost(),
+                decoy_params.t_cost(),
+                decoy_params.p_cost()
+            ),
+            (
+                current.params().m_cost(),
+                current.params().t_cost(),
+                current.params().p_cost()
+            ),
+            "the decoy must be built with the parameters verification uses"
+        );
+    }
+
+    /// Abandoning a request must not hand its permit back early.
+    ///
+    /// A blocking task cannot be cancelled, so the Argon2 keeps running
+    /// and keeps its memory. If the permit went back the moment the future
+    /// was dropped, a client that fires requests and closes the socket
+    /// would hold unbounded memory while the semaphore reported room --
+    /// the exact denial of service the semaphore exists to stop.
+    ///
+    /// Ordered by channels, not by sleeping. An earlier version slept for
+    /// fixed durations and asserted in the gaps, which on a machine running
+    /// Argon2 on every worker -- as this binary does -- is a test that
+    /// eventually fails for reasons unrelated to the behaviour it checks.
+    /// Here the blocking work cannot finish until the test says so, so
+    /// every assertion is ordered by a happens-before rather than a guess.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_abandoned_request_keeps_its_permit_until_its_hash_finishes() {
+        use std::sync::mpsc;
+
+        let permits = Arc::new(Semaphore::new(1));
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (finished_tx, finished_rx) = mpsc::channel::<()>();
+
+        let work = move || {
+            started_tx.send(()).expect("the test is listening");
+            // Held here until the test has made its assertions.
+            release_rx.recv().expect("the test releases the work");
+            finished_tx.send(()).expect("the test is listening");
+            Ok::<_, AuthError>(())
+        };
+
+        let handle = tokio::spawn(run_permitted(Arc::clone(&permits), work));
+
+        // The permit is taken and the blocking work is genuinely under way.
+        tokio::task::spawn_blocking(move || started_rx.recv().expect("work started"))
+            .await
+            .expect("join");
+
+        // Abandon the request, exactly as a closed connection does, and
+        // wait until the abort has actually taken effect.
+        handle.abort();
+        assert!(
+            handle.await.expect_err("aborted").is_cancelled(),
+            "the request future is gone"
+        );
+
+        assert_eq!(
+            permits.available_permits(),
+            0,
+            "an abandoned request must not release its permit while its hash is still running"
+        );
+
+        // Only now let the work finish; its permit must come back with it.
+        release_tx.send(()).expect("the work is waiting");
+        tokio::task::spawn_blocking(move || finished_rx.recv().expect("work finished"))
+            .await
+            .expect("join");
+
+        // The permit is released as the closure returns, which is a moment
+        // after it sends; yield until the runtime has run that drop.
+        for _ in 0..1_000 {
+            if permits.available_permits() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            permits.available_permits(),
+            1,
+            "the permit is released when the work it accounts for completes"
+        );
+    }
+
     #[tokio::test]
     async fn a_missing_stored_hash_verifies_against_the_decoy_and_never_succeeds() {
         // The absent-credential path must still cost a real verification,
@@ -707,14 +890,14 @@ mod tests {
 
         // A pool of its own, so this does not race the other tests in
         // this binary against the process-wide limiter.
-        let permits = Semaphore::new(1);
+        let permits = Arc::new(Semaphore::new(1));
         let held = permits.acquire().await.expect("take the only permit");
 
         // With every permit held, further work waits instead of being
         // admitted -- which is the whole point: the memory is capped.
         let admitted = tokio::time::timeout(
             Duration::from_millis(200),
-            run_permitted(&permits, || Ok::<_, AuthError>(())),
+            run_permitted(Arc::clone(&permits), || Ok::<_, AuthError>(())),
         )
         .await;
         assert!(
@@ -724,7 +907,7 @@ mod tests {
 
         // ...and recovers once the pool drains.
         drop(held);
-        run_permitted(&permits, || Ok::<_, AuthError>(()))
+        run_permitted(Arc::clone(&permits), || Ok::<_, AuthError>(()))
             .await
             .expect("a drained pool admits work again");
     }

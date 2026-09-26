@@ -1,6 +1,6 @@
-use std::{fmt, fs, net::SocketAddr};
+use std::{fmt, fs, net::SocketAddr, time::Duration};
 
-use api::TrustedProxyConfig;
+use api::{RouterConfig, TrustedProxyConfig};
 use application::quote_signing::{EnvironmentQuoteSigner, QuoteSigningError};
 use application::seed_protection::{EnvironmentSeedProtector, SeedProtectionError};
 
@@ -22,6 +22,9 @@ pub struct ServerConfig {
     metrics_addr: SocketAddr,
     log_format: LogFormat,
     cors_allowed_origins: Vec<String>,
+    request_timeout: Duration,
+    max_body_bytes: usize,
+    shutdown_drain: Duration,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,13 +84,28 @@ impl ServerConfig {
                 host: metrics_host,
                 port: metrics_port,
             })?;
-        let cors_allowed_origins = value("CORS_ALLOWED_ORIGINS")
+        // Comma-separated, empty entries ignored, so a trailing comma or
+        // a blank value is not a malformed origin. Each surviving entry is
+        // validated in `build_cors_layer`, which drops what it cannot use
+        // rather than failing startup.
+        let cors_allowed_origins: Vec<String> = value("CORS_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
             .map(str::trim)
             .filter(|origin| !origin.is_empty())
             .map(ToOwned::to_owned)
             .collect();
+
+        let defaults = RouterConfig::default();
+        let request_timeout = optional_duration_secs("REQUEST_TIMEOUT_SECS", &mut value)?
+            .unwrap_or(defaults.request_timeout);
+        let max_body_bytes =
+            optional_usize("MAX_BODY_BYTES", &mut value)?.unwrap_or(defaults.max_body_bytes);
+        // Five seconds covers a one- or two-second readiness interval with
+        // room for one missed probe. It is not a guess about how long
+        // in-flight work takes -- that is what the request timeout is for.
+        let shutdown_drain = optional_duration_secs("SHUTDOWN_DRAIN_SECS", &mut value)?
+            .unwrap_or(Duration::from_secs(5));
 
         Ok(Self {
             database_url,
@@ -101,6 +119,9 @@ impl ServerConfig {
             metrics_addr,
             log_format,
             cors_allowed_origins,
+            request_timeout,
+            max_body_bytes,
+            shutdown_drain,
         })
     }
 
@@ -120,20 +141,12 @@ impl ServerConfig {
         self.insecure_cookies
     }
 
-    pub const fn rate_limit_burst(&self) -> u32 {
-        self.rate_limit_burst
-    }
-
     pub fn quote_signer(&self) -> &EnvironmentQuoteSigner {
         &self.quote_signer
     }
 
     pub fn seed_protector(&self) -> &EnvironmentSeedProtector {
         &self.seed_protector
-    }
-
-    pub fn trusted_proxy_cidrs(&self) -> &TrustedProxyConfig {
-        &self.trusted_proxy_cidrs
     }
 
     pub const fn metrics_addr(&self) -> SocketAddr {
@@ -144,9 +157,73 @@ impl ServerConfig {
         self.log_format
     }
 
-    pub fn cors_allowed_origins(&self) -> &[String] {
-        &self.cors_allowed_origins
+    /// How long to report unready before closing the listening socket.
+    pub const fn shutdown_drain(&self) -> Duration {
+        self.shutdown_drain
     }
+
+    /// The router knobs this environment asks for.
+    ///
+    /// These used to be `RouterConfig::default()` at the call site, which
+    /// meant `CORS_ALLOWED_ORIGINS`, the request timeout and the body
+    /// limit were unreachable in the shipped binary however they were set
+    /// -- the whole CORS path was dead outside tests, and the warning the
+    /// router logs about a malformed origin could never fire. Reading them
+    /// here is what makes `RouterConfig`'s own promise, that these depend
+    /// on runtime configuration rather than hardcoded values, true.
+    pub fn router_config(&self) -> RouterConfig {
+        RouterConfig {
+            request_timeout: self.request_timeout,
+            max_body_bytes: self.max_body_bytes,
+            cors_allowed_origins: self.cors_allowed_origins.clone(),
+            rate_limit_burst: Some(self.rate_limit_burst),
+            trusted_proxies: self.trusted_proxy_cidrs.clone(),
+        }
+    }
+}
+
+/// A positive whole number of seconds, or nothing.
+///
+/// Zero is refused rather than accepted: a zero timeout would fail every
+/// request instantly, which is far more likely a typo than an intent.
+fn optional_duration_secs(
+    name: &str,
+    value: &mut impl FnMut(&str) -> Option<String>,
+) -> Result<Option<Duration>, ConfigError> {
+    let Some(raw) = value(name) else {
+        return Ok(None);
+    };
+    let seconds: u64 = raw.parse().map_err(|_| ConfigError::InvalidNumber {
+        name: name.to_owned(),
+        value: raw.clone(),
+    })?;
+    if seconds == 0 {
+        return Err(ConfigError::InvalidNumber {
+            name: name.to_owned(),
+            value: raw,
+        });
+    }
+    Ok(Some(Duration::from_secs(seconds)))
+}
+
+fn optional_usize(
+    name: &str,
+    value: &mut impl FnMut(&str) -> Option<String>,
+) -> Result<Option<usize>, ConfigError> {
+    let Some(raw) = value(name) else {
+        return Ok(None);
+    };
+    let parsed: usize = raw.parse().map_err(|_| ConfigError::InvalidNumber {
+        name: name.to_owned(),
+        value: raw.clone(),
+    })?;
+    if parsed == 0 {
+        return Err(ConfigError::InvalidNumber {
+            name: name.to_owned(),
+            value: raw,
+        });
+    }
+    Ok(Some(parsed))
 }
 
 impl fmt::Debug for ServerConfig {
@@ -325,8 +402,11 @@ mod tests {
             _ => None,
         };
         assert_eq!(
-            ServerConfig::from_values(base).unwrap().rate_limit_burst(),
-            17
+            ServerConfig::from_values(base)
+                .unwrap()
+                .router_config()
+                .rate_limit_burst,
+            Some(17)
         );
 
         let error = ServerConfig::from_values(|name| match name {
@@ -352,7 +432,8 @@ mod tests {
         .unwrap();
         assert!(
             valid
-                .trusted_proxy_cidrs()
+                .router_config()
+                .trusted_proxies
                 .contains("172.30.0.2".parse().unwrap())
         );
 
@@ -426,4 +507,93 @@ pub enum ConfigError {
     QuoteSigning(#[from] QuoteSigningError),
     #[error(transparent)]
     SeedProtection(#[from] SeedProtectionError),
+    /// A numeric setting that is absent is fine and takes its default; one
+    /// that is present and unusable is a configuration mistake, and
+    /// starting anyway on the default would hide it.
+    #[error("{name} must be a positive whole number, got '{value}'")]
+    InvalidNumber { name: String, value: String },
+}
+
+#[cfg(test)]
+mod router_setting_tests {
+    use super::*;
+
+    /// The minimum a valid environment needs, plus whatever a test adds.
+    fn environment(
+        extra: &'static [(&'static str, &'static str)],
+    ) -> impl FnMut(&str) -> Option<String> {
+        move |name| match name {
+            "DATABASE_URL" => Some("postgres://example.invalid/contracter".to_owned()),
+            "QUOTE_SIGNING_KEY" => Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()),
+            "QUOTE_SEED_KEY" => Some("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_owned()),
+            other => extra
+                .iter()
+                .find(|(key, _)| *key == other)
+                .map(|(_, value)| (*value).to_owned()),
+        }
+    }
+
+    /// Every setting must actually reach the router.
+    ///
+    /// These were declared, documented, and never read: the binary passed
+    /// `RouterConfig::default()`, so an operator could set
+    /// `CORS_ALLOWED_ORIGINS` and get total silence. This asserts the wiring
+    /// rather than the parsing, which is where it broke.
+    #[test]
+    fn every_router_setting_reaches_the_router() {
+        let config = ServerConfig::from_values(environment(&[
+            (
+                "CORS_ALLOWED_ORIGINS",
+                " https://a.example , ,https://b.example,",
+            ),
+            ("REQUEST_TIMEOUT_SECS", "7"),
+            ("MAX_BODY_BYTES", "8192"),
+            ("SHUTDOWN_DRAIN_SECS", "11"),
+            ("INSECURE_COOKIES", "TRUE"),
+            ("RATE_LIMIT_BURST", "17"),
+        ]))
+        .expect("a valid environment parses");
+
+        let router = config.router_config();
+        // A trailing comma and a blank entry are not malformed origins.
+        assert_eq!(
+            router.cors_allowed_origins,
+            vec!["https://a.example", "https://b.example"]
+        );
+        assert_eq!(router.request_timeout, Duration::from_secs(7));
+        assert_eq!(router.max_body_bytes, 8_192);
+        assert_eq!(router.rate_limit_burst, Some(17));
+
+        // Not routed through `RouterConfig`, and the same class of setting:
+        // one decides whether the session cookie carries `Secure`.
+        assert!(config.insecure_cookies());
+        assert_eq!(config.shutdown_drain(), Duration::from_secs(11));
+    }
+
+    /// An absent numeric setting takes its default; a present, unusable one
+    /// is a mistake worth failing on, because starting anyway would leave
+    /// the operator believing a limit is in force that is not.
+    #[test]
+    fn an_unusable_numeric_setting_is_refused_rather_than_defaulted() {
+        for value in ["0", "-1", "ten", ""] {
+            let mut lookup = |_: &str| Some(value.to_owned());
+            assert!(
+                optional_duration_secs("X", &mut lookup).is_err(),
+                "{value:?} must be refused as a duration"
+            );
+            assert!(
+                optional_usize("X", &mut lookup).is_err(),
+                "{value:?} must be refused as a size"
+            );
+        }
+        let mut absent = |_: &str| None;
+        assert_eq!(
+            optional_duration_secs("X", &mut absent).expect("absent is ok"),
+            None
+        );
+
+        let error =
+            ServerConfig::from_values(environment(&[("REQUEST_TIMEOUT_SECS", "0")])).unwrap_err();
+        assert!(matches!(error, ConfigError::InvalidNumber { .. }));
+    }
 }

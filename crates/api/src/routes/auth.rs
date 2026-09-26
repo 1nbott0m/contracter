@@ -11,7 +11,48 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::{error::ApiError, extract::CurrentUser, state::AppState};
+use crate::{
+    error::ApiError,
+    extract::{CurrentUser, PeerAddress},
+    rate_limit::RateLimitKey,
+    state::AppState,
+};
+
+/// The bucket this request spends from.
+///
+/// `ConnectInfo` is the transport peer, never a client-supplied header.
+/// `X-Forwarded-For` is deliberately not consulted: anyone may set it, so
+/// honouring it would hand an attacker a fresh budget per request and make
+/// the limiter worse than none at all. Behind a reverse proxy every caller
+/// shares the proxy's bucket, which is why a proxied deployment needs a
+/// limiter at the edge as well -- stated here rather than assumed away.
+///
+/// With no peer address -- which is how tests drive the router -- one
+/// shared bucket still bounds total work; it simply cannot tell callers
+/// apart.
+fn peer_key(PeerAddress(address): PeerAddress) -> RateLimitKey {
+    match address {
+        Some(address) => RateLimitKey::Peer(address),
+        None => {
+            // Loud, and once. A server built with
+            // `into_make_service_with_connect_info` always supplies an
+            // address, so reaching this in production means a refactor or
+            // a different serve path silently dropped it -- and the
+            // consequence is severe: every caller then shares one bucket,
+            // so a single client locks `/auth/*` for everyone. That is
+            // itself an outage, and it is invisible unless something says
+            // so. Tests drive the router directly and hit this by design,
+            // which is why it is logged rather than fatal.
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                tracing::error!(
+                    "no peer address on an auth request: rate limiting has degraded to a single                      shared budget, so one client can lock out every other. Serve the router with                      into_make_service_with_connect_info."
+                );
+            });
+            RateLimitKey::Anonymous
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -50,11 +91,24 @@ pub struct LogoutAllResponse {
 /// normal login path, so a registration response never carries a session.
 pub async fn register(
     State(state): State<AppState>,
+    peer: PeerAddress,
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Before any work at all, including the invitation lookup.
+    let limiter = state.auth_rate_limiter();
+    if let Err(retry) = limiter.check(&peer_key(peer)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+
     let user_id = match request.invitation_token {
         Some(token) if !token.trim().is_empty() => {
             let invitation = SecretToken::new(token);
+            // A failed registration does not consume the invitation, so
+            // without this budget a holder of one valid invitation could
+            // probe logins indefinitely by rotating addresses.
+            if let Err(retry) = limiter.check(&RateLimitKey::Invitation(invitation.hash())) {
+                return Err(ApiError::too_many_requests(retry.0));
+            }
             auth::register(
                 state.database(),
                 &invitation,
@@ -79,8 +133,21 @@ pub async fn register(
 /// the client cannot read from JavaScript, and never appears in the body.
 pub async fn login(
     State(state): State<AppState>,
+    peer: PeerAddress,
     Json(request): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Two budgets, because either alone leaves a hole: by address only,
+    // one host spreads guesses across every account; by account only, a
+    // botnet hammers one account freely. The address is charged first so a
+    // flood is refused before it can touch any account's budget.
+    let limiter = state.auth_rate_limiter();
+    if let Err(retry) = limiter.check(&peer_key(peer)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+    if let Err(retry) = limiter.check(&RateLimitKey::login(&request.login)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+
     let session = auth::login(
         state.database(),
         state.auth_config(),
@@ -109,8 +176,20 @@ pub async fn login(
 /// Idempotent.
 pub async fn logout(
     State(state): State<AppState>,
+    peer: PeerAddress,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Unauthenticated, and it writes: `revoke_user_session` runs against
+    // whatever token hash the caller supplies. Each call is cheap, which is
+    // why this is not where the Argon2 budget matters, but an unlimited
+    // stream of them is still an unlimited stream of database writes.
+    // Charging the peer budget costs an honest caller nothing, because
+    // logging out is idempotent and a refused logout leaves the session
+    // exactly as a successful one would have left a stale cookie.
+    if let Err(retry) = state.auth_rate_limiter().check(&peer_key(peer)) {
+        return Err(ApiError::too_many_requests(retry.0));
+    }
+
     if let Some(token) = state.session_cookie_policy().read_token(&headers) {
         auth::logout(state.database(), &SecretToken::new(token)).await?;
     }
