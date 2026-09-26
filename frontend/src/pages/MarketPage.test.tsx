@@ -114,3 +114,28 @@ it('renders the first catalog page before following the next cursor', async () =
   expect(await screen.findByText('Fade')).toBeTruthy();
   expect(catalogSkusPage).toHaveBeenLastCalledWith('next-page');
 });
+
+it('loads valuation pages progressively with the catalog instead of fetching the full snapshot', async () => {
+  const catalogSkusPage = vi.fn()
+    .mockResolvedValueOnce({ items: catalog.slice(0, 1), next_cursor: 'catalog-next' })
+    .mockResolvedValueOnce({ items: catalog.slice(1), next_cursor: null });
+  const marketValuationsPage = vi.fn()
+    .mockResolvedValueOnce({ items: valuations.slice(0, 1), next_cursor: 'valuation-next' })
+    .mockResolvedValueOnce({ items: valuations.slice(1), next_cursor: null });
+  const client = {
+    catalogSkusPage,
+    marketValuations: vi.fn(),
+    marketValuationsPage,
+    balance: vi.fn(),
+    inventory: vi.fn(),
+    marketPurchase: vi.fn(),
+  };
+  render(<MarketPage session={{ status: 'unauthenticated' }} navigate={vi.fn()} client={client} />);
+
+  expect(await screen.findByText('Slate')).toBeTruthy();
+  expect(marketValuationsPage).toHaveBeenCalledTimes(1);
+  expect(client.marketValuations).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'ЗАГРУЗИТЬ ЕЩЁ' }));
+  expect(await screen.findByText('Fade')).toBeTruthy();
+  expect(marketValuationsPage).toHaveBeenLastCalledWith('valuation-next');
+});
