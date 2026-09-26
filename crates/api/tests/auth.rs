@@ -209,7 +209,7 @@ async fn the_session_cookie_is_httponly_samesite_lax_and_never_echoes_the_token_
         .unwrap()
         .to_owned();
     assert!(set_cookie.contains("HttpOnly"), "{set_cookie}");
-    assert!(set_cookie.contains("SameSite=Lax"), "{set_cookie}");
+    assert!(set_cookie.contains("SameSite=None"), "{set_cookie}");
     assert!(set_cookie.contains("Secure"), "{set_cookie}");
     assert!(set_cookie.contains("Path=/"), "{set_cookie}");
 

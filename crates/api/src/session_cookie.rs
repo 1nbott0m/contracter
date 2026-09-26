@@ -75,8 +75,11 @@ impl SessionCookiePolicy {
     /// The `Set-Cookie` value that establishes a session.
     ///
     /// `HttpOnly` keeps the token away from page JavaScript, so an XSS
-    /// bug cannot read it. `SameSite=Lax` means a cross-site POST never
-    /// carries the cookie.
+    /// bug cannot read it. Production serves the browser from the separate
+    /// Cloudflare Pages origin, so `SameSite=None` is required for the
+    /// credentialed API fetches to carry this cookie; `Secure` prevents that
+    /// cross-site allowance from working over plain HTTP. Local development
+    /// stays `Lax` because it uses a same-origin API.
     pub fn set(self, token: &str, max_age: std::time::Duration) -> HeaderValue {
         self.build(token, max_age.as_secs())
     }
@@ -93,15 +96,16 @@ impl SessionCookiePolicy {
         // requires both, and the browser silently drops the cookie
         // otherwise.
         let secure_attribute = if self.secure { "; Secure" } else { "" };
+        let same_site = if self.secure { "None" } else { "Lax" };
         let value = format!(
-            "{name}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_seconds}{secure_attribute}"
+            "{name}={token}; Path=/; HttpOnly; SameSite={same_site}; Max-Age={max_age_seconds}{secure_attribute}"
         );
         HeaderValue::from_str(&value).unwrap_or_else(|_| {
             // A token is base64url and everything else is fixed, so this
             // is unreachable; falling back to a cleared cookie still
             // fails in the safe direction (it never grants a session).
             HeaderValue::from_static(
-                "__Host-contracter_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure",
+                "__Host-contracter_session=; Path=/; HttpOnly; SameSite=None; Max-Age=0; Secure",
             )
         })
     }
@@ -192,7 +196,7 @@ mod tests {
         let rendered = rendered.to_str().unwrap();
         assert!(rendered.starts_with("__Host-contracter_session=token-value"));
         assert!(rendered.contains("HttpOnly"));
-        assert!(rendered.contains("SameSite=Lax"));
+        assert!(rendered.contains("SameSite=None"));
         assert!(rendered.contains("Path=/"));
         assert!(rendered.contains("Max-Age=60"));
         assert!(rendered.contains("Secure"));

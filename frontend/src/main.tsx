@@ -16,7 +16,7 @@ import './commerce.css';
 import './search-controls.css';
 import './information.css';
 import { AppShell, type ApiStatus } from './components/AppShell';
-import { api } from './api';
+import { api, ApiRequestError } from './api';
 import { ContractsPage } from './pages/ContractsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { MarketPage } from './pages/MarketPage';
@@ -48,8 +48,10 @@ function LoginPage({ navigate, login: authenticate }: { navigate: Navigate; logi
       }
       const returnTo = new URLSearchParams(window.location.search).get('returnTo');
       navigate(returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/contracts', { replace: true });
-    } catch {
-      setLoginError('Не удалось войти. Проверьте логин и пароль.');
+    } catch (error) {
+      setLoginError(error instanceof ApiRequestError && error.status === 429
+        ? 'Слишком много попыток. Подождите минуту и повторите.'
+        : 'Не удалось войти. Проверьте логин и пароль.');
     }
   };
 
@@ -73,8 +75,14 @@ function RegisterPage({ navigate }: { navigate: Navigate }) {
     try {
       await api.register('', login.trim(), password);
       navigate('/login?registered=1', { replace: true });
-    } catch {
-      setError('Не удалось зарегистрироваться. Проверьте логин и пароль или попробуйте другой логин.');
+    } catch (error) {
+      setError(error instanceof ApiRequestError
+        ? error.status === 409 || error.code === 'LOGIN_TAKEN'
+          ? 'Этот логин уже занят. Выберите другой.'
+          : error.status === 429
+            ? 'Слишком много попыток. Подождите минуту и повторите.'
+            : error.message
+        : 'Не удалось зарегистрироваться. Проверьте логин и пароль или попробуйте другой логин.');
     } finally {
       setSubmitting(false);
     }
