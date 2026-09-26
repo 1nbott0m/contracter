@@ -8,7 +8,7 @@ import type { Navigate } from '../router';
 import type { SessionState } from '../session';
 import type { AsyncState } from '../types';
 
-type HistoryApi = Pick<typeof api, 'history'> & Partial<Pick<typeof api, 'ledgerHistory' | 'inventoryEventHistory'>>;
+type HistoryApi = Pick<typeof api, 'history'> & Partial<Pick<typeof api, 'contractHistoryPage' | 'ledgerHistory' | 'inventoryEventHistory'>>;
 type HistoryMode = 'contracts' | 'ledger' | 'inventory';
 type HistoryPageProps = { session: SessionState; navigate: Navigate; client?: HistoryApi; setApiStatus?: (status: ApiStatus) => void };
 
@@ -34,6 +34,8 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
   const [inventoryState, setInventoryState] = useState<AsyncState<InventoryEventHistoryItem[]>>({ status: 'loading' });
   const [mode, setMode] = useState<HistoryMode>('contracts');
   const [reload, setReload] = useState(0);
+  const [nextContractCursor, setNextContractCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     if (session.status !== 'authenticated') return;
@@ -41,15 +43,23 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
     setState({ status: 'loading' });
     setApiStatus?.('connecting');
     const load = mode === 'contracts'
-      ? client.history()
+      ? client.contractHistoryPage ? client.contractHistoryPage() : client.history().then((items) => ({ items, next_cursor: null }))
       : mode === 'ledger'
         ? client.ledgerHistory?.() ?? Promise.resolve([])
         : client.inventoryEventHistory?.() ?? Promise.resolve([]);
     load.then((items) => {
       if (!active) return;
-      if (mode === 'contracts') setState(items.length ? { status: 'success', data: items as ContractHistoryItem[] } : { status: 'empty', data: [] });
-      if (mode === 'ledger') setLedgerState(items.length ? { status: 'success', data: items as LedgerHistoryItem[] } : { status: 'empty', data: [] });
-      if (mode === 'inventory') setInventoryState(items.length ? { status: 'success', data: items as InventoryEventHistoryItem[] } : { status: 'empty', data: [] });
+      if (mode === 'contracts') {
+        const page = items as { items: ContractHistoryItem[]; next_cursor: string | null };
+        setState(page.items.length ? { status: 'success', data: page.items } : { status: 'empty', data: [] });
+        setNextContractCursor(page.next_cursor);
+      } else if (mode === 'ledger') {
+        const rows = items as LedgerHistoryItem[];
+        setLedgerState(rows.length ? { status: 'success', data: rows } : { status: 'empty', data: [] });
+      } else {
+        const rows = items as InventoryEventHistoryItem[];
+        setInventoryState(rows.length ? { status: 'success', data: rows } : { status: 'empty', data: [] });
+      }
       setApiStatus?.('live');
     }).catch((error: unknown) => {
       if (!active) return;
@@ -61,6 +71,24 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
     });
     return () => { active = false; };
   }, [client, mode, reload, session.status, setApiStatus]);
+
+  const loadMoreContracts = async () => {
+    if (!nextContractCursor || !client.contractHistoryPage || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await client.contractHistoryPage(nextContractCursor);
+      setState((current) => {
+        const existing = current.status === 'success' || current.status === 'empty' ? current.data || [] : [];
+        const merged = [...existing, ...page.items];
+        return merged.length ? { status: 'success', data: merged } : { status: 'empty', data: [] };
+      });
+      setNextContractCursor(page.next_cursor);
+    } catch (error: unknown) {
+      setState({ status: 'error', error: error instanceof Error ? error.message : 'История недоступна' });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   if (session.status !== 'authenticated') {
     return <section className="route-state"><span className="eyebrow">ACCOUNT / PRIVATE HISTORY</span><h1>История контрактов</h1><p>{session.status === 'loading' ? 'Проверяем сессию.' : 'Войдите, чтобы загрузить историю этого аккаунта.'}</p>{session.status !== 'loading' && <button className="primary route-state-action" type="button" onClick={() => navigate('/login?returnTo=/history')}>Войти <ArrowRight size={16} /></button>}</section>;
@@ -90,6 +118,7 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
         </div> : <p className="history-media-unavailable">Изображения и значения недоступны в текущем API истории.</p>}
       </article>;
     })}</section>}
+    {mode === 'contracts' && nextContractCursor && <div className="commerce-load-more"><button type="button" className="secondary" onClick={() => void loadMoreContracts()} disabled={loadingMore}>{loadingMore ? 'ЗАГРУЗКА…' : 'ЗАГРУЗИТЬ ЕЩЁ'}</button></div>}
     {mode === 'ledger' && <HistoryRows state={ledgerState} empty="Операций CC пока нет" title="История баланса CC" onRetry={() => setReload((value) => value + 1)} render={(entry) => <><strong>{entry.operation}</strong><span>{microcredits(entry.amount_microcredits)}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
     {mode === 'inventory' && <HistoryRows state={inventoryState} empty="Событий инвентаря пока нет" title="История инвентаря" onRetry={() => setReload((value) => value + 1)} render={(entry) => <><strong>{entry.event_kind}</strong><span>Предмет {entry.inventory_item_id}</span><time dateTime={entry.occurred_at}>{contractDate(entry.occurred_at)}</time></>} />}
   </>;

@@ -216,6 +216,13 @@ async function requestAllContractHistory(): Promise<ContractHistoryItem[]> {
   }
 }
 
+async function requestContractHistoryPage(cursor?: string): Promise<{ items: ContractHistoryItem[]; next_cursor: string | null }> {
+  const query = new URLSearchParams({ limit: '200' });
+  if (cursor !== undefined) query.set('cursor', cursor);
+  const items = await request<ContractHistoryItem[]>(`/me/history/contracts?${query.toString()}`);
+  return { items, next_cursor: items.length === 200 ? items[items.length - 1]?.contract_id ?? null : null };
+}
+
 async function requestAllArrayHistory<T, K extends keyof T>(
   path: string,
   idField: K,
@@ -292,6 +299,7 @@ export const api = {
     { idempotency_key: idempotencyKey },
   ),
   history: requestAllContractHistory,
+  contractHistoryPage: requestContractHistoryPage,
   ledgerHistory: () => requestAllArrayHistory<LedgerHistoryItem, 'transaction_id'>('/me/history/ledger', 'transaction_id'),
   inventoryEventHistory: () => requestAllArrayHistory<InventoryEventHistoryItem, 'event_id'>('/me/history/inventory-events', 'event_id'),
   findMyContractHistoryEntry: findContract,
