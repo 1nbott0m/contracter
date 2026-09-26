@@ -40,4 +40,12 @@ describe('SkinCard selection action', () => {
     expect(screen.getByText('ЦЕНА НЕДОСТУПНА')).toBeTruthy();
     expect(screen.queryByText('0 CC')).toBeNull();
   });
+
+  it('keeps artwork ownership inside SkinImage without decorative card overlays', () => {
+    const { container } = render(<SkinCard item={item} />);
+
+    expect(container.querySelector('.skin-image')).toBeTruthy();
+    expect(container.querySelector('.art-line')).toBeNull();
+    expect(container.querySelector('.skin-art > span')).toBeNull();
+  });
 });

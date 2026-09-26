@@ -27,8 +27,6 @@ export function SkinCard({ item, selected = false, onRemove, onAdd, onClick, sel
     <article className={`skin-card ${selected ? 'selected' : ''} ${item.locked ? 'locked' : ''}`.trim()}>
       <div className="skin-art" style={{ '--accent': item.color } as React.CSSProperties}>
         <SkinImage src={resolveSkinImage(item)} alt={`${item.weapon} | ${item.skin}`} accent={item.color} />
-        <span>{item.weapon.split('-')[0]}</span>
-        <div className="art-line" />
       </div>
       {selected && onRemove && <button className="remove" aria-label="Удалить" disabled={selectionDisabled} onClick={(event) => { event.stopPropagation(); onRemove(); }}><X size={14} /></button>}
       <div className="skin-meta"><span className="weapon">{item.weapon}</span><strong>{item.skin}</strong><span className="wear">{item.wear}</span></div>
