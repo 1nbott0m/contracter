@@ -1,4 +1,9 @@
-CREATE OR REPLACE FUNCTION public.read_quote_candidate_projection(p_user_id bigint, p_allocation_public_id uuid, p_collection_id bigint, p_rarity_code text)
+-- The following migration extends this function's OUT row type. PostgreSQL
+-- cannot replace a function when its OUT parameters change, so make this
+-- migration safe to replay during disposable-database preparation and
+-- restore workflows. Migration 0030 recreates the final row shape.
+DROP FUNCTION IF EXISTS public.read_quote_candidate_projection(bigint, uuid, bigint, text);
+CREATE FUNCTION public.read_quote_candidate_projection(p_user_id bigint, p_allocation_public_id uuid, p_collection_id bigint, p_rarity_code text)
 RETURNS TABLE (inventory_item_id bigint, inventory_item_public_id uuid, sku_id bigint, sku_public_id uuid, catalog_item_id bigint, collection_id bigint, rarity_code text, canonical_float numeric, valuation_snapshot_item_id bigint, verified_price_microcredits bigint, warehouse_available_units integer, warehouse_reserved_units integer, sku_liability_microcredits bigint, sku_reserved_units integer, collection_liability_microcredits bigint, scarcity_weight_numerator bigint, scarcity_weight_denominator bigint)
 LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $function$
  SELECT inventory.id, inventory.public_id, sku.id, sku.public_id, catalog.id, catalog.collection_id, catalog.rarity_code, inventory.canonical_float, valuation.snapshot_item_id, valuation.verified_price_microcredits, stock.available_units, stock.reserved_units, COALESCE(sku_risk.liability_microcredits,0), COALESCE(sku_risk.reserved_units,0), COALESCE(collection_risk.liability_microcredits,0), COALESCE(scarcity.weight_multiplier_numerator,1), COALESCE(scarcity.weight_multiplier_denominator,1)

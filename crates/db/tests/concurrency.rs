@@ -400,8 +400,13 @@ async fn concurrent_market_purchases_with_the_same_key_settle_once() {
         .execute(pool)
         .await
         .expect("seed market balance");
-    sqlx::query("INSERT INTO rarities (code, rank, is_covert) VALUES ($1, 9602, false) ON CONFLICT (code) DO NOTHING")
-        .bind(format!("concurrency-market-{suffix}" )).execute(pool).await.expect("seed rarity");
+    // `rank` is globally unique, so a fixed test rank makes reruns collide
+    // with committed fixtures. Derive a stable, high-range rank from this
+    // run's UUID while keeping it outside the production rarity range.
+    let rarity_rank = 10_000
+        + (u32::from_le_bytes(Uuid::new_v4().as_bytes()[..4].try_into().unwrap()) % 20_000) as i32;
+    sqlx::query("INSERT INTO rarities (code, rank, is_covert) VALUES ($1, $2, false) ON CONFLICT (code) DO NOTHING")
+        .bind(format!("concurrency-market-{suffix}" )).bind(rarity_rank).execute(pool).await.expect("seed rarity");
     sqlx::query("INSERT INTO wear_bands (code, lower_bound, upper_bound, includes_upper_bound) VALUES ($1, 0, 1, true) ON CONFLICT (code) DO NOTHING")
         .bind(format!("concurrency-market-{suffix}" )).execute(pool).await.expect("seed wear band");
     let collection: i64 = sqlx::query_scalar(

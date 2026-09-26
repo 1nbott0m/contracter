@@ -1,4 +1,5 @@
 ALTER TABLE administrators DROP CONSTRAINT IF EXISTS administrators_totp_secret_hash_check;
+ALTER TABLE administrators DROP CONSTRAINT IF EXISTS administrators_totp_secret_encrypted_check;
 ALTER TABLE administrators ADD CONSTRAINT administrators_totp_secret_encrypted_check
   CHECK (totp_secret_hash IS NULL OR octet_length(totp_secret_hash) BETWEEN 72 AND 128);
 
