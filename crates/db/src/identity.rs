@@ -292,6 +292,29 @@ where
         .await?)
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminActiveSessionRow {
+    pub session_id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub login: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub totp_verified: bool,
+}
+
+pub async fn list_admin_active_sessions<'e, E>(
+    executor: E,
+    admin_public_id: PublicId,
+) -> Result<Vec<AdminActiveSessionRow>, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_as("SELECT session_id, user_id, login, created_at, expires_at, totp_verified FROM list_admin_active_sessions($1)")
+        .bind(admin_public_id)
+        .fetch_all(executor)
+        .await?)
+}
+
 pub async fn admin_totp_attempt_allowed<'e, E>(
     executor: E,
     session_public_id: PublicId,

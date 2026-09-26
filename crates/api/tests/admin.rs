@@ -29,6 +29,7 @@ async fn admin_reads_and_mutations_require_a_session_before_database_access() {
         "/api/v1/admin/audit".to_owned(),
         "/api/v1/admin/ledger".to_owned(),
         "/api/v1/admin/market-purchases".to_owned(),
+        "/api/v1/admin/sessions".to_owned(),
         format!("/api/v1/admin/users/{}/disable", Uuid::new_v4()),
     ];
     for uri in uris {

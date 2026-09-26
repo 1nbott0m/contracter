@@ -162,6 +162,38 @@ pub async fn market_purchases(
 }
 
 #[derive(Debug, Serialize)]
+pub struct AdminSessionResponse {
+    pub session_id: Uuid,
+    pub user_id: Uuid,
+    pub login: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub totp_verified: bool,
+}
+
+pub async fn sessions(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+) -> Result<impl IntoResponse, ApiError> {
+    require_verified_admin(&state, caller).await?;
+    let rows = db::list_admin_active_sessions(state.database().pool(), caller.user_public_id)
+        .await
+        .map_err(application::auth::AuthError::from)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| AdminSessionResponse {
+                session_id: row.session_id,
+                user_id: row.user_id,
+                login: row.login,
+                created_at: row.created_at.to_rfc3339(),
+                expires_at: row.expires_at.to_rfc3339(),
+                totp_verified: row.totp_verified,
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
 pub struct AdminAuditResponse {
     pub public_id: Uuid,
     pub administrator_public_id: Uuid,
