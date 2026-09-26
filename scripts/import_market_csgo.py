@@ -138,7 +138,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--publish", action="store_true", help="publish a snapshot after ingest")
     parser.add_argument("--window-days", type=int, choices=(7, 30), default=30)
+    parser.add_argument(
+        "--max-source-age-hours",
+        type=int,
+        default=int(os.environ.get("MARKET_MAX_SOURCE_AGE_HOURS", "72")),
+        help="fail closed when the source has no completed sale within this age",
+    )
     args = parser.parse_args()
+    if args.max_source_age_hours <= 0:
+        raise SystemExit("--max-source-age-hours must be positive")
 
     key = required("MARKET_CSGO_API_KEY")
     database_url = os.environ.get("MARKET_IMPORT_DATABASE_URL") or required("DATABASE_URL")
@@ -160,6 +168,15 @@ def main() -> int:
         all_rows.extend(rows_from_payload(api_json(key, hash_name), sku, hash_name))
     if not all_rows:
         raise SystemExit("Market.CSGO returned no usable completed-sale rows; nothing was written")
+    newest_source_at = max(
+        datetime.fromisoformat(row["source_timestamp"].replace("Z", "+00:00"))
+        for row in all_rows
+    )
+    age_seconds = (datetime.now(timezone.utc) - newest_source_at).total_seconds()
+    if age_seconds > args.max_source_age_hours * 3600:
+        raise SystemExit(
+            "Market.CSGO evidence is stale; refusing to ingest or publish a new valuation snapshot"
+        )
     inserted_total = 0
     # Keep each psql variable comfortably below shell/argument-size limits.
     for offset in range(0, len(all_rows), 100):

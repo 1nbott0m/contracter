@@ -25,3 +25,16 @@ jobs:
           MARKET_IMPORT_DATABASE_URL: ${{ secrets.MARKET_IMPORT_DATABASE_URL }}
           MARKET_RUB_TO_CC_RATE: "1"
         run: python3 scripts/import_market_csgo.py --publish
+
+      - name: Notify importer failure
+        if: failure()
+        env:
+          WEBHOOK_URL: ${{ secrets.MARKET_IMPORT_FAILURE_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "MARKET_IMPORT_FAILURE_WEBHOOK_URL is not configured; GitHub Actions failure remains visible in the workflow run."
+            exit 0
+          fi
+          payload=$(python3 -c 'import json, os; print(json.dumps({"text": "CONTRACTER market importer failed: " + os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"] + "/actions/runs/" + os.environ["GITHUB_RUN_ID"]}))')
+          curl --fail-with-body --silent --show-error --max-time 10 \
+            -H 'Content-Type: application/json' --data "$payload" "$WEBHOOK_URL"
