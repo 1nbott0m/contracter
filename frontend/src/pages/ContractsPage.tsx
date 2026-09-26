@@ -180,6 +180,22 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
     }
     if (operation.stage === 'quote') {
       try {
+        const eligibilityClient = client as typeof client & {
+          quoteEligibility?: (allocationId: string, itemIds: string[]) => Promise<{
+            items: Array<{ item_id: string; eligible: boolean; reason: string | null }>;
+          }>;
+        };
+        if (eligibilityClient.quoteEligibility) {
+          const eligibility = await eligibilityClient.quoteEligibility(
+            operation.allocationId!,
+            [...operation.submittedSnapshot],
+          );
+          const rejected = eligibility.items.find((item) => !item.eligible);
+          if (rejected) {
+            lifecycle.current = null;
+            throw new Error(rejected.reason ?? 'ITEM_NOT_ELIGIBLE');
+          }
+        }
         const quote = await client.createQuote(
           operation.allocationId!,
           [...operation.submittedSnapshot],

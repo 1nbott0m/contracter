@@ -6,7 +6,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{INTERNAL_CURRENCY_CODE, error::ApiError, extract::CurrentUser, state::AppState};
+use crate::{
+    INTERNAL_CURRENCY_CODE,
+    error::{ApiError, internal},
+    extract::CurrentUser,
+    state::AppState,
+};
 
 #[derive(Serialize)]
 pub struct QuoteResponse {
@@ -34,6 +39,25 @@ pub struct CreateQuoteRequest {
     pub item_ids: Vec<Uuid>,
     /// UTF-8 text, interpreted as bytes without normalization or trimming.
     pub client_seed: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuoteEligibilityRequest {
+    pub allocation_id: Uuid,
+    pub item_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QuoteEligibilityItemResponse {
+    pub item_id: Uuid,
+    pub eligible: bool,
+    pub reason: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QuoteEligibilityResponse {
+    pub items: Vec<QuoteEligibilityItemResponse>,
 }
 
 impl From<CreateQuoteRequest> for quote::CreateQuoteRequest {
@@ -91,6 +115,58 @@ pub async fn allocate(
         allocation_id: allocation.public_id.get(),
         commitment: allocation.commitment,
     }))
+}
+
+/// `POST /api/v1/me/quote-eligibility` evaluates the caller's submitted
+/// inventory IDs against the same database projection used by quote
+/// creation.  The endpoint deliberately returns no prices, internal IDs,
+/// policy versions, stock counts, or risk data: it is a UX preflight, while
+/// quote creation remains the authoritative final check.
+pub async fn eligibility(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+    Json(request): Json<QuoteEligibilityRequest>,
+) -> Result<Json<QuoteEligibilityResponse>, ApiError> {
+    if request.item_ids.is_empty() || request.item_ids.len() > 10 {
+        return Err(ApiError::UnprocessableEntity(
+            "item_ids must contain 1 to 10 items".to_owned(),
+        ));
+    }
+
+    let public_ids: Vec<db::PublicId> = request
+        .item_ids
+        .iter()
+        .copied()
+        .map(db::PublicId::new)
+        .collect();
+    let projection = db::read_quote_proposal_projection(
+        state.database().pool(),
+        caller.user_id,
+        db::PublicId::new(request.allocation_id),
+        &public_ids,
+    )
+    .await
+    .map_err(|error| internal(&error, "quote eligibility projection failed"))?;
+
+    let eligible: std::collections::HashSet<Uuid> = projection
+        .iter()
+        .map(|row| row.inventory_item_public_id.get())
+        .collect();
+    let items = request
+        .item_ids
+        .into_iter()
+        .map(|item_id| {
+            let is_eligible = eligible.contains(&item_id);
+            QuoteEligibilityItemResponse {
+                item_id,
+                eligible: is_eligible,
+                reason: (!is_eligible)
+                    .then_some("not_owned_locked_expired_or_not_eligible_for_current_quote"),
+            }
+        })
+        .collect();
+
+    Ok(Json(QuoteEligibilityResponse { items }))
 }
 #[derive(Serialize)]
 pub struct QuoteInputResponse {

@@ -111,6 +111,12 @@ export type QuoteResponse = {
   inputs: QuoteInput[];
   outcomes: QuoteOutcome[];
 };
+export type QuoteEligibilityItem = {
+  item_id: string;
+  eligible: boolean;
+  reason: string | null;
+};
+export type QuoteEligibilityResponse = { items: QuoteEligibilityItem[] };
 export type AcceptQuoteResponse = { contract_id: string };
 
 type RuntimeEnvironment = {
@@ -295,6 +301,10 @@ export const api = {
   catalogSkus: () => requestAllPages<CatalogSku>('/catalog/skus'),
   marketValuations: () => requestAllPages<MarketValuation>('/market/valuations'),
   allocateQuote: () => jsonPost<QuoteAllocationResponse>('/me/quote-allocations'),
+  quoteEligibility: (allocationId: string, itemIds: string[]) => jsonPost<QuoteEligibilityResponse>('/me/quote-eligibility', {
+    allocation_id: allocationId,
+    item_ids: itemIds,
+  }),
   createQuote: (allocationId: string, itemIds: string[], clientSeed: string) => jsonPost<QuoteResponse>('/me/quotes', {
     allocation_id: allocationId,
     item_ids: itemIds,
