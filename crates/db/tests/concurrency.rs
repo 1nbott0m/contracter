@@ -417,10 +417,15 @@ async fn concurrent_market_purchases_with_the_same_key_settle_once() {
     let sku_public: Uuid = Uuid::new_v4();
     let sku: i64 = sqlx::query_scalar("INSERT INTO skus (public_id, catalog_item_id, wear_band_id) SELECT $1, $2, id FROM wear_bands WHERE code = $3 RETURNING id")
         .bind(sku_public).bind(catalog).bind(format!("concurrency-market-{suffix}" )).fetch_one(pool).await.expect("insert sku");
-    let snapshot: i64 = sqlx::query_scalar("INSERT INTO valuation_snapshots (formula_version, snapshot_at, published_at) VALUES ('concurrency-market', clock_timestamp(), clock_timestamp()) RETURNING id")
+    let snapshot: i64 = sqlx::query_scalar("INSERT INTO valuation_snapshots (formula_version, snapshot_at) VALUES ('concurrency-market', clock_timestamp()) RETURNING id")
         .fetch_one(pool).await.expect("insert snapshot");
     sqlx::query("INSERT INTO valuation_snapshot_items (snapshot_id, sku_id, verified_price_microcredits, source_code, window_days, valid_sale_count, evidence_cutoff_at, evidence_digest) VALUES ($1, $2, 1_000_000, 'market_csgo', 7, 20, clock_timestamp(), digest('concurrency-market', 'sha256'))")
         .bind(snapshot).bind(sku).execute(pool).await.expect("insert valuation");
+    sqlx::query("UPDATE valuation_snapshots SET published_at = clock_timestamp() WHERE id = $1")
+        .bind(snapshot)
+        .execute(pool)
+        .await
+        .expect("publish snapshot");
     sqlx::query("INSERT INTO current_valuations (sku_id, snapshot_id, snapshot_item_id, verified_price_microcredits) SELECT sku_id, snapshot_id, id, verified_price_microcredits FROM valuation_snapshot_items WHERE snapshot_id = $1")
         .bind(snapshot).execute(pool).await.expect("activate valuation");
     let item_public: Uuid = Uuid::new_v4();
