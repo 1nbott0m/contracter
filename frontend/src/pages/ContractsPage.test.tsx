@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ApiInventoryItem, CatalogSku, MarketValuation, QuoteResponse } from '../api';
 import { CONTRACT_SELECTION_STORAGE_KEY } from './InventoryPage';
-import { ContractsPage } from './ContractsPage';
+import { ContractsPage, quoteRemainingSeconds } from './ContractsPage';
+
+describe('quote expiration', () => {
+  it('clamps malformed and expired timestamps to zero', () => {
+    expect(quoteRemainingSeconds('not-a-date', 1_000)).toBe(0);
+    expect(quoteRemainingSeconds(new Date(900).toISOString(), 1_000)).toBe(0);
+  });
+
+  it('rounds a live quote up to the next whole second', () => {
+    expect(quoteRemainingSeconds(new Date(2_501).toISOString(), 1_000)).toBe(2);
+  });
+});
 
 const inventory: ApiInventoryItem[] = Array.from({ length: 4 }, (_, index) => ({
   item_id: `item-${index + 1}`,
@@ -57,7 +68,7 @@ const quote: QuoteResponse = {
   expected_buyback_microcredits: 3_500_000,
   total_microcredits: 3_600_000,
   currency_code: 'CC',
-  expires_at: '2026-09-24T12:10:00Z',
+  expires_at: new Date(Date.now() + 60_000).toISOString(),
   inputs: [],
   outcomes: [],
 };

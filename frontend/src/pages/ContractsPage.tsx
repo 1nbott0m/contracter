@@ -87,6 +87,13 @@ export function possibleResultsFromCatalog(
     .map((sku) => catalogCandidate(sku, valuationBySku.get(sku.sku_id)));
 }
 
+/** Returns the number of whole seconds before a server quote expires. */
+export function quoteRemainingSeconds(expiresAt: string, now = Date.now()): number {
+  const expires = Date.parse(expiresAt);
+  if (!Number.isFinite(expires)) return 0;
+  return Math.max(0, Math.ceil((expires - now) / 1000));
+}
+
 export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps) {
   const developmentFallbackEnabled = isDevelopmentFallbackEnabled();
   const [items, setItems] = useState<InventoryItem[]>(developmentFallbackEnabled ? developmentItems : []);
@@ -181,6 +188,10 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
       }
     }
 
+    if (operation.quote && quoteRemainingSeconds(operation.quote.expires_at) === 0) {
+      lifecycle.current = null;
+      throw new Error('QUOTE_EXPIRED');
+    }
     const committed = await client.acceptQuote(operation.quoteId!, operation.idempotencyKey);
     let result: InventoryItem | null = null;
     try {
