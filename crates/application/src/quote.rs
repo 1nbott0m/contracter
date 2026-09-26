@@ -8,6 +8,8 @@ use thiserror::Error;
 pub enum QuoteError {
     #[error("a quote requires 4 to 10 distinct item IDs and a client seed of 1 to 1024 bytes")]
     InvalidRequest,
+    #[error("all quote inputs must share one rarity")]
+    MixedRarity,
     #[error("quote creation is unavailable")]
     CreationUnavailable,
     #[error("there is no active quote")]
@@ -22,6 +24,23 @@ pub enum QuoteError {
     SeedProtection(#[from] SeedProtectionError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
+}
+
+/// A contract consumes inputs of a single rarity. The database re-checks this
+/// at finalization, but a quote must not be priced, signed and shown for
+/// inputs that could never be finalized, so it is refused at creation too.
+pub(crate) fn ensure_single_rarity<'a>(
+    rarity_codes: impl IntoIterator<Item = &'a str>,
+) -> Result<(), QuoteError> {
+    let mut codes = rarity_codes.into_iter();
+    let Some(first) = codes.next() else {
+        return Err(QuoteError::Inconsistent);
+    };
+    if codes.all(|code| code == first) {
+        Ok(())
+    } else {
+        Err(QuoteError::MixedRarity)
+    }
 }
 
 /// Decrypts the owner-bound envelope returned by the database reader.  The
@@ -114,6 +133,7 @@ pub async fn create(
     {
         return Err(QuoteError::Inconsistent);
     }
+    ensure_single_rarity(projection.iter().map(|row| row.rarity_code.as_str()))?;
     let first = projection.first().ok_or(QuoteError::Inconsistent)?;
     let envelope = db::SeedEnvelope {
         allocation_public_id: first.allocation_public_id,
@@ -458,5 +478,36 @@ mod creation_tests {
             request.client_seed = vec![42; length];
             assert_eq!(request.validate().is_ok(), valid);
         }
+    }
+}
+
+#[cfg(test)]
+mod rarity_tests {
+    use super::*;
+
+    #[test]
+    fn inputs_of_one_rarity_are_accepted() {
+        assert!(ensure_single_rarity(["mil-spec"; 4]).is_ok());
+        assert!(ensure_single_rarity(["covert"]).is_ok());
+    }
+
+    #[test]
+    fn one_input_of_another_rarity_is_refused_wherever_it_sits() {
+        for odd_position in 0..4 {
+            let mut codes = ["mil-spec"; 4];
+            codes[odd_position] = "restricted";
+            assert!(
+                matches!(ensure_single_rarity(codes), Err(QuoteError::MixedRarity)),
+                "a different rarity at position {odd_position} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn no_inputs_is_inconsistent_rather_than_vacuously_fine() {
+        assert!(matches!(
+            ensure_single_rarity(std::iter::empty()),
+            Err(QuoteError::Inconsistent)
+        ));
     }
 }
