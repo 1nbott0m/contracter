@@ -134,5 +134,21 @@ SET is_active = true, deactivated_at = NULL;
 - Конкретные модели скинов, SKU и float bounds не добавлены без проверенного источника каталога.
 - Для production остаются отдельными задачами deployment, мониторинг, резервное копирование, внешняя загрузка цен и платёжная интеграция. Steam-вход и frontend уже входят в текущий MVP; их production-настройки (URL, секреты и redirect-конфигурация) должны совпадать с окружением деплоя.
 
+### Безопасный load test
+
+Нагрузочный сценарий находится в `load/k6/smoke.js` и запускается только с HTTPS.
+Для удалённого окружения скрипт требует явного `ALLOW_REMOTE_LOAD=YES_LOAD_NONPROD`;
+production без отдельного согласования не нагружайте. Рекомендуемый порядок — поднять
+изолированный staging API, затем выполнить короткий smoke-тест:
+
+```bash
+BASE_URL='https://staging.example' \
+ALLOW_REMOTE_LOAD='YES_LOAD_NONPROD' \
+VUS=2 DURATION=15s ./scripts/run_load_test.sh smoke
+```
+
+Результаты load test не являются заменой PostgreSQL integration suite: они проверяют
+только внешний HTTP-путь и должны запускаться на отдельной staging-базе.
+
 # Production deployment
 See deploy/README.md and deploy/docker-compose.prod.yml. Internal balances are CC; RUB is only an external top-up input.
