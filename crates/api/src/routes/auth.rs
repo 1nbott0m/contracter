@@ -145,10 +145,10 @@ fn steam_failure_redirect(code: &'static str) -> (HeaderMap, Redirect) {
     (
         HeaderMap::new(),
         Redirect::temporary(match code {
-        "account_creation_failed" => {
-            "https://contracter-1t9.pages.dev/login?steam_error=account_creation_failed"
-        }
-        _ => "https://contracter-1t9.pages.dev/login?steam_error=verification_failed",
+            "account_creation_failed" => {
+                "https://contracter-1t9.pages.dev/login?steam_error=account_creation_failed"
+            }
+            _ => "https://contracter-1t9.pages.dev/login?steam_error=verification_failed",
         }),
     )
 }
