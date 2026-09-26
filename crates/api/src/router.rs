@@ -9,7 +9,7 @@ use axum::{
         header::{CACHE_CONTROL, VARY},
     },
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use tower::ServiceBuilder;
@@ -139,6 +139,12 @@ pub fn build_router(state: AppState, config: &RouterConfig) -> Router {
     if let Some(cors) = build_cors_layer(&config.cors_allowed_origins) {
         router = router.layer(cors);
     }
+    if !config.cors_allowed_origins.is_empty() {
+        router = router.layer(axum::middleware::from_fn({
+            let allowed_origins = config.cors_allowed_origins.clone();
+            move |request, next| csrf_protection(allowed_origins.clone(), request, next)
+        }));
+    }
 
     router
         .layer(TraceLayer::new_for_http())
@@ -155,7 +161,50 @@ async fn security_response_headers(request: Request, next: Next) -> Response {
         axum::http::header::STRICT_TRANSPORT_SECURITY,
         HeaderValue::from_static("max-age=31536000; includeSubDomains"),
     );
+    response.headers_mut().insert(
+        axum::http::header::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
     response
+}
+
+/// Cookies are intentionally cross-site for the separately hosted frontend,
+/// therefore SameSite alone cannot provide CSRF protection.  When an Origin
+/// header is present on a state-changing API request, require it to be one of
+/// the explicitly configured frontend origins. Requests without Origin remain
+/// valid for non-browser clients and server-to-server integrations.
+async fn csrf_protection(allowed_origins: Vec<String>, request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path();
+    let state_changing = matches!(
+        method,
+        axum::http::Method::POST
+            | axum::http::Method::PUT
+            | axum::http::Method::PATCH
+            | axum::http::Method::DELETE
+    );
+    if state_changing
+        && path.starts_with("/api/v1/")
+        && let Some(origin) = request.headers().get(axum::http::header::ORIGIN)
+    {
+        let origin = origin.to_str().ok();
+        if origin.is_none_or(|value| !allowed_origins.iter().any(|allowed| allowed == value)) {
+            return ApiError::Forbidden("Origin is not allowed".to_owned()).into_response();
+        }
+    }
+    next.run(request).await
 }
 
 /// Marks every `/api/v1` response as private and cookie-dependent.
@@ -452,6 +501,55 @@ mod tests {
                 .unwrap()
                 .status(),
             StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn state_changing_cross_origin_requests_are_rejected_before_handlers() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable").unwrap(),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig {
+                cors_allowed_origins: vec!["https://contracter.example".to_owned()],
+                ..RouterConfig::default()
+            },
+        );
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/logout")
+            .header(axum::http::header::ORIGIN, "https://evil.example")
+            .body(Body::empty())
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn security_headers_are_present_on_health_responses() {
+        let database = Database::connect_lazy(
+            &DatabaseConfig::new("postgres://user:pass@127.0.0.1:1/unreachable").unwrap(),
+        );
+        let router = build_router(
+            AppState::new(database, AuthConfig::default()),
+            &RouterConfig::default(),
+        );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health/live")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+        assert_eq!(
+            response.headers()["permissions-policy"],
+            "geolocation=(), microphone=(), camera=()"
         );
     }
 }
