@@ -74,8 +74,10 @@ impl From<CreateQuoteRequest> for quote::CreateQuoteRequest {
     }
 }
 
-/// `POST /api/v1/me/quotes` accepts only public request data. Creation remains
-/// unavailable until server-side proposal construction is fully implemented.
+/// `POST /api/v1/me/quotes` accepts only public request data. The server builds
+/// and signs the proposal from its owner-bound projection; missing published
+/// valuation/stock data fails closed with service-unavailable rather than a
+/// client-side fallback.
 pub async fn create(
     State(state): State<AppState>,
     CurrentUser(caller): CurrentUser,
