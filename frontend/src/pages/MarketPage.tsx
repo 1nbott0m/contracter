@@ -104,7 +104,7 @@ export function MarketPage({ session, navigate, client = api, onBalanceChange, s
       const nextItems = catalog.items.map((sku) => catalogSkuToMarketItem(sku, bySku.get(sku.sku_id)));
       setState((current) => {
         const existing = current.status === 'success' || current.status === 'empty' ? current.data || [] : [];
-        const merged = [...existing, ...nextItems];
+        const merged = [...existing, ...nextItems].filter((item, index, all) => all.findIndex((candidate) => candidate.skuId === item.skuId) === index);
         return merged.length ? { status: 'success', data: merged } : { status: 'empty', data: [] };
       });
       setNextCatalogCursor(catalog.next_cursor ?? null);

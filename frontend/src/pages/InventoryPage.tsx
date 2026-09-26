@@ -74,7 +74,7 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
       const nextItems = inventory.items.map((item) => inventoryItemToSkin(item, catalogBySku.get(item.sku_id), valuationBySku.get(item.sku_id)));
       setState((current) => {
         const existing = current.status === 'success' || current.status === 'empty' ? current.data || [] : [];
-        const merged = [...existing, ...nextItems];
+        const merged = [...existing, ...nextItems].filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
         return merged.length ? { status: 'success', data: merged } : { status: 'empty', data: [] };
       });
       setNextCursor(inventory.next_cursor ?? null);
