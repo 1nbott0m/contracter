@@ -487,6 +487,47 @@ async fn concurrent_market_purchases_with_the_same_key_settle_once() {
             .await
             .expect("read stock");
     assert_eq!(available, 0);
+
+    // Race two distinct operations against the same single warehouse item.
+    // The row lock must prevent both callers from selecting it successfully.
+    sqlx::query(
+        "UPDATE inventory_positions SET owner_user_id = NULL, in_warehouse = true WHERE inventory_item_id = $1",
+    )
+    .bind(item)
+    .execute(pool)
+    .await
+    .expect("reset warehouse position");
+    sqlx::query("UPDATE warehouse_stock SET available_units = 1 WHERE sku_id = $1")
+        .bind(sku)
+        .execute(pool)
+        .await
+        .expect("reset warehouse stock");
+    let distinct_key_a = Uuid::new_v4();
+    let distinct_key_b = Uuid::new_v4();
+    let mut connection_c = pool.acquire().await.expect("acquire connection c");
+    let mut connection_d = pool.acquire().await.expect("acquire connection d");
+    let (distinct_a, distinct_b) = tokio::join!(
+        purchase_market_item(
+            connection_c.as_mut(),
+            UserId::new(user_id),
+            PublicId::new(sku_public),
+            distinct_key_a,
+        ),
+        purchase_market_item(
+            connection_d.as_mut(),
+            UserId::new(user_id),
+            PublicId::new(sku_public),
+            distinct_key_b,
+        ),
+    );
+    assert_eq!(distinct_a.is_ok() as u8 + distinct_b.is_ok() as u8, 1);
+    let available_after_race: i32 =
+        sqlx::query_scalar("SELECT available_units FROM warehouse_stock WHERE sku_id = $1")
+            .bind(sku)
+            .fetch_one(pool)
+            .await
+            .expect("read stock after distinct-key race");
+    assert_eq!(available_after_race, 0);
 }
 
 /// A committed invitation, since two connections must see it.
