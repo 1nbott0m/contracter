@@ -211,7 +211,8 @@ impl From<application::market::MarketError> for ApiError {
 impl From<application::quote::QuoteError> for ApiError {
     fn from(error: application::quote::QuoteError) -> Self {
         match error {
-            application::quote::QuoteError::InvalidRequest => {
+            application::quote::QuoteError::InvalidRequest
+            | application::quote::QuoteError::MixedRarity => {
                 Self::UnprocessableEntity(error.to_string())
             }
             application::quote::QuoteError::CreationUnavailable => {
