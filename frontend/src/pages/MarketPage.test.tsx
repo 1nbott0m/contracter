@@ -93,3 +93,24 @@ it('explains when the server catalog is ready but CC prices are not published', 
   expect(await screen.findByText('Цены CC ещё не опубликованы')).toBeTruthy();
   expect(screen.getByText('Каталог уже загружен с сервера. Покупки включатся после публикации подтверждённых оценок.')).toBeTruthy();
 });
+
+it('renders the first catalog page before following the next cursor', async () => {
+  const nextPage = catalog.map((item) => ({ ...item, sku_id: `${item.sku_id}-next`, item_id: `${item.item_id}-next` }));
+  const catalogSkusPage = vi.fn()
+    .mockResolvedValueOnce({ items: catalog.slice(0, 1), next_cursor: 'next-page' })
+    .mockResolvedValueOnce({ items: nextPage });
+  const client = {
+    catalogSkusPage,
+    marketValuations: vi.fn(async () => ({ items: valuations.slice(0, 1) })),
+    balance: vi.fn(),
+    inventory: vi.fn(),
+    marketPurchase: vi.fn(),
+  };
+  render(<MarketPage session={{ status: 'unauthenticated' }} navigate={vi.fn()} client={client} />);
+
+  expect(await screen.findByText('Slate')).toBeTruthy();
+  expect(catalogSkusPage).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'ЗАГРУЗИТЬ ЕЩЁ' }));
+  expect(await screen.findByText('Fade')).toBeTruthy();
+  expect(catalogSkusPage).toHaveBeenLastCalledWith('next-page');
+});
