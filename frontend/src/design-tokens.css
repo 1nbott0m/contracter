@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
 :root {
   --ct-canvas: #080a0f;
   --ct-surface: #10141d;
@@ -18,14 +20,17 @@
   --ct-motion-emphasis: 620ms;
   --ct-ease-standard: cubic-bezier(.2,.8,.2,1);
   --ct-ease-emphasis: cubic-bezier(.16,1,.3,1);
-  --ct-font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --ct-font-data: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --ct-font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --ct-font-data: "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
+html, body, button, input, select, textarea { font-family: var(--ct-font-ui); }
 html { font-family: var(--ct-font-ui); }
+body { font-family: var(--ct-font-ui); }
 body { background: radial-gradient(circle at 78% 0, #172137 0, transparent 30rem), var(--ct-canvas); }
 .balance, .commerce-balance, .reveal-contract-id, .admin-metric strong { font-family: var(--ct-font-data); font-variant-numeric: tabular-nums; }
 .app-shell { color: var(--ct-text); }
+.brand-mark { background: transparent !important; box-shadow: none !important; object-fit: contain; }
 .app-shell::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1; background: linear-gradient(90deg, transparent 0 49.9%, #57e3f308 50%, transparent 50.1%), linear-gradient(#57e3f306 1px, transparent 1px); background-size: 100% 100%, 100% 84px; mask-image: linear-gradient(to bottom, #000, transparent 70%); }
 .header { border-bottom-color: var(--ct-line); background: #0d111ae6; border-radius: 0 0 var(--ct-panel-radius) var(--ct-panel-radius); }
 main { max-width: 1440px; padding-top: clamp(42px, 6vw, 84px); position: relative; }
