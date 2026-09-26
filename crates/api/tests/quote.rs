@@ -545,17 +545,23 @@ async fn quote_acceptance_is_owner_bound_and_idempotent_over_http() {
     .await
     .expect("align quote risk snapshot");
 
-    let first = router(&state)
-        .oneshot(request(&owner_cookie, key))
-        .await
-        .unwrap();
+    let (first, concurrent_retry) = tokio::join!(
+        router(&state).oneshot(request(&owner_cookie, key)),
+        router(&state).oneshot(request(&owner_cookie, key)),
+    );
+    let first = first.unwrap();
+    let concurrent_retry = concurrent_retry.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(concurrent_retry.status(), StatusCode::OK);
     let first_body = body_json(first).await;
+    let concurrent_retry_body = body_json(concurrent_retry).await;
     assert_eq!(
         first_body["error"]["code"],
         Value::Null,
         "first acceptance failed: {first_body:?}"
     );
     let contract_id = first_body["contract_id"].as_str().unwrap().to_owned();
+    assert_eq!(concurrent_retry_body["contract_id"], contract_id);
 
     let retry = router(&state)
         .oneshot(request(&owner_cookie, key))
