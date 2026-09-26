@@ -53,7 +53,10 @@ export function HistoryPage({ session, navigate, client = api, setApiStatus }: H
       setApiStatus?.('live');
     }).catch((error: unknown) => {
       if (!active) return;
-      setState({ status: 'error', error: error instanceof Error ? error.message : 'История недоступна' });
+      const failure = { status: 'error' as const, error: error instanceof Error ? error.message : 'История недоступна' };
+      if (mode === 'contracts') setState(failure);
+      if (mode === 'ledger') setLedgerState(failure);
+      if (mode === 'inventory') setInventoryState(failure);
       setApiStatus?.('fallback');
     });
     return () => { active = false; };
