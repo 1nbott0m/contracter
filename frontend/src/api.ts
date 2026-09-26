@@ -276,6 +276,7 @@ export const api = {
   verifyTotp: (code: string) => jsonPost<void>('/auth/totp/verify', { code }),
   balance: () => request<Balance>('/me/balance'),
   inventory: () => requestAllPages<ApiInventoryItem>('/me/inventory'),
+  inventoryPage: (cursor?: string) => requestPage<ApiInventoryItem>('/me/inventory', cursor),
   catalogSkusPage: (cursor?: string) => requestPage<CatalogSku>('/catalog/skus', cursor),
   marketValuationsPage: (cursor?: string) => requestPage<MarketValuation>('/market/valuations', cursor),
   catalogSkus: () => requestAllPages<CatalogSku>('/catalog/skus'),

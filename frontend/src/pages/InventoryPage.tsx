@@ -23,7 +23,7 @@ export function writeContractSelectionIds(ids: string[]) {
   sessionStorage.setItem(CONTRACT_SELECTION_STORAGE_KEY, JSON.stringify([...new Set(ids)].slice(0, 10)));
 }
 
-type InventoryApi = Pick<typeof api, 'inventory' | 'catalogSkus' | 'marketValuations'>;
+type InventoryApi = Pick<typeof api, 'inventory' | 'catalogSkus' | 'marketValuations'> & Partial<Pick<typeof api, 'inventoryPage'>>;
 type InventoryPageProps = { session: SessionState; navigate: Navigate; client?: InventoryApi; setApiStatus?: (status: ApiStatus) => void };
 
 export function InventoryPage({ session, navigate, client = api, setApiStatus }: InventoryPageProps) {
@@ -32,19 +32,22 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
   const [selectedIds, setSelectedIds] = useState(readContractSelectionIds);
   const [lastAdded, setLastAdded] = useState<InventoryItem | null>(null);
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     if (session.status !== 'authenticated') return;
     let active = true;
     setState({ status: 'loading' });
     setApiStatus?.('connecting');
-    Promise.all([client.inventory(), client.catalogSkus(), client.marketValuations()])
+    Promise.all([client.inventoryPage ? client.inventoryPage() : client.inventory(), client.catalogSkus(), client.marketValuations()])
       .then(([inventory, catalog, valuations]) => {
         if (!active) return;
         const catalogBySku = new Map(catalog.items.map((item) => [item.sku_id, item]));
         const valuationBySku = new Map(valuations.items.map((item) => [item.sku_id, item]));
         const items = inventory.items.map((item) => inventoryItemToSkin(item, catalogBySku.get(item.sku_id), valuationBySku.get(item.sku_id)));
         setState(items.length ? { status: 'success', data: items } : { status: 'empty', data: [] });
+        setNextCursor('next_cursor' in inventory ? inventory.next_cursor ?? null : null);
         setApiStatus?.('live');
       })
       .catch((error: unknown) => {
@@ -56,6 +59,31 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
   // Loading is scoped to the session and an explicit retry, not to a wrapper
   // object recreated by a parent render.
   }, [retryAttempt, session.status]);
+
+  const loadMore = async () => {
+    if (!nextCursor || !client.inventoryPage || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const [inventory, catalog, valuations] = await Promise.all([
+        client.inventoryPage(nextCursor),
+        client.catalogSkus(),
+        client.marketValuations(),
+      ]);
+      const catalogBySku = new Map(catalog.items.map((item) => [item.sku_id, item]));
+      const valuationBySku = new Map(valuations.items.map((item) => [item.sku_id, item]));
+      const nextItems = inventory.items.map((item) => inventoryItemToSkin(item, catalogBySku.get(item.sku_id), valuationBySku.get(item.sku_id)));
+      setState((current) => {
+        const existing = current.status === 'success' || current.status === 'empty' ? current.data || [] : [];
+        const merged = [...existing, ...nextItems];
+        return merged.length ? { status: 'success', data: merged } : { status: 'empty', data: [] };
+      });
+      setNextCursor(inventory.next_cursor ?? null);
+    } catch (error: unknown) {
+      setState((current) => current.status === 'success' ? current : { status: 'error', error: error instanceof Error ? error.message : 'Инвентарь недоступен' });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const source = state.status === 'success' || state.status === 'empty' ? state.data || [] : [];
   const weapons = useMemo(() => [...new Set(source.map((item) => item.weapon))].sort(), [source]);
@@ -108,5 +136,6 @@ export function InventoryPage({ session, navigate, client = api, setApiStatus }:
         {!item.locked && <button className="inventory-contract-action" type="button" onClick={() => addToContract(item)} disabled={selected || selectedIds.length >= 10} aria-label={selected ? `${item.weapon} | ${item.skin} уже добавлен в контракт` : `Добавить ${item.weapon} | ${item.skin} в контракт`}><CirclePlus size={15} /> {selected ? 'ДОБАВЛЕНО' : 'В КОНТРАКТ'}</button>}
       </div>;
     })}</section>}
+    {nextCursor && <div className="commerce-load-more"><button type="button" className="secondary" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'ЗАГРУЗКА…' : 'ЗАГРУЗИТЬ ЕЩЁ'}</button></div>}
   </>;
 }

@@ -55,3 +55,21 @@ it('renders locked inventory as unavailable for contract selection', async () =>
 
   expect((await screen.findByRole('button', { name: 'AK-47 | Slate недоступен: предмет заблокирован' }) as HTMLButtonElement).disabled).toBe(true);
 });
+
+it('loads inventory pages progressively when the server returns a cursor', async () => {
+  const inventoryPage = vi.fn()
+    .mockResolvedValueOnce({ items: [inventory[0]], next_cursor: 'next-inventory' })
+    .mockResolvedValueOnce({ items: [inventory[1]], next_cursor: null });
+  const client = {
+    inventory: vi.fn(async () => ({ items: inventory })),
+    inventoryPage,
+    catalogSkus: vi.fn(async () => ({ items: catalog })),
+    marketValuations: vi.fn(async () => ({ items: valuations })),
+  };
+  render(<InventoryPage session={{ status: 'authenticated', account: { user_id: 'user', login: 'tester', created_at: '2026-09-25T12:00:00Z' } }} navigate={vi.fn()} client={client} />);
+  expect(await screen.findByText('Slate')).toBeTruthy();
+  expect(screen.queryByText('Fade')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'ЗАГРУЗИТЬ ЕЩЁ' }));
+  expect(await screen.findByText('Fade')).toBeTruthy();
+  expect(inventoryPage).toHaveBeenLastCalledWith('next-inventory');
+});
