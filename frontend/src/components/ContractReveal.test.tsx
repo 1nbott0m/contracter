@@ -64,3 +64,17 @@ it('renders a truthful error state without a fabricated result', () => {
   expect(screen.getByRole('alert').textContent).toContain('Контракт не подтверждён');
   expect(screen.queryByText('Server Result')).toBeNull();
 });
+
+it('moves focus into the reveal dialog and restores it on close', () => {
+  const trigger = document.createElement('button');
+  trigger.textContent = 'open';
+  document.body.appendChild(trigger);
+  trigger.focus();
+  const onClose = vi.fn();
+  const { rerender } = render(<ContractReveal open selected={selected} state={{ status: 'error' }} onClose={onClose} onNew={vi.fn()} />);
+
+  expect(document.activeElement).toBe(screen.getByRole('dialog', { name: 'Фиксация контракта' }));
+  rerender(<ContractReveal open={false} selected={selected} state={{ status: 'error' }} onClose={onClose} onNew={vi.fn()} />);
+  expect(document.activeElement).toBe(trigger);
+  trigger.remove();
+});

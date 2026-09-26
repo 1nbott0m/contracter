@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, X } from 'lucide-react';
 import type { InventoryItem, SkinDefinition } from '../types';
 import { resolveSkinImage, SkinImage } from './SkinImage';
@@ -79,6 +79,15 @@ type ContractRevealProps = {
 export function ContractReveal({ open, selected, state, onClose, onNew }: ContractRevealProps) {
   const reducedMotion = reducedMotionPreferred();
   const [stage, setStage] = useState(() => reducedMotion ? 3 : 0);
+  const panelRef = useRef<HTMLElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    previouslyFocused.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelRef.current?.focus();
+    return () => previouslyFocused.current?.focus();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -107,7 +116,7 @@ export function ContractReveal({ open, selected, state, onClose, onNew }: Contra
   const skipReveal = () => setStage(state.status === 'success' ? 4 : 3);
 
   return <div className="reveal-backdrop" role="presentation">
-    <section className={`reveal-panel cinematic-reveal ${showResult ? 'is-result' : state.status === 'error' ? 'is-error' : 'is-processing'}`} role="dialog" aria-modal="true" aria-label="Фиксация контракта">
+    <section ref={panelRef} tabIndex={-1} className={`reveal-panel cinematic-reveal ${showResult ? 'is-result' : state.status === 'error' ? 'is-error' : 'is-processing'}`} role="dialog" aria-modal="true" aria-label="Фиксация контракта">
       <div className="reveal-beam" aria-hidden="true" />
       <div className="reveal-orbit orbit-one" aria-hidden="true" />
       <div className="reveal-orbit orbit-two" aria-hidden="true" />
