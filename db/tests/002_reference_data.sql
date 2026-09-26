@@ -54,9 +54,9 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1 FROM price_sources
-        WHERE code = 'market_csgo' AND NOT enabled
+        WHERE code = 'market_csgo' AND enabled
     ) THEN
-        RAISE EXCEPTION 'reference test failed: uncalibrated price source must be disabled';
+        RAISE EXCEPTION 'reference test failed: supported Market.CSGO source is missing or disabled';
     END IF;
 END;
 $test$;
