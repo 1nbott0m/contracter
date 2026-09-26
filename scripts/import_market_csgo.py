@@ -168,10 +168,13 @@ def main() -> int:
         all_rows.extend(rows_from_payload(api_json(key, hash_name), sku, hash_name))
     if not all_rows:
         raise SystemExit("Market.CSGO returned no usable completed-sale rows; nothing was written")
-    newest_source_at = max(
-        datetime.fromisoformat(row["source_timestamp"].replace("Z", "+00:00"))
-        for row in all_rows
-    )
+    parsed_source_times = []
+    for row in all_rows:
+        parsed = datetime.fromisoformat(row["source_timestamp"].replace("Z", "+00:00"))
+        parsed_source_times.append(
+            parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+        )
+    newest_source_at = max(parsed_source_times)
     age_seconds = (datetime.now(timezone.utc) - newest_source_at).total_seconds()
     if age_seconds > args.max_source_age_hours * 3600:
         raise SystemExit(
