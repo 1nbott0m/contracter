@@ -57,9 +57,9 @@ jobs:
       - name: Verify frontend tests and production build
         working-directory: frontend
         run: |
-          npm ci
-          npm test -- --run
-          npm run build
+          timeout 5m npm ci
+          timeout 5m npm test -- --run
+          timeout 5m npm run build
 
       - name: Verify workspace and PostgreSQL integration
         run: |
