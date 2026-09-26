@@ -225,6 +225,41 @@ async fn active_stock_policy_bands_are_scoped_to_the_active_version_and_stably_o
 
 #[tokio::test]
 #[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
+async fn virtual_stock_bootstrap_is_policy_bounded_and_idempotent() {
+    let database = test_database().await;
+    let mut transaction = isolated_transaction(&database).await;
+    ensure_lookup_rows(&mut transaction).await;
+    let sku_id = insert_sku(&mut transaction, "stock-test-a").await;
+    let version = (Uuid::new_v4().as_u128() % 1_000_000) as i32 + 10_000_000;
+    let policy_id = insert_stock_policy_version(&mut transaction, version, false, false).await;
+    sqlx::query("UPDATE stock_policy_versions SET activated_at = clock_timestamp() - interval '1 second' WHERE id = $1")
+        .bind(policy_id)
+        .execute(transaction.as_mut())
+        .await
+        .expect("activate stock policy fixture");
+    insert_stock_policy_band(&mut transaction, policy_id, "stock-test-a", 0, 13, 13).await;
+
+    let inserted: i32 = sqlx::query_scalar("SELECT ensure_virtual_warehouse_stock()")
+        .fetch_one(transaction.as_mut())
+        .await
+        .expect("bootstrap virtual stock");
+    assert_eq!(inserted, 1);
+    let stock = find_warehouse_stock(transaction.as_mut(), sku_id)
+        .await
+        .expect("read bootstrapped stock")
+        .expect("bootstrapped stock exists");
+    assert_eq!(stock.available_units, 13);
+
+    let second: i32 = sqlx::query_scalar("SELECT ensure_virtual_warehouse_stock()")
+        .fetch_one(transaction.as_mut())
+        .await
+        .expect("repeat bootstrap virtual stock");
+    assert_eq!(second, 0);
+    transaction.rollback().await.expect("rollback fixture");
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PostgreSQL database in TEST_DATABASE_URL"]
 async fn risk_state_singleton_reflects_current_values() {
     let database = test_database().await;
     let mut transaction = isolated_transaction(&database).await;

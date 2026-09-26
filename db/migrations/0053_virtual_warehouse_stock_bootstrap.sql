@@ -19,8 +19,9 @@ BEGIN
         ON band.rarity_code = item.rarity_code
        AND band.stock_policy_version_id = (
            SELECT policy.id
-             FROM public.stock_policy_versions AS policy
+            FROM public.stock_policy_versions AS policy
             WHERE policy.activated_at IS NOT NULL
+              AND policy.activated_at <= clock_timestamp()
               AND policy.retired_at IS NULL
             ORDER BY policy.activated_at DESC, policy.id DESC
             LIMIT 1
