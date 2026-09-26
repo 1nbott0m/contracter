@@ -118,6 +118,10 @@ def make_sql(items: list[dict]) -> str:
                 f"JOIN wear_bands wb ON wb.code={sql(wear)} WHERE ci.canonical_skin_id={sql(item['id'])} "
                 "ON CONFLICT (catalog_item_id, wear_band_id) DO UPDATE SET enabled=true;"
             )
+    # Keep newly imported SKUs visible to the virtual market projection without
+    # creating external inventory. The function is installed by the current
+    # production schema and is intentionally SECURITY DEFINER.
+    out.append("SELECT ensure_virtual_warehouse_stock();")
     out.append("COMMIT;")
     return "\n".join(out) + "\n"
 

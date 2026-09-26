@@ -162,6 +162,10 @@ def main() -> int:
                  WHERE skus.enabled AND catalog_items.enabled
                  ORDER BY skus.public_id;""",
     )
+    # Populate only the virtual stock projection. This never buys or imports
+    # external items; it creates the bounded policy target consumed by the
+    # atomic market/quote writers.
+    psql(database_url, "SELECT ensure_virtual_warehouse_stock();")
     all_rows: list[dict[str, str]] = []
     for line in catalog.splitlines():
         sku, hash_name = line.split("\t", 1)
