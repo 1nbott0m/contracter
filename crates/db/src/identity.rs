@@ -232,6 +232,21 @@ where
     Ok(sqlx::query_as("SELECT u.public_id AS user_id, u.login, u.created_at, (u.disabled_at IS NOT NULL) AS disabled, COALESCE(a.is_active AND a.deactivated_at IS NULL, false) AS is_admin FROM users u LEFT JOIN administrators a ON a.user_id=u.id ORDER BY u.created_at DESC LIMIT 500").fetch_all(executor).await?)
 }
 
+pub async fn admin_disable_user<'e, E>(
+    executor: E,
+    admin_public_id: PublicId,
+    target_public_id: PublicId,
+) -> Result<bool, DatabaseError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    Ok(sqlx::query_scalar("SELECT admin_disable_user($1, $2)")
+        .bind(admin_public_id)
+        .bind(target_public_id)
+        .fetch_one(executor)
+        .await?)
+}
+
 pub async fn admin_totp_attempt_allowed<'e, E>(
     executor: E,
     session_public_id: PublicId,

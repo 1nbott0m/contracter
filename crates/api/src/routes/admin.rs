@@ -1,6 +1,10 @@
 use application::auth;
 use application::auth::AuthenticatedUser;
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Path, State},
+    response::IntoResponse,
+};
 use db;
 use serde::Serialize;
 use serde_json::json;
@@ -70,6 +74,29 @@ pub async fn users(
             })
             .collect::<Vec<_>>(),
     ))
+}
+
+/// Disables a user and revokes their live sessions atomically. The database
+/// security-definer function also appends the immutable admin audit event.
+pub async fn disable_user(
+    State(state): State<AppState>,
+    CurrentUser(caller): CurrentUser,
+    Path(user_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_verified_admin(&state, caller).await?;
+    let changed = db::admin_disable_user(
+        state.database().pool(),
+        caller.user_public_id,
+        db::PublicId::new(user_id),
+    )
+    .await
+    .map_err(application::auth::AuthError::from)?;
+    if !changed {
+        return Err(ApiError::NotFound(
+            "User is already disabled or does not exist".to_owned(),
+        ));
+    }
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Serialize)]
