@@ -350,9 +350,12 @@ async fn seed_active_quote(state: &AppState, user_id: UserId) -> QuoteFixture {
     .await
     .expect("insert quote API risk exposure");
     sqlx::query(
-        "UPDATE seed_allocations SET allocated_at = clock_timestamp(), \
-                expires_at = clock_timestamp() + interval '15 seconds' \
-         WHERE id = $1",
+        "WITH allocation_clock AS (SELECT clock_timestamp() AS now) \
+         UPDATE seed_allocations AS allocation \
+            SET allocated_at = allocation_clock.now, \
+                expires_at = allocation_clock.now + interval '15 seconds' \
+           FROM allocation_clock \
+          WHERE allocation.id = $1",
     )
     .bind(allocation_id)
     .execute(pool)
