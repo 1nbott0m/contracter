@@ -66,6 +66,8 @@ footer.site-footer { padding-top: 52px; padding-bottom: 52px; background: linear
 .login-modal input:focus { border-color: var(--ct-cyan); box-shadow: 0 0 0 3px #57e3f322; }
 .secondary-auth { min-height: 42px; border: 1px solid var(--ct-line); border-radius: 12px; background: #20262e; color: var(--ct-text); font-size: 10px; font-weight: 800; letter-spacing: .08em; cursor: pointer; transition: background var(--ct-motion-fast) ease, border-color var(--ct-motion-fast) ease, transform var(--ct-motion-fast) var(--ct-ease-standard); }
 .secondary-auth:hover { background: #2b3540; border-color: #52617a; transform: translateY(-1px); }
+.auth-divider { display: flex; align-items: center; gap: 10px; color: var(--ct-text-muted); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; flex: 1; background: var(--ct-line); }
 .profile-button { transition: color var(--ct-motion-fast) var(--ct-ease-standard), transform var(--ct-motion-fast) var(--ct-ease-standard); }
 .profile-button:hover { color: var(--ct-text); transform: translateY(-1px); }
 .profile-popover { border: 1px solid var(--ct-line); border-radius: var(--ct-panel-radius); background: var(--ct-surface-raised); box-shadow: 0 24px 70px #000b; padding: 8px; animation: ct-pop var(--ct-motion-fast) var(--ct-ease-emphasis) both; }
