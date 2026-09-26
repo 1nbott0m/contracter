@@ -1,0 +1,26 @@
+name: Import CS2 catalog
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout importer
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y postgresql-client
+
+      - name: Import canonical CS2 skins
+        env:
+          DATABASE_URL: ${{ secrets.MARKET_IMPORT_DATABASE_URL }}
+          DATASET_URL: https://raw.githubusercontent.com/ByMykel/CSGO-API/main/public/api/en/skins.json
+        run: |
+          test -n "$DATABASE_URL"
+          python3 scripts/import_skin_catalog.py "$DATASET_URL" --execute
