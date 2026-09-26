@@ -10,6 +10,7 @@ import {
 } from '../api';
 import type { ApiStatus } from '../components/AppShell';
 import { ContractBuilder, type CommittedContract } from '../components/ContractBuilder';
+import { eligibleContractItems } from '../contractEligibility';
 import { items as developmentItems, results as developmentResults } from '../mocks/dev-data';
 import type { InventoryItem, SkinDefinition } from '../types';
 import { readContractSelectionIds, writeContractSelectionIds } from './InventoryPage';
@@ -146,6 +147,13 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
     [catalog, selected, usingDevelopmentFallback, valuations],
   );
 
+  const contractItems = useMemo(
+    () => usingDevelopmentFallback || catalog.length === 0 || valuations.length === 0 || new Set(catalog.map((row) => row.rarity_rank)).size < 2
+      ? items
+      : eligibleContractItems(items, catalog, valuations, selected).map((entry) => entry.item),
+    [catalog, items, selected, usingDevelopmentFallback, valuations],
+  );
+
   const updateSelection = (next: InventoryItem[]) => {
     setSelected(next);
     writeContractSelectionIds(next.map((item) => item.id));
@@ -229,7 +237,7 @@ export function ContractsPage({ setApiStatus, client = api }: ContractsPageProps
       </ol>
       {usingDevelopmentFallback && <p className="development-data-notice" role="status">Показаны явно включённые данные разработки. Они не являются подтверждённой операцией.</p>}
       <ContractBuilder
-        items={items}
+        items={contractItems}
         selected={selected}
         onSelectionChange={updateSelection}
         possibleResults={possibleResults}
