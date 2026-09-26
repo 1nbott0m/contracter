@@ -270,6 +270,7 @@ export const api = {
   adminMe: () => request<AdminMeResponse>('/admin/me'),
   adminDashboard: () => request<AdminDashboard>('/admin/dashboard'),
   adminUsers: () => request<AdminUser[]>('/admin/users'),
+  adminDisableUser: (userId: string) => request<void>(`/admin/users/${encodeURIComponent(userId)}/disable`, { method: 'POST' }),
   adminAudit: () => request<AdminAuditEvent[]>('/admin/audit'),
   provisionTotp: () => jsonPost<TotpProvisionResponse>('/admin/totp/provision'),
   verifyTotp: (code: string) => jsonPost<void>('/auth/totp/verify', { code }),
